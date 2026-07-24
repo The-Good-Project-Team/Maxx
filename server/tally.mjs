@@ -22,6 +22,13 @@
 
 const FIVE_H = 5 * 3600;
 const WEEK = 7 * 24 * 3600;
+// Coin model: we set our OWN tank instead of reverse-engineering Anthropic's opaque
+// plan quota — an MPG meter, not a barrel count. One coin = one weighted (quota-pressure)
+// token from the ledger. Every account paces against the SAME tank, so standings are
+// directly comparable and the old `cap = ledger ÷ pct` low-% blow-up (which false-blocked
+// accounts at ~15% weekly) cannot happen. Anthropic's real % is kept only as a safety wall.
+export const COINS_MAX = 1e9;                               // the weekly tank, all accounts
+const FIVE_SUBCAP = Math.round((COINS_MAX * FIVE_H) / WEEK); // 5h even-pace share ≈ 29.76M
 export const ANCHOR_TRUST_SEC = 45 * 60; // matches the routines' staleness gate
 // Past ANCHOR_TRUST_SEC the anchor no longer describes the live 5h window, but the
 // weekly caps it calibrated move on a 7-day window — hours-old calibration still
@@ -184,87 +191,24 @@ export function computeBudget(store, now) {
   const wr = a?.week_reset || 0;
   let week = windowedBilled(store.events, now, WEEK, wr ? weekLoFor(wr, now) : undefined);
 
-  // Anchor the caps: cap = tokens-in-window ÷ observed-pct, measured at anchor time.
-  // Use the anchor's own windowed sums so cap reflects the same window the % described.
-  let fiveCap = null, weekCap = null, quota = null, weekPct = null;
-  // floors at >0.005 so a 1% wall reading calibrates: right after an account switch that's the
-  // only anchor there is, and refusing it left session_to_spend null — cloud gates saw "unknown"
-  // instead of the real availability.
-  if (a) {
-    if (a.five_pct > 0.005) {
-      // same fixed window the anchor's % described
-      const fiveAtAnchor = windowedBilled(store.events, a.ts, FIVE_H, fr > a.ts ? fr - FIVE_H : undefined);
-      fiveCap = Math.round(fiveAtAnchor / a.five_pct);
-    }
-    if (a.week_pct > 0.005) {
-      const weekAtAnchor = windowedBilled(store.events, a.ts, WEEK, wr ? weekLoFor(wr, a.ts) : undefined);
-      weekCap = Math.round(weekAtAnchor / a.week_pct);
-    }
-    // Live utilization = current windowed sum ÷ anchored cap (extrapolated forward).
-    quota = fiveCap ? Math.min(1, five / fiveCap) : a.five_pct;
-    weekPct = weekCap ? Math.min(1, week / weekCap) : a.week_pct;
-  }
-
-  // Statusline passthrough: when the anchor carries the CLI bar's own computed numbers
-  // (sl — ITS units), those become the ruler and every surface posts what the CLI posts.
-  // Between anchors we extrapolate with server-billed-since-anchor; anchors ship every
-  // interactive turn, so the drift window is small (and the % anchor path above remains
-  // the fallback for old emitters / stale sl).
-  let slSpend = null, slOver = 0, slBank = null, slNet = null;
-  // A CAP is a capacity, not a reading: the weekly wall does not decay because the
-  // laptop stopped reporting. This block used to be gated on `fresh`, so at 46 minutes
-  // the server discarded a weekly cap it already knew and fell back to deriving one
-  // from week_pct — and week_pct <= 0.005 (early in a week, or right after a wall
-  // reset) derives nothing. No cap meant no weekly standing, no session_to_spend, and
-  // `degradable` collapsed to STALE, which is a hard stop for every cloud routine.
-  // A laptop napping ~3h therefore halted the whole fleet while the ledger was intact.
-  // Caps and the weekly standing now survive to the 12h degrade horizon; only the
-  // freshness-sensitive readings below stay behind `fresh`.
-  // Use the last anchor that CARRIED sl caps — not necessarily the latest anchor. A probe
-  // (pct-only) landing after a laptop sl anchor must keep showing the CLI's cap, never
-  // re-derive a divergent one. Resets/quota still come from the latest anchor (`a`); only
-  // the caps (and the sl-derived readings) come from `aSl`.
-  const aSl = latestSlAnchor(store);
-  if (aSl && now - aSl.ts <= ANCHOR_DEGRADE_SEC) {
-    const slFresh = now - aSl.ts <= ANCHOR_TRUST_SEC;
-    const since = windowedBilled(store.events, now, WEEK, aSl.ts);
-    // 5h-window fields are only valid while the window the anchor described is still
-    // current (fr ahead of now) — after a wall reset they describe a dead window and
-    // the fixed-window sum above (events since fr) is the truth until the next anchor.
-    const windowCurrent = fr > now;
-    if (windowCurrent && aSl.sl.five_cap > 0) { fiveCap = aSl.sl.five_cap; five = aSl.sl.five_used + since; }
-    weekCap = aSl.sl.week_cap;
-    // Same rule as the 5h window: a CAP survives the reset, a READING does not. Once
-    // week_reset has passed, the anchor's week_used describes a DEAD week — adding
-    // since-anchor burn to it pinned weekPct at 1 and every cloud routine read "over"
-    // on a week that had just gone to zero. Post-reset the ledger's fixed-window sum
-    // (weekLoFor, rolled forward above) is the truth until the next anchor lands.
-    if (wr > now) week = aSl.sl.week_used + since;
-    quota = fiveCap ? Math.min(1, five / fiveCap) : quota;
-    weekPct = weekCap > 0 ? Math.min(1, week / weekCap) : weekPct;
-    if (slFresh) {
-      // weekly even-pace bank: spend-since-anchor eats it, elapsed-time creep refills it
-      const slAge = now - aSl.ts;
-      if (aSl.sl.bank != null) slBank = Math.round(aSl.sl.bank - since + (aSl.sl.week_cap * slAge) / (7 * 24 * 3600));
-      if (aSl.sl.net_per_min != null) slNet = aSl.sl.net_per_min;
-      // the CLI's roll-session numbers are the governor's — reconstruct its realMax
-      // (five_used + toSpend − over covers both sides of the share) and re-derive
-      // toSpend/over at NOW, so the gate and the bars agree with the CLI exactly.
-      // Stays behind `fresh`: an aged anchor's to_spend describes a window that has
-      // since moved on, and must not govern the live one.
-      if (windowCurrent) {
-        const realMax = aSl.sl.five_used + aSl.sl.to_spend - (aSl.sl.over || 0);
-        // realMax 0 is a DEGENERATE share, not a verdict: a first anchor from a
-        // barely-used account extrapolates cap = burned ÷ pct ≈ 0 and ships
-        // to_spend 0, which read as "over" and hard-blocked a brand-new user.
-        // Only a positive share may govern; otherwise weekly pacing takes over.
-        if (realMax > 0) {
-          slSpend = Math.max(0, realMax - five);
-          slOver = Math.max(0, five - realMax);
-        }
-      }
-    }
-  }
+  // ── Coin caps: fixed, not inferred ─────────────────────────────────────────
+  // The tank is a constant (COINS_MAX), same for every account. `five`/`week` are the
+  // ledger's own windowed coin sums (computed above) — the meter reading. pct = coins ÷
+  // tank. No `cap = ledger ÷ pct`, so a coarse low % can no longer blow the cap up or
+  // down. sl passthrough is gone: the server paces on coins, and limit.mjs computes the
+  // identical numbers from the same constant, so the CLI bars and the gate agree by
+  // construction (nothing to reconcile).
+  const fiveCap = FIVE_SUBCAP;
+  const weekCap = COINS_MAX;
+  const quota = Math.min(1, five / fiveCap);
+  const weekPct = Math.min(1, week / weekCap);
+  // Anthropic's real utilization is retained ONLY as a safety wall — the meter doesn't
+  // stop the car, the real gas tank does. Honored only while the anchor's window is still
+  // LIVE (fr/wr ahead of now); a stale anchor describing a dead, pre-reset window must
+  // never re-block a fresh one (that was the 2026-07-23 reif_tgp false-over).
+  const weekWallHit = a && a.week_pct >= 0.99 && wr > now;
+  const fiveWallHit = a && a.five_pct >= 0.99 && fr > now;
+  const slSpend = null, slOver = 0, slBank = null;
 
   const weeklyLeft = weekCap != null ? Math.max(0, weekCap - week) : null;
   // sessions-left-this-week paces the weekly headroom over the 5h windows remaining,
@@ -291,7 +235,9 @@ export function computeBudget(store, now) {
   // on it, but pages can say "calibrating" instead of painting red deficits.
   if (!a) verdict = "calibrating";
   else if (!fresh && !degradable) verdict = "stale";
-  else if ((weekPct != null && weekPct >= 0.99) || (quota != null && quota >= 0.99) || spendAfterReserve === 0) verdict = "over";
+  // over = the coin tank is spent (paced or absolute), OR Anthropic's real wall is hit on
+  // a live window. The coin tank is the pacing gauge; the real wall is the hard safety.
+  else if (weekPct >= 1 || quota >= 1 || spendAfterReserve === 0 || weekWallHit || fiveWallHit) verdict = "over";
   else if (!fresh) verdict = "degraded";
 
   // Channel = surface × project: two CC instances on one laptop (different project
@@ -322,7 +268,7 @@ export function computeBudget(store, now) {
   const sustainablePerMin = weeklyLeft != null && weekMinLeft ? weeklyLeft / weekMinLeft : null;
   const netPerMinVal = sustainablePerMin != null
     ? Math.round(sustainablePerMin - burn5m / 5)
-    : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : slNet);
+    : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : null);
   // two ceilings: burst = the hard 5h wall you can physically spend to right now;
   // safe = spendAfterReserve (weekly-paced). Burst > safe means you CAN overspend.
   const fiveHeadroom = fiveCap != null ? Math.max(0, Math.round(fiveCap - five)) : null;

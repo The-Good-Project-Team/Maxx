@@ -35,6 +35,11 @@ const CURSOR = path.join(HOME, ".maxx", `scan${SUF}.json`); // per-file byte off
 const ACCOUNTS = path.join(HOME, ".maxx", "accounts.json"); // which Claude account owns which slice of the local logs
 const WINDOW_MS = 5 * 60 * 60 * 1000;     // Claude's ~5-hour limit window
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;  // the 7-day wall
+// Coin model (mirrors server/tally.mjs): a fixed self-set tank, not a cap inferred from
+// Anthropic's opaque %. cap = weekly tank (COINS_MAX); the 5h bar paces an even share of
+// it. The statusline and the budget gate compute from the SAME constant, so they agree.
+const COINS_MAX = 1e9;
+const COINS_FIVE = Math.round((COINS_MAX * WINDOW_MS) / WEEK_MS); // ≈ 29.76M / 5h window
 const BUCKET_MS = 30 * 1000;              // 30-sec buckets: fine enough that the momentum + recovery step every ~30s, still cheap to re-sum every render tick
 
 async function files(dir) {
@@ -252,15 +257,11 @@ function report(pts, now, weekLo = now - WEEK_MS, quota = 0, week = 0, weekReset
   const recent = pts.filter(([t]) => t > now - 30 * 60000).reduce((a, [, k]) => a + k, 0);
   const burnPerHr = recent * 2;
   const peak = historicalPeak(pts);
-  // 5h cap ANCHORED to Anthropic's authoritative 5h % (rl.json quota): cap = used ÷ realPct, so pct reads
-  // back the exact % /usage shows. Falls back to config/peak only with no live % (never a hardcoded guess).
-  let cap, pct;
-  if (quota > 0.01) { cap = Math.round(used / quota); pct = quota; }
-  else {
-    try { cap = JSON.parse(readFileSync(CONFIG, "utf8")).window_cap_tokens || null; } catch { cap = null; }
-    if (!cap) cap = Math.round(peak * 1.05);
-    pct = cap ? used / cap : null;
-  }
+  // 5h bar: a fixed even-pace share of the coin tank (COINS_FIVE), not a cap inferred from
+  // the /usage %. pct = coins used this window ÷ that share. (Anthropic's real 5h % is still
+  // read as `quota` for the safety-wall display; it no longer sizes the cap.)
+  const cap = COINS_FIVE;
+  const pct = Math.min(1, used / cap);
   const minsToCap = (cap && burnPerHr > 0 && used < cap) ? Math.round((cap - used) / burnPerHr * 60) : null;
   // window reset: when the oldest token in the window ages out
   const inWin = pts.filter(([t]) => t > now - WINDOW_MS);
@@ -270,13 +271,10 @@ function report(pts, now, weekLo = now - WEEK_MS, quota = 0, week = 0, weekReset
   // weekCap = used ÷ realPct, weekPct = the real %. Consumers MUST gate on weekPct / sessionOver — NEVER a
   // raw bucket sum ÷ a hardcoded cap (that read 760M ÷ 750M = 101% and false-blocked at a real 37%).
   const weekUsed = pts.filter(([t]) => t > weekLo).reduce((a, [, k]) => a + k, 0);
-  let weekCap, weekPct;
-  if (week > 0.01) { weekCap = Math.round(weekUsed / week); weekPct = week; }
-  else {
-    try { weekCap = JSON.parse(readFileSync(CONFIG, "utf8")).week_cap_tokens || null; } catch { weekCap = null; }
-    if (!weekCap) weekCap = Math.round(historicalPeak(pts, WEEK_MS) * 1.05);
-    weekPct = weekCap ? weekUsed / weekCap : null;
-  }
+  // Weekly tank is the fixed COINS_MAX, same for every account — the standing that made the
+  // two-account comparison sane and killed the low-% cap blow-up. weekPct = coins ÷ tank.
+  const weekCap = COINS_MAX;
+  const weekPct = Math.min(1, weekUsed / weekCap);
   const roll = rollSession(cap, weekCap, used, weekUsed, weekResetAt, now);
   return { used, cap, peak, pct, burnPerHr, minsToCap, resetInMins, weekUsed, weekCap, weekPct, weekResetAt, ...roll, ts: now };
 }
