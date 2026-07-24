@@ -59,6 +59,7 @@ function parseArgs(argv) {
     else if (a === "--signup" || a === "signup") { const n = argv[i + 1]; out.signup = n && !n.startsWith("-") ? argv[++i] : true; }
     else if (a === "--install-agent") out.installAgent = true;
     else if (a === "--set-token") out.setToken = true;
+    else if (a === "--only") out.only = argv[++i];
     else if (a === "--watchdog") out.watchdog = true;
     else if (a === "--dash" || a === "dash") out.dash = true;
   }
@@ -287,7 +288,12 @@ if (args.signup) {
 // non-interactive shell skips cleanly with the manual one-liner, never blocks the install.
 if (args.setToken) {
   const { spawnSync } = await import("node:child_process");
-  const targets = resolveRoots();
+  let targets = resolveRoots();
+  if (args.only) {
+    const want = String(args.only).replace(/^@/, "").toLowerCase();
+    targets = targets.filter((r) => r.handle.toLowerCase() === want);
+    if (!targets.length) { console.error(`maxx: no linked account @${want} — run without --only to see all, or --signup under that login.`); process.exit(1); }
+  }
   if (!targets.length) { console.error("maxx: no linked account — run --signup first."); process.exit(1); }
   let ok = 0;
   for (const r of targets) {
