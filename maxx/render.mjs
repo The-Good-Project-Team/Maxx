@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { weekPaceToken, plausibleReset } from "./pace.mjs";
-import { weighUsage } from "./limit.mjs";
+import { weighUsage, COINS_MAX, COINS_FIVE } from "./limit.mjs";
 
 // ─── color: one HSL→hex + an rgb→hsl round-trip for shading ────────────────────
 function hsl2hex(h, s, l) {
@@ -658,8 +658,11 @@ function main() {
     }
     return prevCap || brainCap || 0; // below the 2% floor (or no stdin) → keep the last good cap
   };
-  const cap5s = anchorCap(haveQuota, quota, tok5, caps.q5, caps.cap5, cap5);
-  const cap7s = anchorCap(haveWeek, week, tok7, caps.q7, caps.cap7, cap7);
+  // Coin model (mirrors limit.mjs / server tally): the cap is a FIXED tank, not `tok ÷ pct`.
+  // No inference to smooth or cache — a coarse low % can't blow it up, and every surface reads
+  // the same ruler. The 5h bar paces an even share of the weekly tank.
+  const cap5s = COINS_FIVE;
+  const cap7s = COINS_MAX;
   // did the cap just re-anchor (first anchor OR the wall % ticked ≥0.5pt)? If so we re-snapshot the
   // bucket sum as the new "anchor tok" — the live delta below is measured from there, so it resets to
   // ~0 at every tick and can never accumulate into the old 2× drift.
@@ -686,8 +689,10 @@ function main() {
   // you idle). Falls back to the fixed-block pinned value when buckets are missing. Weekly stays PINNED to
   // Anthropic's seven_day % (the weekly bar must match /usage). Both in the same (maxx) token units as the
   // caps, so the fuel fractions below are honest ratios even though the absolute magnitudes are estimates.
-  const used5 = tok5roll != null ? Math.round(tok5roll) : liveUsed(haveQuota, quota, cap5s, tok5, tok5a);
-  const used7 = liveUsed(haveWeek, week, cap7s, tok7, tok7a);
+  // Coin model: used = the LEDGER coin count (our own burn), NOT pct×cap. The gauge measures
+  // what we spent against the fixed tank, so the bars can diverge from Anthropic's % — the point.
+  const used5 = tok5roll != null ? Math.round(tok5roll) : Math.round(tok5 || 0);
+  const used7 = Math.round(tok7 || 0);
   // ROLL-SESSION — one sentence: weekly tokens LEFT ÷ the 5h windows left this week = tokens good to use
   // this session. Spend up to it and the week lasts; max Anthropic's raw 5h wall instead and you're out in
   // days. It BANKS: it's LIVE, so as you spend, weekly-left drops and it ticks down (~1:1); when you go
@@ -702,9 +707,8 @@ function main() {
     : cap5s;
   // session bar is now the REAL session: used against realMax, not the raw 5h wall.
   const q5 = realMax ? Math.min(1, used5 / realMax) : (haveQuota ? quota : 0);
-  // week FILL pins straight to Anthropic's % — cap estimates scale the token numbers only, so
-  // anchor noise (unit changes, stale caps) can never bend the bar away from /usage.
-  const w7 = haveWeek ? week : (cap7s ? Math.min(1, used7 / cap7s) : 0);
+  // week FILL is the coin fraction of the tank — our meter reads our burn, not Anthropic's %.
+  const w7 = cap7s ? Math.min(1, used7 / cap7s) : 0;
   const qcol = col(q5), wcol = col(w7);
   // how far into each window you are (the pace line): elapsed = time-in / window-span. The span
   // start clamps to the account epoch — a just-switched account did NOT start its window resets−7d

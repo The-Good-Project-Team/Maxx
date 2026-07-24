@@ -38,8 +38,8 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;  // the 7-day wall
 // Coin model (mirrors server/tally.mjs): a fixed self-set tank, not a cap inferred from
 // Anthropic's opaque %. cap = weekly tank (COINS_MAX); the 5h bar paces an even share of
 // it. The statusline and the budget gate compute from the SAME constant, so they agree.
-const COINS_MAX = 1e9;
-const COINS_FIVE = Math.round((COINS_MAX * WINDOW_MS) / WEEK_MS); // ≈ 29.76M / 5h window
+export const COINS_MAX = 1e9;
+export const COINS_FIVE = Math.round((COINS_MAX * WINDOW_MS) / WEEK_MS); // ≈ 29.76M / 5h window
 const BUCKET_MS = 30 * 1000;              // 30-sec buckets: fine enough that the momentum + recovery step every ~30s, still cheap to re-sum every render tick
 
 async function files(dir) {

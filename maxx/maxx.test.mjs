@@ -42,7 +42,7 @@ test("rollSession: no weekly data → falls back to the raw 5h cap", () => {
   assert.equal(r.sessionSafe, 30e6);
 });
 
-test("render --status pins usedPct to Anthropic's real % (the 2× bug fix)", () => {
+test("render --status: weekly bar is the coin fraction of the fixed tank, not Anthropic's %", () => {
   const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
   mkdirSync(path.join(home, ".maxx"), { recursive: true });
   const stdin = JSON.stringify({
@@ -56,8 +56,13 @@ test("render --status pins usedPct to Anthropic's real % (the 2× bug fix)", () 
   const out = execFileSync("node", [path.join(HERE, "render.mjs"), "--status"],
     { input: stdin, env: { ...process.env, HOME: home }, encoding: "utf8" });
   const s = JSON.parse(out);
-  assert.equal(s.weekly.usedPct, 37, "weekly bar must match /usage seven_day %");
-  assert.equal(s.session.rawUsedPct, 6, "raw 5h wall must match /usage five_hour %");
+  // Coin model: the tank is a fixed 1B, same for every account — never tok ÷ pct. The bar reads
+  // OUR coin burn against it (none staged here → 0%), deliberately DECOUPLED from the plan's 37%.
+  assert.equal(s.weekly.cap, 1e9, "weekly tank is the fixed 1B coin cap");
+  assert.equal(s.weekly.usedPct, 0, "no ledger burn → 0% of tank");
+  assert.notEqual(s.weekly.usedPct, 37, "the coin gauge is not pinned to Anthropic's %");
+  // Anthropic's real 5h wall is still surfaced as the safety reading, untouched by the coin model.
+  assert.equal(s.session.rawUsedPct, 6, "raw 5h wall still matches /usage five_hour %");
 });
 
 test("render stamps the signed-in account on rl.json/status.json (CLAUDE_CONFIG_DIR-aware)", () => {
