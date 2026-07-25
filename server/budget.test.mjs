@@ -288,6 +288,23 @@ test("a held reserve throttles to_spend but does not flip the verdict", () => {
   assert.equal(b.session_to_spend, 0, "the reserve throttles to_spend to 0 so fan-outs back off");
 });
 
+// Front-loading one 5h window past its even-pace coin share must not hard-block the account
+// when the WEEK is healthy and Anthropic's real wall is nowhere near. reif_tgp maxed its 29.76M
+// 5h share with 815M week left + real 5h at 2% and hard-skipped a QA run — that was the bug.
+test("maxing the 5h even-pace share throttles to_spend but does not flip the verdict", () => {
+  const s = emptyStore();
+  const wr = T + 2 * 86400, fr = T + 3 * H;
+  s.events.push(
+    { surface: "laptop:a", root: "r1", ts: T - 30 * H, billed: 150e6 },  // healthy week, ~818M left
+    { surface: "laptop:a", root: "r2", ts: T - 600, billed: 32e6 },      // this window blew past the ~29.76M share
+  );
+  s.anchors.push({ ts: T - 60, five_pct: 0.02, week_pct: 0.18, five_reset: fr, week_reset: wr });
+  const b = computeBudget(s, T);
+  assert.equal(b.quota, 1, "the 5h coin sub-cap is maxed");
+  assert.equal(b.verdict, "ok", `healthy week + maxed 5h share must not read over, got ${b.verdict}`);
+  assert.equal(b.session_to_spend, 0, "the spent 5h share throttles to_spend to 0");
+});
+
 // A CAP is a capacity; a READING is not. The 5h path already refuses an anchor whose
 // window has since died (windowCurrent). The WEEK path did not: an anchor taken just
 // before week_reset carries week_used ≈ cap, and the server kept adding to it AFTER the

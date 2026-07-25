@@ -235,12 +235,12 @@ export function computeBudget(store, now) {
   // on it, but pages can say "calibrating" instead of painting red deficits.
   if (!a) verdict = "calibrating";
   else if (!fresh && !degradable) verdict = "stale";
-  // over = the coin tank is spent (paced or absolute), OR Anthropic's real wall is hit on a
-  // live window. A HELD reserve throttles session_to_spend (so concurrent fan-outs back off)
-  // but must NOT flip the verdict — a transient lease hard-denying the whole account while the
-  // week is healthy is the reif_tgp "over at 18% + one lease" surprise. So gate on the PRE-reserve
-  // sessionToSpend (actual spend exhausted the 5h share), never spendAfterReserve.
-  else if (weekPct >= 1 || quota >= 1 || sessionToSpend === 0 || weekWallHit || fiveWallHit) verdict = "over";
+  // over = GENUINELY out: the weekly coin tank is spent, or Anthropic's real wall is hit on a
+  // live window. Everything softer — a maxed 5h even-pace share (quota>=1), or a held reserve —
+  // only THROTTLES session_to_spend so fan-outs back off; it must NOT hard-deny the account.
+  // reif_tgp burned its 29.76M 5h share with 815M week left + Anthropic's real 5h at 2% and
+  // skipped a whole QA run: front-loading one window is not being out of budget.
+  else if (weekPct >= 1 || weekWallHit || fiveWallHit) verdict = "over";
   else if (!fresh) verdict = "degraded";
 
   // Channel = surface × project: two CC instances on one laptop (different project
