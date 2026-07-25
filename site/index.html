@@ -241,12 +241,12 @@
 
   <section class="ingrid" id="math">
     <h2>Here is the math.</h2>
-    <p class="lead" style="margin-bottom:18px">Four lines. That is the whole product.</p>
-    <div class="rail"><span class="lbl">pace&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">to_spend = week_left ÷ 5h_windows_left</span>&nbsp;&nbsp;<span class="k-dim">What to spend this window.</span></div>
-    <div class="rail"><span class="lbl">anchor&nbsp;</span> <span class="k-ink">cap = burned ÷ used%</span>&nbsp;&nbsp;<span class="k-dim">Pinned to <code>/usage</code>.</span></div>
-    <div class="rail"><span class="lbl">burn&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">per line = (input + 5·output + 1.25·cache_write + 0.1·cache_read) × model_price</span>&nbsp;&nbsp;<span class="k-dim">Different models cost different</span></div>
+    <p class="lead" style="margin-bottom:18px">It counts <b>coins</b>, not barrels. Four lines. That is the whole product.</p>
+    <div class="rail"><span class="lbl">coin&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">1 coin = (input + 5·output + 1.25·cache_write + 0.1·cache_read) × model_price</span>&nbsp;&nbsp;<span class="k-dim">One honest unit of burn.</span></div>
+    <div class="rail"><span class="lbl">tank&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">1,000,000,000 coins / week</span>&nbsp;&nbsp;<span class="k-dim">Your budget — one fixed number, every account.</span></div>
+    <div class="rail"><span class="lbl">pace&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">to_spend = coins_left ÷ 5h_windows_left</span>&nbsp;&nbsp;<span class="k-dim">What to spend this window.</span></div>
     <div class="rail"><span class="lbl">models&nbsp;</span> <span class="k-ink">haiku ⅓ · sonnet 1 · opus 5⁄3 · fable 10⁄3</span>&nbsp;&nbsp;<span class="k-dim">From Anthropic's price sheet, daily.</span></div>
-    <p class="hint" style="margin-top:14px">A Fable token costs 10× a Haiku token. maxx counts what they cost.</p>
+    <p class="hint" style="margin-top:14px">A Fable token is 10 coins to a Haiku token's 1. It's an MPG meter for your week — you count coins, the plan bills by the barrel.</p>
   </section>
 </div>
 
