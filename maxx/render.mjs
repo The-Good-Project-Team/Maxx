@@ -938,31 +938,28 @@ function main() {
   // owner-dashboard feed tags a row with when 2+ sessions share a project (handler.mjs
   // `String(e.root).slice(0,4)`). Two agents in one directory now name themselves: read the
   // tag here, match it to the burning row there. Only shown when we know the session id.
+  // Order: model · last-turn coins · context coins · branch · session-id. Signed with the login
+  // handle at the right (footStr). Colour rides the last-turn number (vs its own recent average)
+  // and the context size. Cache %, $ cost, and the ctx % are dropped — noise the driver can't act on.
   const ctxCol = ctxPct >= 85 ? RED : ctxPct >= 65 ? AMBER : DIM;
-  const sidTag = sid ? `id ${String(sid).slice(0, 4)}  ·  ` : "";
-  let metaRow = fg(DIM, fam.toLowerCase() + "  ·  " + sidTag + (branch ? trunc(branch, 34) + "  ·  " : "") + `$${Math.round(usd)}  ·  ctx `)
-    + fg(ctxCol, `${Math.floor(ctxPct)}%`) + fg(DIM, "  ·  cache ") + fg(cacheCol, cacheV);
-
-  // per-turn cost, averaged over the last 3 turns of THIS session. The 5h and weekly
-  // meters answer "how much is left"; this answers "what is each turn costing me right
-  // now", which is the number that moves first when a context starts re-billing itself.
-  // ▲ when the last 3 turns are meaningfully dearer than the 3 before them.
+  // last-turn coins — colour compares it against the last 10 turns of THIS session (▲ dearer).
   const hist = turnHistory(sid, lastTurns(p.transcript_path, 10), total);
+  let lastSeg = "";
   if (hist.length >= 1) {
-    // running average over the last 10 turns — averaging whatever exists rather than
-    // waiting for a full window, so it reads from the first turn after a /clear.
     const win = hist.slice(-10);
     const avg = win.reduce((x, y) => x + y, 0) / win.length;
     const last = hist[hist.length - 1];
-    const turnCol = avg >= 500e3 ? RED : avg >= 200e3 ? AMBER : DIM;
-    // the last turn is shown as its own total, not a delta; colour carries the
-    // comparison against the average so direction is still legible at a glance
     const r = avg > 0 ? last / avg : 1;
     const lCol = r >= 1.35 ? RED : r >= 1.12 ? AMBER : r <= 0.88 ? GREEN : DIM;
-    metaRow += fg(DIM, "  ·  ") + fg(turnCol, tkf(avg))
-      + fg(DIM, "/") + fg(lCol, tkf(last))
-      + fg(DIM, " turn");
+    lastSeg = fg(lCol, tkf(last)) + fg(DIM, " last turn");
   }
+  const dot = fg(DIM, "  ·  ");
+  const segs = [fg(DIM, fam.toLowerCase())];
+  if (lastSeg) segs.push(lastSeg);
+  if (total > 0) segs.push(fg(DIM, "coin context ") + fg(ctxCol, tkf(total)));
+  if (branch) segs.push(fg(DIM, trunc(branch, 34)));
+  if (sid) segs.push(fg(DIM, "id " + String(sid).slice(0, 4)));
+  let metaRow = segs.join(dot);
 
   // coach pulled for now — the meters + cushion/over carry it. keep /maxx as a quiet sign-off at
   // the right of the stats line — signed with WHOSE numbers these are (the session
