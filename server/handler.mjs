@@ -249,18 +249,18 @@ function renderCard(h, s, b, setup = null) {
   const shareTxt = `${humanN(lifetime)} lifetime Claude tokens, verified by @meetmaxx`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${h} — Verified token usage · Maxx</title>
-<meta property="og:title" content="${h} — verified Claude token usage">
+<title>${h} — Verified coin usage · Maxx</title>
+<meta property="og:title" content="${h} — verified Claude coin usage">
 <meta property="og:description" content="${desc}">
 <meta property="og:url" content="${url}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Maxx">
 <meta property="og:image" content="https://meetmaxx.co/og-card.png">
 <meta property="og:image:type" content="image/png">
-<meta property="og:image:alt" content="Maxx — verified Claude token usage, every machine and cloud session">
+<meta property="og:image:alt" content="Maxx — verified Claude coin usage, every machine and cloud session">
 <meta property="og:image:width" content="2400"><meta property="og:image:height" content="1260">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${h} — verified Claude token usage">
+<meta name="twitter:title" content="${h} — verified Claude coin usage">
 <meta name="twitter:description" content="${desc}">
 <meta name="twitter:image" content="https://meetmaxx.co/og-card.png">
 <link rel="icon" href="https://meetmaxx.co/favicon.svg" type="image/svg+xml">
@@ -356,7 +356,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-
    <span class="livepill"><span class="ldot"></span> live</span>
   </span>
  </div>
- <div class="hero"><div class="n" id="hero">${fmtN(lifetime)}</div><div class="l" id="heroSub">lifetime tokens</div></div>
+ <div class="hero"><div class="n" id="hero">${fmtN(lifetime)}</div><div class="l" id="heroSub">lifetime coins</div></div>
  <div class="ranges" id="ranges">${RANGE_PILLS}<span class="cmeta" id="cMeta"></span></div>
  <div class="chart" id="chart">${chartHtml(1000, 260)}
   <div class="cap"><span id="capL"></span><span>all machines &amp; cloud · this Claude account</span><span id="capR">today</span></div>
@@ -636,7 +636,7 @@ td{border-bottom-color:#222b40}
  <span class="flash" id="fleetFlash"></span>
 
  <h2>Runaway detection <span class="sub">— sustained burn that trips the runaway webhook event</span></h2>
- <div class="row"><label>Rate threshold (tokens / 5 min)</label><input id="rrate" value="${cfg.runaway_rate_5m ?? 500000}" size="12"></div>
+ <div class="row"><label>Rate threshold (coins / 5 min)</label><input id="rrate" value="${cfg.runaway_rate_5m ?? 500000}" size="12"></div>
  <div class="row"><label>Sustained for (minutes)</label><input id="rmin" value="${cfg.runaway_min ?? 10}" size="12"></div>
  <div class="row"><button class="primary" id="cfgSave">Save</button><span class="flash" id="cfgFlash"></span></div>
 
@@ -1233,7 +1233,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
     // never anchored: tokens are counted, caps are unknown — say so once, neutrally,
     // instead of painting a brand-new account as over-budget everywhere
     if(b.verdict==='calibrating'){
-      document.getElementById('bars').innerHTML='<div style="font-size:12.5px;color:#8a93a5;padding:2px 0">calibrating — tokens are being counted; caps appear after the first Claude Code session anchors <span style="color:#5b6474">/usage</span></div>';
+      document.getElementById('bars').innerHTML='<div style="font-size:12.5px;color:#8a93a5;padding:2px 0">calibrating — coins are being counted; caps appear after the first Claude Code session anchors <span style="color:#5b6474">/usage</span></div>';
       [['netV','—','/min','tracking'],['remV','—','','waiting for first anchor'],['runV','—','','open Claude Code once']].forEach(function(x){
         var v=document.getElementById(x[0]);v.textContent=x[1];v.style.color='var(--ink-3)';
         if(x[0]==='netV')document.getElementById('netU').textContent=x[2];
@@ -1495,7 +1495,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
         ' → '+(sev?'<b>/fenix now</b>':'/clear soon'));
     }
     var errs=h1.reduce(function(a,e){return a+(e.errors||0)},0);
-    if(errs>0)lines.push('⚠ <b>'+errs+' token error'+(errs===1?'':'s')+'</b> last hour (rate-limit / API) — the wall is pushing back');
+    if(errs>0)lines.push('⚠ <b>'+errs+' error'+(errs===1?'':'s')+'</b> last hour (rate-limit / API) — the wall is pushing back');
     var held=(window.__ops||[]).filter(function(o){return /held|OVER|pause/i.test((o.op||'')+' '+(o.d||''))&&o.ts>t-1800}).sort(function(x,y){return y.ts-x.ts})[0];
     if(held)lines.push('🛡 maxx protected you · '+esc(held.op+(held.d?' · '+held.d:''))+' · '+ago(Math.max(0,t-held.ts))+' ago');
     if(lines.length){ins.style.display='block';ins.innerHTML=lines.join('<br>');}

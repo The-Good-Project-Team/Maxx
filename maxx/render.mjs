@@ -237,7 +237,7 @@ function sessionBrief(st) {
   out.push(row("net", (net >= 0 ? "+" : "−") + abbr(net) + "/min", net >= 0 ? "under weekly pace — the week will last" : "over weekly pace — easing off recovers it"));
   out.push(row("week", abbr(w.headroom || 0) + " left", `· ${sess ?? "?"} windows left · resets in ${w.resetIn || "?"}`));
   out.push("");
-  out.push("  SAFE = your weekly tokens ÷ the 5h windows left this week. Plan work against it: future");
+  out.push("  SAFE = your weekly coins ÷ the 5h windows left this week. Plan work against it: future");
   out.push("  windows keep giving fair shares, so an overspend now is recovered later — you don't have to");
   out.push("  claw it back this window. BURST past pace reaches the hard 5h wall but eats into future weeks.");
   return out.join("\n");
@@ -638,7 +638,7 @@ function main() {
   // STABLE token cap per window. We anchor the cap to the wall (tok ÷ wall%) — that's the honest
   // magnitude — but re-anchor ONLY when the wall % actually ticks, holding it steady in between.
   // If we recomputed tok÷quota every render, a flat quota with rising tok would inflate the cap as
-  // you burn, so "tokens left" would go UP while spending — backwards. Cached in caps.json so the
+  // you burn, so "coins left" would go UP while spending — backwards. Cached in caps.json so the
   // held value survives across renders (and across a reset, since the cap itself doesn't change).
   const capsPath = MAXX("caps.json");
   const caps = readJSON(capsPath, {});

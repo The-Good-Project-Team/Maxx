@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>maxx — track your tokens from everywhere.</title>
+<title>maxx — track your coins from everywhere.</title>
 <meta name="description" content="Every machine, every cloud agent, one live tally. One line to install.">
-<meta property="og:title" content="maxx — track your tokens from everywhere.">
+<meta property="og:title" content="maxx — track your coins from everywhere.">
 <meta property="og:description" content="Every machine, every cloud agent, one live tally. One line to install.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://meetmaxx.co/">
@@ -13,7 +13,7 @@
 <meta property="og:image:width" content="2400">
 <meta property="og:image:height" content="1260">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="maxx — track your tokens from everywhere.">
+<meta name="twitter:title" content="maxx — track your coins from everywhere.">
 <meta name="twitter:description" content="Every machine, every cloud agent, one live tally. One line to install.">
 <meta name="twitter:image" content="https://meetmaxx.co/og-card.png">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -95,6 +95,10 @@
   /* hero */
   header{text-align:center;padding:40px 0 14px}
   .eyebrow{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);margin-bottom:18px}
+  .coin-hero{display:flex;justify-content:center;margin-bottom:16px}
+  .coin-hero canvas{image-rendering:pixelated;width:clamp(74px,13vw,98px);height:auto;filter:drop-shadow(0 5px 5px hsl(266 55% 32% / .30));animation:coin-bob 2.8s ease-in-out infinite}
+  @keyframes coin-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+  @media (prefers-reduced-motion:reduce){.coin-hero canvas{animation:none}}
   h1{font-family:var(--display);font-size:clamp(34px,6vw,58px);line-height:1.04;margin:0 0 18px;letter-spacing:-.02em;font-weight:700}
   .sub{font-size:clamp(17px,2.4vw,21px);color:var(--dim);max-width:700px;margin:0 auto 24px;text-wrap:balance}
 
@@ -191,8 +195,9 @@
 </nav>
 
 <header class="wrap">
+  <div class="coin-hero"><canvas id="lcoin" width="30" height="30" role="img" aria-label="Spinning pixel coin"></canvas></div>
   <div class="eyebrow">For <b style="color:var(--brand)">Claude Code</b></div>
-  <h1>Track your <s style="opacity:.4;text-decoration-thickness:.06em;font-weight:inherit">token</s> <span style="color:var(--brand)">coin</span> usage<br>from everywhere.</h1>
+  <h1>Track your <span style="color:var(--brand)">coins</span><br>from everywhere.</h1>
   <p class="sub">Every machine, every cloud agent, one live tally.</p>
 
   <div class="install" id="install-top">
@@ -207,7 +212,7 @@
       <svg width="44" height="72" viewBox="0 0 30 52"><path d="M5 2 C 19 8, 23 22, 19 44 M12 37 l7 9 8-8"/></svg>
     </div>
     <div class="shot live-shot">
-      <iframe src="https://meetmaxx.co/u/reif/dash" title="Reif's live maxx dashboard: budget bars, burn rate, tokens per minute, machines and cloud agents, and the live activity tail — updating as he works" loading="lazy"></iframe>
+      <iframe src="https://meetmaxx.co/u/reif/dash" title="Reif's live maxx dashboard: budget bars, burn rate, coins per minute, machines and cloud agents, and the live activity tail — updating as he works" loading="lazy"></iframe>
     </div>
     <div class="live-note ln-bottom" aria-hidden="true">
       <svg width="44" height="72" viewBox="0 0 30 52"><path d="M25 50 C 11 44, 7 30, 11 8 M4 16 l7-9 8 8"/></svg>
@@ -246,7 +251,7 @@
     <div class="rail"><span class="lbl">tank&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">1,000,000,000 coins / week</span>&nbsp;&nbsp;<span class="k-dim">Your budget — one fixed number, every account.</span></div>
     <div class="rail"><span class="lbl">pace&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">to_spend = coins_left ÷ 5h_windows_left</span>&nbsp;&nbsp;<span class="k-dim">What to spend this window.</span></div>
     <div class="rail"><span class="lbl">models&nbsp;</span> <span class="k-ink">haiku ⅓ · sonnet 1 · opus 5⁄3 · fable 10⁄3</span>&nbsp;&nbsp;<span class="k-dim">From Anthropic's price sheet, daily.</span></div>
-    <p class="hint" style="margin-top:14px">A Fable token is 10 coins to a Haiku token's 1. It's an MPG meter for your week — you count coins, the plan bills by the barrel.</p>
+    <p class="hint" style="margin-top:14px">Fable burns 10 coins where Haiku burns 1. It's an MPG meter for your week — you count coins, the plan bills by the barrel.</p>
   </section>
 </div>
 
@@ -348,7 +353,7 @@
   <section class="ingrid">
     <div class="privacy">
       <h2>Your stuff stays yours</h2>
-      <p class="lead" style="margin:0 auto">Counts only: tokens, timestamps, model names. Never a prompt, never your code — the emitter can't leak what it never reads. MIT. Read the code.</p>
+      <p class="lead" style="margin:0 auto">Counts only: coins, timestamps, model names. Never a prompt, never your code — the emitter can't leak what it never reads. MIT. Read the code.</p>
     </div>
   </section>
 
@@ -385,8 +390,8 @@
           num=document.getElementById('df-num'), rate=document.getElementById('df-rate'), note=document.getElementById('df-note');
     if(!g) return;
     const S=[
-      {g:.58,r:0, num:'591k tokens',  nc:'k-green', rate:'+61k/min',  rc:'k-green', note:'Under pace. Banking tokens.'},
-      {g:.14,r:0, num:'96k tokens',   nc:'k-green', rate:'+9k/min',   rc:'k-green', note:'Steady. Right on pace.'},
+      {g:.58,r:0, num:'591k coins',  nc:'k-green', rate:'+61k/min',  rc:'k-green', note:'Under pace. Banking coins.'},
+      {g:.14,r:0, num:'96k coins',   nc:'k-green', rate:'+9k/min',   rc:'k-green', note:'Steady. Right on pace.'},
       {g:0, r:.32,num:'1,240k over',  nc:'k-red',   rate:'−90k/min',  rc:'k-red', note:'Over pace. Ease off.'},
       {g:0, r:.92,num:'4,980k over',  nc:'k-red',   rate:'−150k/min', rc:'k-red', note:'About to hit the 5-hour wall, where Claude stops you.'},
     ];
@@ -467,6 +472,49 @@
     setInterval(fit,3000);
     fit();
   })();
+</script>
+<script>
+(function () {
+  var cv = document.getElementById("lcoin");
+  if (!cv || !cv.getContext) return;
+  var ctx = cv.getContext("2d");
+  var N = 30, cx = 15, cy = 15, R = 13, T = 3.0;
+  // gold face, brand-purple rim + "M" emblem
+  var OUT = "#2a1146", G = "#e8b93a", GL = "#f3d271", HI = "#fae9ad", GD = "#c8952a";
+  var PUR = "#7c3aed", PURD = "#551fab", PURL = "#a877f5";
+  var em = ["X.....X", "XX...XX", "X.X.X.X", "X..X..X", "X.....X", "X.....X", "X.....X"];
+  var eset = {};
+  for (var j = 0; j < em.length; j++) for (var i = 0; i < em[j].length; i++) if (em[j][i] === "X") eset[(i - 3) + "," + (j - 3)] = 1;
+  function faceCol(nx, ny) { var L = -nx * 0.5 - ny; if (L > 9) return HI; if (L > 4) return GL; if (L < -6) return GD; return G; }
+  function draw(theta) {
+    ctx.clearRect(0, 0, N, N);
+    var w = Math.cos(theta), s = Math.sin(theta);
+    var faceW = R * Math.abs(w), eT = T * Math.abs(s), front = w >= 0;
+    for (var y = 0; y < N; y++) {
+      var ny = (y - cy) / R; if (Math.abs(ny) > 1) continue;
+      var rh = Math.sqrt(1 - ny * ny), fH = faceW * rh, sH = fH + eT, topBot = Math.abs(ny) > 0.94;
+      for (var x = 0; x < N; x++) {
+        var nx = x - cx, ax = Math.abs(nx); if (ax > sH + 0.4) continue;
+        var col;
+        if (ax > sH - 1 || topBot) col = OUT;                       // dark-purple outline
+        else if (ax <= fH) {                                        // gold face
+          col = faceCol(nx, ny);
+          if (front && faceW > 2) { var ex = Math.round(nx / Math.max(0.2, Math.abs(w))); if (eset[ex + "," + (y - cy)]) col = PUR; }
+        } else {                                                    // purple rim (coin thickness)
+          col = PURD;
+          if (-nx - ny > 3) col = PUR;
+          if (fH < 2.4 && ax < 1.2) col = PURL;                     // glint when edge-on
+        }
+        ctx.fillStyle = col; ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) { draw(0.6); return; }
+  var t0 = null;
+  function loop(t) { if (t0 === null) t0 = t; draw(((t - t0) / 2600) * Math.PI * 2); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+})();
 </script>
 </body>
 </html>
