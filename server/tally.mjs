@@ -218,7 +218,15 @@ export function computeBudget(store, now) {
   // nets cumulative spend, so this share naturally shrinks as the week fills — no separate 5h
   // subtraction, no self-inflicted zero while the tank still has coins.
   const windowsLeft = wr ? Math.max(1, (wr - now) / FIVE_H) : 1;
-  const sessionSafe = weeklyLeft != null ? Math.round(weeklyLeft / windowsLeft) : null;
+  // est5hRoom = coins left in Anthropic's 5h window, ESTIMATED from their own % (five ÷ five_pct
+  // = the coins the current % implies as full, minus what's spent). We set the weekly tank; the 5h
+  // window is Anthropic's and unknown to us, so this is a best-effort read of their %. Trusted only
+  // when the % is big enough to divide by (>2%); below that it's noise → no 5h cap, the weekly
+  // remainder governs and the real wall backstops. A hint, not a promise.
+  const est5hRoom = a && a.five_pct > 0.02 && five > 0 ? Math.max(0, Math.round(five / a.five_pct - five)) : Infinity;
+  // The session remainder: weekly headroom ÷ windows left, but never more than the estimated 5h
+  // room — we won't tell a routine to spend past what this window can physically hold.
+  const sessionSafe = weeklyLeft != null ? Math.min(Math.round(weeklyLeft / windowsLeft), est5hRoom) : null;
   const sessionToSpend = sessionSafe;
 
   // #4 reservation leases: active leases subtract from the allowance other
@@ -275,10 +283,9 @@ export function computeBudget(store, now) {
   const netPerMinVal = sustainablePerMin != null
     ? Math.round(sustainablePerMin - burn5m / 5)
     : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : null);
-  // burst = the hard ceiling you can physically spend to right now = the whole remaining weekly
-  // tank (Anthropic's real wall is the actual physical stop, surfaced separately — not our
-  // even-pace sub-cap, which would falsely read 0 with 800M of coins still left).
-  const fiveHeadroom = weeklyLeft != null ? weeklyLeft : null;
+  // burst = the physical ceiling now: the whole remaining tank, or the estimated 5h room (same
+  // estimate as the remainder above), whichever is less. A hint bounded by Anthropic's real wall.
+  const fiveHeadroom = weeklyLeft != null ? Math.min(weeklyLeft, est5hRoom) : null;
   // projected wall hit: trailing-6h burn extrapolated forward. 6h smooths the 5m spikes
   // a live session throws; a projection inside the current week window means "at this
   // pace you hit the wall EARLY" — the signal this week's postmortem never got.

@@ -62,7 +62,7 @@ test("net_per_min = sustainable weekly pace − recent burn (the pace model)", (
   assert.equal(b.net_per_min, Math.round(sustainable - b.burn_5m / 5));
 });
 
-test("session_burst is the remaining weekly tank — the physical ceiling, ≥ the paced remainder", () => {
+test("session_burst = the estimated 5h room (from Anthropic's %) when it's tighter than the tank", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r2", ts: T - 100, billed: 1.5e6 });
   s.anchors.push({
@@ -71,9 +71,18 @@ test("session_burst is the remaining weekly tank — the physical ceiling, ≥ t
   });
   const b = computeBudget(s, T);
   assert.equal(b.five_billed, 1.5e6);
-  // burst = whole remaining tank (1B − ledger week), NOT our even-pace sub-cap; Anthropic's wall is the real stop
-  assert.equal(b.session_burst, COINS_MAX - 1.5e6);
-  assert.ok(b.session_burst >= b.session_to_spend, `burst ${b.session_burst} >= remainder ${b.session_to_spend}`);
+  // 1.5M at 10% of the 5h window ⇒ ~15M implied 5h cap ⇒ ~13.5M room left — the binding ceiling
+  assert.equal(b.session_burst, Math.round(1.5e6 / 0.1 - 1.5e6));
+  // the remainder is capped by that same estimate — never told to spend past what the window holds
+  assert.ok(b.session_to_spend <= b.session_burst, `remainder ${b.session_to_spend} <= burst ${b.session_burst}`);
+});
+
+test("a low 5h % is too noisy to divide — burst falls back to the whole remaining tank", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 100, billed: 5e6 });
+  s.anchors.push({ ts: T - 60, five_pct: 0.01, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 6 * 86400 });
+  const b = computeBudget(s, T);
+  assert.equal(b.session_burst, COINS_MAX - 5e6, "≤2% 5h ⇒ no estimate; burst = remaining tank");
 });
 
 // A sleeping laptop is the only thing that stops /usage anchors — it must not blind the
