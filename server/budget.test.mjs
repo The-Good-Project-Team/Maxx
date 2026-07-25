@@ -274,6 +274,20 @@ test("real 99% utilization on a live window still forces over (safety wall)", ()
   assert.equal(computeBudget(s, T).verdict, "over", "real weekly wall overrides a half-full coin tank");
 });
 
+// A transient reserve (a fan-out's maxx_reserve lease) throttles session_to_spend so other
+// dispatchers back off — but must NOT flip the verdict to "over". One lease hard-denying the
+// whole account while the week is healthy is the reif_tgp "over at 18% + 1 lease" surprise.
+test("a held reserve throttles to_spend but does not flip the verdict", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 20e6 }); // 20M spent this 5h window
+  s.anchors.push({ ts: T - 60, five_pct: 0.1, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 6 * 86400 });
+  s.leases = [{ tokens: 18e6, expires: T + 3600, label: "fan-out" }];           // reserves more than the share left
+  const b = computeBudget(s, T);
+  assert.equal(b.verdict, "ok", `healthy week with a held lease must not read over, got ${b.verdict}`);
+  assert.equal(b.reserved_tokens, 18e6);
+  assert.equal(b.session_to_spend, 0, "the reserve throttles to_spend to 0 so fan-outs back off");
+});
+
 // A CAP is a capacity; a READING is not. The 5h path already refuses an anchor whose
 // window has since died (windowCurrent). The WEEK path did not: an anchor taken just
 // before week_reset carries week_used ≈ cap, and the server kept adding to it AFTER the
