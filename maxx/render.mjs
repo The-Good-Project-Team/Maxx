@@ -692,7 +692,12 @@ function main() {
   // Coin model: used = the LEDGER coin count (our own burn), NOT pct×cap. The gauge measures
   // what we spent against the fixed tank, so the bars can diverge from Anthropic's % — the point.
   const used5 = tok5roll != null ? Math.round(tok5roll) : Math.round(tok5 || 0);
-  const used7 = Math.round(tok7 || 0);
+  // Week USED is anchored to Anthropic's own 7d % (robust — it arrives on stdin every render and
+  // never collapses), scaled to the coin tank. The local bucket sum (tok7) is a FALLBACK for when
+  // there's no live %: it can transiently read ~0 (account switch, first render, mid-rewrite of
+  // window.json), which used to snap the week bar to "just started" mid-week. Pinning to the % also
+  // makes the bar match /usage exactly.
+  const used7 = haveWeek ? Math.round(week * cap7s) : Math.round(tok7 || 0);
   // ROLL-SESSION — one sentence: weekly tokens LEFT ÷ the 5h windows left this week = tokens good to use
   // this session. Spend up to it and the week lasts; max Anthropic's raw 5h wall instead and you're out in
   // days. It BANKS: it's LIVE, so as you spend, weekly-left drops and it ticks down (~1:1); when you go
@@ -708,7 +713,7 @@ function main() {
   // session bar is now the REAL session: used against realMax, not the raw 5h wall.
   const q5 = realMax ? Math.min(1, used5 / realMax) : (haveQuota ? quota : 0);
   // week FILL is the coin fraction of the tank — our meter reads our burn, not Anthropic's %.
-  const w7 = cap7s ? Math.min(1, used7 / cap7s) : 0;
+  const w7 = haveWeek ? week : (cap7s ? Math.min(1, used7 / cap7s) : 0);
   const qcol = col(q5), wcol = col(w7);
   // how far into each window you are (the pace line): elapsed = time-in / window-span. The span
   // start clamps to the account epoch — a just-switched account did NOT start its window resets−7d
