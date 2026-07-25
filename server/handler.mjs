@@ -48,7 +48,7 @@ const TOOLS = [
   },
   {
     name: "maxx_budget",
-    description: "Read the current omni-surface subscription budget from the central maxx tally: verdict (ok/degraded/over/stale/calibrating — degraded = no fresh /usage anchor, weekly standing still live, proceed on the weekly numbers; calibrating = account has never been anchored, hard stop until a Claude Code session runs), session_to_spend (tokens SAFE to use now — weekly-paced, capped at the 5h wall, nets reserves), session_burst (the HARD 5h ceiling you can physically spend to now, ≥ safe), net_per_min (sustainable weekly pace − recent burn: + = under pace, − = over pace), sustainable_per_min (weekly reserve ÷ time to reset), weekly_left_tokens, and the 5h/weekly reset clocks. Plan agent work against session_to_spend; session_burst is the ceiling if you must exceed pace (it eats future weeks). A negative net_per_min means you're spending faster than sustainable — re-check before each expensive step.",
+    description: "Read the current omni-surface subscription budget from the central maxx tally: verdict (ok/degraded/over/stale/calibrating — degraded = no fresh /usage anchor, weekly standing still live, proceed on the weekly numbers; calibrating = account has never been anchored, hard stop until a Claude Code session runs), session_to_spend (tokens SAFE to use now — weekly-paced, capped at the 5h wall, nets reserves), session_burst (the top of the coin-spree band, ≥ safe), coin_spree_low / coin_spree_high (the safe spend band for THIS window — 85–97% of the ESTIMATED Anthropic 5h room, since we set the weekly tank but only estimate their 5h window from their %; a hint, not a promise — Anthropic's real wall may cut in sooner), net_per_min (sustainable weekly pace − recent burn: + = under pace, − = over pace), sustainable_per_min (weekly reserve ÷ time to reset), weekly_left_tokens, and the 5h/weekly reset clocks. Plan agent work against session_to_spend; session_burst is the ceiling if you must exceed pace (it eats future weeks). A negative net_per_min means you're spending faster than sustainable — re-check before each expensive step.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: { handle: { type: "string" } },
@@ -1307,10 +1307,10 @@ if(location.search)history.replaceState(null,'',location.pathname);
     var runV=document.getElementById('runV'),runSub=document.getElementById('runSub');
     if(banked){
       runV.textContent='+'+hum(toSpend);runV.style.color='var(--ink)';
-      runSub.textContent='safe to spend'+(b.session_burst!=null?' · burst '+hum(b.session_burst)+' to 5h wall':'');
+      runSub.textContent='safe to spend'+(b.session_burst!=null?' · coin-spree '+hum(b.coin_spree_low)+'–'+hum(b.coin_spree_high):'');
     }else{
       runV.textContent=over>0?'−'+hum(over):'0';runV.style.color='var(--red)';
-      runSub.textContent='over pace'+(b.session_burst!=null?' · burst '+hum(b.session_burst)+' to 5h wall':'');
+      runSub.textContent='over pace'+(b.session_burst!=null?' · coin-spree '+hum(b.coin_spree_low)+'–'+hum(b.coin_spree_high):'');
     }
   }
 

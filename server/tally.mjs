@@ -218,15 +218,19 @@ export function computeBudget(store, now) {
   // nets cumulative spend, so this share naturally shrinks as the week fills — no separate 5h
   // subtraction, no self-inflicted zero while the tank still has coins.
   const windowsLeft = wr ? Math.max(1, (wr - now) / FIVE_H) : 1;
-  // est5hRoom = coins left in Anthropic's 5h window, ESTIMATED from their own % (five ÷ five_pct
-  // = the coins the current % implies as full, minus what's spent). We set the weekly tank; the 5h
-  // window is Anthropic's and unknown to us, so this is a best-effort read of their %. Trusted only
-  // when the % is big enough to divide by (>2%); below that it's noise → no 5h cap, the weekly
-  // remainder governs and the real wall backstops. A hint, not a promise.
-  const est5hRoom = a && a.five_pct > 0.02 && five > 0 ? Math.max(0, Math.round(five / a.five_pct - five)) : Infinity;
-  // The session remainder: weekly headroom ÷ windows left, but never more than the estimated 5h
-  // room — we won't tell a routine to spend past what this window can physically hold.
-  const sessionSafe = weeklyLeft != null ? Math.min(Math.round(weeklyLeft / windowsLeft), est5hRoom) : null;
+  // COIN-SPREE — how much you can safely blow THIS window. We set the weekly tank; the 5h window is
+  // Anthropic's and unknown to us, so we ESTIMATE its coin size from their own % (five ÷ five_pct)
+  // and quote a RANGE: 85–97% of that estimate, net of what's spent. Never 100% — leave headroom
+  // before the real wall. Trusted only above 2% (else the divide is noise → fall back to a band from
+  // the paced share up to the whole tank). Always clamped to the weekly tank; a hint, not a promise.
+  const estCap5h = a && a.five_pct > 0.02 && five > 0 ? five / a.five_pct : null;
+  const pacedShare = weeklyLeft != null ? Math.round(weeklyLeft / windowsLeft) : null;
+  const spreeAt = (frac, fallback) =>
+    weeklyLeft == null ? null : Math.max(0, Math.min(weeklyLeft, Math.round(estCap5h != null ? frac * estCap5h - five : fallback)));
+  const coinSpreeLow = spreeAt(0.85, pacedShare);   // fallback low = your paced share
+  const coinSpreeHigh = spreeAt(0.97, weeklyLeft);  // fallback high = the whole remaining tank
+  // the session remainder we pace against: the weekly share, never above the top of the spree band
+  const sessionSafe = weeklyLeft != null ? Math.min(pacedShare, coinSpreeHigh) : null;
   const sessionToSpend = sessionSafe;
 
   // #4 reservation leases: active leases subtract from the allowance other
@@ -283,9 +287,8 @@ export function computeBudget(store, now) {
   const netPerMinVal = sustainablePerMin != null
     ? Math.round(sustainablePerMin - burn5m / 5)
     : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : null);
-  // burst = the physical ceiling now: the whole remaining tank, or the estimated 5h room (same
-  // estimate as the remainder above), whichever is less. A hint bounded by Anthropic's real wall.
-  const fiveHeadroom = weeklyLeft != null ? Math.min(weeklyLeft, est5hRoom) : null;
+  // session_burst = the top of the coin-spree band (97% of the estimated 5h room).
+  const fiveHeadroom = coinSpreeHigh;
   // projected wall hit: trailing-6h burn extrapolated forward. 6h smooths the 5m spikes
   // a live session throws; a projection inside the current week window means "at this
   // pace you hit the wall EARLY" — the signal this week's postmortem never got.
@@ -346,6 +349,8 @@ export function computeBudget(store, now) {
     projected_wall_at: projectedWallAt,
     session_burst: fiveHeadroom,
     session_safe: sessionSafe,
+    // coin-spree: the safe spend band for THIS window — 85–97% of the estimated Anthropic 5h room.
+    coin_spree_low: coinSpreeLow, coin_spree_high: coinSpreeHigh,
     reserved_tokens: reservedTokens, leases: activeLeases.length,
     burn_5m: burn5m, empties_at: emptiesAt,
     top_burners: topBurners,

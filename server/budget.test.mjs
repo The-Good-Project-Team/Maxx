@@ -62,7 +62,7 @@ test("net_per_min = sustainable weekly pace − recent burn (the pace model)", (
   assert.equal(b.net_per_min, Math.round(sustainable - b.burn_5m / 5));
 });
 
-test("session_burst = the estimated 5h room (from Anthropic's %) when it's tighter than the tank", () => {
+test("coin-spree = 85–97% of the estimated Anthropic 5h room; burst is the top of the band", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r2", ts: T - 100, billed: 1.5e6 });
   s.anchors.push({
@@ -71,10 +71,12 @@ test("session_burst = the estimated 5h room (from Anthropic's %) when it's tight
   });
   const b = computeBudget(s, T);
   assert.equal(b.five_billed, 1.5e6);
-  // 1.5M at 10% of the 5h window ⇒ ~15M implied 5h cap ⇒ ~13.5M room left — the binding ceiling
-  assert.equal(b.session_burst, Math.round(1.5e6 / 0.1 - 1.5e6));
-  // the remainder is capped by that same estimate — never told to spend past what the window holds
-  assert.ok(b.session_to_spend <= b.session_burst, `remainder ${b.session_to_spend} <= burst ${b.session_burst}`);
+  const estCap = 1.5e6 / 0.1;                                          // 15M implied 5h capacity
+  assert.equal(b.coin_spree_low, Math.round(0.85 * estCap - 1.5e6));   // 11.25M — floor of the band
+  assert.equal(b.coin_spree_high, Math.round(0.97 * estCap - 1.5e6));  // 13.05M — never 100%
+  assert.equal(b.session_burst, b.coin_spree_high, "burst is the top of the spree");
+  assert.ok(b.coin_spree_low < b.coin_spree_high, "it's a range");
+  assert.ok(b.session_to_spend <= b.session_burst, "the remainder is never above the spree top");
 });
 
 test("a low 5h % is too noisy to divide — burst falls back to the whole remaining tank", () => {
