@@ -211,12 +211,15 @@ export function computeBudget(store, now) {
   const slSpend = null, slOver = 0, slBank = null;
 
   const weeklyLeft = weekCap != null ? Math.max(0, weekCap - week) : null;
-  // sessions-left-this-week paces the weekly headroom over the 5h windows remaining,
-  // capped at the 5h wall, MINUS what this window already spent (limit.mjs rollSession).
+  // The SESSION REMAINDER: the weekly coin headroom spread over the 5h windows left = a fair
+  // share for this window. We SHOW it as-is and let routines pace against it — we do NOT clamp
+  // it to our even-pace sub-cap or zero it out when a window front-loads. Over-pace is surfaced
+  // by net_per_min (guidance); the only HARD stop is Anthropic's real wall. weeklyLeft already
+  // nets cumulative spend, so this share naturally shrinks as the week fills — no separate 5h
+  // subtraction, no self-inflicted zero while the tank still has coins.
   const windowsLeft = wr ? Math.max(1, (wr - now) / FIVE_H) : 1;
-  const sessionSafe = weeklyLeft != null
-    ? Math.min(fiveCap ?? Infinity, Math.round(weeklyLeft / windowsLeft)) : null;
-  const sessionToSpend = slSpend != null ? slSpend : sessionSafe != null ? Math.max(0, sessionSafe - five) : null;
+  const sessionSafe = weeklyLeft != null ? Math.round(weeklyLeft / windowsLeft) : null;
+  const sessionToSpend = sessionSafe;
 
   // #4 reservation leases: active leases subtract from the allowance other
   // callers see (the grantee tracks its own lease). Expired leases are ignored
@@ -272,9 +275,10 @@ export function computeBudget(store, now) {
   const netPerMinVal = sustainablePerMin != null
     ? Math.round(sustainablePerMin - burn5m / 5)
     : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : null);
-  // two ceilings: burst = the hard 5h wall you can physically spend to right now;
-  // safe = spendAfterReserve (weekly-paced). Burst > safe means you CAN overspend.
-  const fiveHeadroom = fiveCap != null ? Math.max(0, Math.round(fiveCap - five)) : null;
+  // burst = the hard ceiling you can physically spend to right now = the whole remaining weekly
+  // tank (Anthropic's real wall is the actual physical stop, surfaced separately — not our
+  // even-pace sub-cap, which would falsely read 0 with 800M of coins still left).
+  const fiveHeadroom = weeklyLeft != null ? weeklyLeft : null;
   // projected wall hit: trailing-6h burn extrapolated forward. 6h smooths the 5m spikes
   // a live session throws; a projection inside the current week window means "at this
   // pace you hit the wall EARLY" — the signal this week's postmortem never got.

@@ -62,7 +62,7 @@ test("net_per_min = sustainable weekly pace − recent burn (the pace model)", (
   assert.equal(b.net_per_min, Math.round(sustainable - b.burn_5m / 5));
 });
 
-test("session_burst = the 5h coin sub-cap minus what this window spent (≥ paced safe)", () => {
+test("session_burst is the remaining weekly tank — the physical ceiling, ≥ the paced remainder", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r2", ts: T - 100, billed: 1.5e6 });
   s.anchors.push({
@@ -70,11 +70,10 @@ test("session_burst = the 5h coin sub-cap minus what this window spent (≥ pace
     sl: { five_used: 8e6, five_cap: 80e6, to_spend: 30e6, week_used: 100e6, week_cap: 1300e6 },
   });
   const b = computeBudget(s, T);
-  // five = ledger 5h sum = 1.5M; burst = 5h coin sub-cap − five
   assert.equal(b.five_billed, 1.5e6);
-  assert.equal(b.session_burst, FIVE_SUB - 1.5e6);
-  // the hard ceiling is never below the weekly-paced safe number
-  assert.ok(b.session_burst >= b.session_to_spend, `burst ${b.session_burst} >= safe ${b.session_to_spend}`);
+  // burst = whole remaining tank (1B − ledger week), NOT our even-pace sub-cap; Anthropic's wall is the real stop
+  assert.equal(b.session_burst, COINS_MAX - 1.5e6);
+  assert.ok(b.session_burst >= b.session_to_spend, `burst ${b.session_burst} >= remainder ${b.session_to_spend}`);
 });
 
 // A sleeping laptop is the only thing that stops /usage anchors — it must not blind the
@@ -279,13 +278,13 @@ test("real 99% utilization on a live window still forces over (safety wall)", ()
 // whole account while the week is healthy is the reif_tgp "over at 18% + 1 lease" surprise.
 test("a held reserve throttles to_spend but does not flip the verdict", () => {
   const s = emptyStore();
-  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 20e6 }); // 20M spent this 5h window
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 20e6 }); // healthy week
   s.anchors.push({ ts: T - 60, five_pct: 0.1, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 6 * 86400 });
-  s.leases = [{ tokens: 18e6, expires: T + 3600, label: "fan-out" }];           // reserves more than the share left
+  s.leases = [{ tokens: 100e6, expires: T + 3600, label: "fan-out" }];          // reserve exceeds the window's paced share
   const b = computeBudget(s, T);
   assert.equal(b.verdict, "ok", `healthy week with a held lease must not read over, got ${b.verdict}`);
-  assert.equal(b.reserved_tokens, 18e6);
-  assert.equal(b.session_to_spend, 0, "the reserve throttles to_spend to 0 so fan-outs back off");
+  assert.equal(b.reserved_tokens, 100e6);
+  assert.equal(b.session_to_spend, 0, "a share-exceeding reserve zeroes to_spend — but the verdict stays ok");
 });
 
 // Front-loading one 5h window past its even-pace coin share must not hard-block the account
@@ -302,7 +301,8 @@ test("maxing the 5h even-pace share throttles to_spend but does not flip the ver
   const b = computeBudget(s, T);
   assert.equal(b.quota, 1, "the 5h coin sub-cap is maxed");
   assert.equal(b.verdict, "ok", `healthy week + maxed 5h share must not read over, got ${b.verdict}`);
-  assert.equal(b.session_to_spend, 0, "the spent 5h share throttles to_spend to 0");
+  // the remainder is SHOWN, not zeroed by a front-loaded window — routines pace against it, Anthropic limits
+  assert.ok(b.session_to_spend > 0, `remainder must stay positive with 800M+ left, got ${b.session_to_spend}`);
 });
 
 // A CAP is a capacity; a READING is not. The 5h path already refuses an anchor whose
