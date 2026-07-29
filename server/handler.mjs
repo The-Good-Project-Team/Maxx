@@ -13,7 +13,7 @@
  * Storage-agnostic (inject a store adapter) and clock-injectable (for tests).
  * The Netlify function and a local node http server are both thin wrappers.
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDirectives, logOp, autoAdvise, anchorAgeSec, ANCHOR_TRUST_SEC } from "./tally.mjs";
 import { probeAnchor } from "./probe.mjs";
 
@@ -1767,12 +1767,69 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     const ck = cookieK(headers);
     return !!ck && sameOrigin(headers) && (await authed(h, ck));
   };
+  // A token compared with === leaks its prefix through timing. Over the public internet that
+  // is a weak channel, but it costs nothing to close and this is the only credential check.
+  const sameSecret = (a, b) => {
+    if (typeof a !== "string" || typeof b !== "string") return false;
+    const x = Buffer.from(a), y = Buffer.from(b);
+    if (x.length !== y.length) return false;      // length still leaks; the secret is fixed-length
+    return timingSafeEqual(x, y);
+  };
+
+  // ---- credential kinds -----------------------------------------------------
+  // The ACCOUNT SECRET is the master credential: it can rotate itself, mint connector
+  // tokens, and open the dashboard. It must never end up in a URL.
+  // A CONNECTOR TOKEN (ct_…) is what goes in the claude.ai connector URL, because that
+  // client cannot always set an Authorization header. It is therefore assumed to be
+  // exposed — query strings land in proxy logs, browser history and screenshots — so it
+  // is separately revocable and may NOT rotate the secret, mint more tokens, or mint a
+  // dashboard login. Losing it costs the customer a revoke, not their account.
+  // ---- auth throttle --------------------------------------------------------
+  // Guessing was free: unlimited 401s, no record, nothing to alert on. 144 bits is not
+  // brute-forceable, but a leaked-and-partially-redacted token, a log scrape or a bad
+  // future credential all become cheap without a ceiling. Per handle+IP so one attacker
+  // cannot lock out the real owner, and the window is short so a fat-fingered CLI
+  // recovers on its own rather than filing a support ticket.
+  const FAIL_MAX = 10;              // attempts before the door shuts
+  const FAIL_WINDOW_SEC = 900;      // rolling window and lockout length
+  const fails = new Map();          // key -> {n, first, until}
+  const failKey = (handle, headers) =>
+    `${handle}|${String(headers["x-forwarded-for"] || headers["cf-connecting-ip"] || headers["x-real-ip"] || "?").split(",")[0].trim()}`;
+  const throttled = (key, t) => {
+    const f = fails.get(key);
+    return !!(f && f.until && f.until > t);
+  };
+  const noteFail = (key, t) => {
+    const f = fails.get(key);
+    if (!f || t - f.first > FAIL_WINDOW_SEC) { fails.set(key, { n: 1, first: t, until: 0 }); return; }
+    f.n += 1;
+    if (f.n >= FAIL_MAX) f.until = t + FAIL_WINDOW_SEC;
+    // bound the map so a spray across handles cannot grow it without limit
+    if (fails.size > 5000) for (const [k, v] of fails) { if (t - v.first > FAIL_WINDOW_SEC && !(v.until > t)) fails.delete(k); }
+  };
+  const noteOk = (key) => fails.delete(key);
+
+  const CONNECTOR_PREFIX = "ct_";
+  const isConnectorToken = (t) => typeof t === "string" && t.startsWith(CONNECTOR_PREFIX);
+  const connectorTokens = async (handle) => ((await store.load(handle)).connector_tokens || []);
+
   // Self-serve secrets (signup) live in the store; env secrets (MAXX_SECRET*) are
   // the operator fallback that also gates unclaimed handles on a public deploy.
   const authed = async (handle, token) => {
     const want = (await store.getSecret?.(handle)) || (await secretFor(handle)) || fallbackSecret;
     if (!want) return true; // no secret configured at all → open (local/dev)
-    return token === want;
+    if (!token) return false;
+    if (sameSecret(token, want)) return true;
+    if (!isConnectorToken(token)) return false;
+    const live = await connectorTokens(handle);
+    return live.some((t) => !t.revoked && sameSecret(token, t.token));
+  };
+  // Full authority: the master secret only. Guards the endpoints where a stolen
+  // connector token would otherwise be as good as the account itself.
+  const ownerAuthed = async (handle, token) => {
+    const want = (await store.getSecret?.(handle)) || (await secretFor(handle)) || fallbackSecret;
+    if (!want) return true;
+    return !!token && sameSecret(token, want);
   };
 
   // ---- webhook push (#1/#3): fire transition events to registered URLs.
@@ -1894,7 +1951,21 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   async function handle(req) {
     if ((req.method || "GET") === "OPTIONS") return { status: 204, headers: { ...CORS }, body: "" };
     const key = lockKey(req);
+    // Throttle at the outermost edge rather than inside each check: every route funnels its
+    // rejection through a 401, so one place here covers all ~18 auth sites and cannot drift
+    // out of sync with them as routes are added.
+    const t = now();
+    const fk = key ? failKey(key, req.headers || {}) : null;
+    if (fk && throttled(fk, t))
+      return {
+        status: 429,
+        headers: { ...CORS, "content-type": "application/json", "retry-after": String(FAIL_WINDOW_SEC) },
+        body: JSON.stringify({ error: "too many failed auth attempts for this handle — try again shortly" }),
+      };
     const r = key ? await withHandleLock(key, () => route(req)) : await route(req);
+    // Only failures are counted, never reset on success: a public 200 (the shareable card)
+    // needs no credential, so crediting it would hand an attacker a free counter reset.
+    if (fk && r.status === 401) noteFail(fk, t);
     return { ...r, headers: { ...CORS, ...(r.headers || {}) } };
   }
 
@@ -2047,10 +2118,49 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
 
     // ---- magic link mint: CLI (holding the secret as bearer) asks for a one-time
     // sign-in URL — single-use, 120s TTL, opens the dash with zero copy-paste.
+    // ---- connector tokens: the credential that is allowed to live in a URL ----
+    // GET  lists them (never the token itself — it is shown once, like the secret)
+    // POST mints one, DELETE {id} revokes. Master secret only: a token must never be able
+    // to mint its own replacement or revoke a sibling.
+    const ctm = p.match(/^\/api\/u\/([^/]+)\/connector-tokens\/?$/);
+    if (ctm) {
+      const h = decodeURIComponent(ctm[1]);
+      if (!(await ownerAuthed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      const s = await store.load(h);
+      s.connector_tokens = s.connector_tokens || [];
+      const t = now();
+      if (method === "GET")
+        return json(200, {
+          tokens: s.connector_tokens.map(({ id, label, created, revoked, last_used }) =>
+            ({ id, label, created, revoked: !!revoked, last_used: last_used || null })),
+        });
+      if (method === "POST") {
+        let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
+        const token = CONNECTOR_PREFIX + randomBytes(24).toString("base64url");
+        const rec = { id: randomBytes(6).toString("hex"), token, label: String(b.label || "connector").slice(0, 64), created: Math.round(t), revoked: false };
+        s.connector_tokens = [...s.connector_tokens, rec].slice(-20);
+        logOp(s, "auth:connector-token", `minted ${rec.id} (${rec.label})`, t);
+        await store.save(h, s);
+        const base2 = `https://${headers["x-forwarded-host"] || headers.host || "api.meetmaxx.co"}`;
+        return json(200, { ok: true, id: rec.id, token, mcp_url: `${base2}/mcp?handle=${h}&k=${token}`, note: "shown once — revoke and re-mint if exposed" });
+      }
+      if (method === "DELETE") {
+        const id = url.searchParams.get("id") || "";
+        const rec = s.connector_tokens.find((x) => x.id === id);
+        if (!rec) return json(404, { error: "no such token" });
+        rec.revoked = true;
+        logOp(s, "auth:connector-token", `revoked ${id}`, t);
+        await store.save(h, s);
+        return json(200, { ok: true, revoked: id });
+      }
+    }
+
     const mg = p.match(/^\/api\/u\/([^/]+)\/magic$/);
     if (mg && method === "POST") {
       const h = decodeURIComponent(mg[1]);
-      if (!(await authed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" }); // bearer/?k= only, never cookie
+      // Master secret only. A magic link is a full owner login, so letting the connector
+      // token mint one would hand back everything the token was scoped away from.
+      if (!(await ownerAuthed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" }); // bearer/?k= only, never cookie
       const s = await store.load(h);
       const t = now();
       const tok = randomBytes(16).toString("base64url");
@@ -2080,7 +2190,9 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       const h = decodeURIComponent(ml[1]);
       let b; try { b = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
       const secret = String(b.secret || "");
-      const ok = secret && (await authed(h, secret));
+      // The dashboard cookie carries whatever authenticated here, so a connector token must
+      // not be a login — it would become a durable browser session for a URL-borne credential.
+      const ok = secret && (await ownerAuthed(h, secret));
       { const so = await store.load(h); logOp(so, "auth:login", ok ? "ok" : "FAILED attempt", now()); await store.save(h, so); }
       if (!ok) return json(401, { error: "wrong secret" });
       return { status: 200, headers: { "content-type": "application/json", "set-cookie": setCookie(secret) }, body: JSON.stringify({ ok: true }) };
@@ -2102,9 +2214,16 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       // by account later (multi-machine join, per-account timelines).
       if (b.account) { const s = await store.load(h); s.account = String(b.account).slice(0, 64); s.account_email = String(b.email || "").slice(0, 128); await store.save(h, s); }
       const base = `https://${headers["x-forwarded-host"] || headers.host || "api.meetmaxx.co"}`;
+      // The connector URL gets a SCOPED token, never the account secret. That URL is pasted
+      // into claude.ai and travels through proxy logs and browser history; whatever is in it
+      // should be revocable on its own, without resetting the customer's account.
+      const ct = CONNECTOR_PREFIX + randomBytes(24).toString("base64url");
+      { const s0 = await store.load(h);
+        s0.connector_tokens = [{ id: randomBytes(6).toString("hex"), token: ct, label: "signup", created: Math.round(now()), revoked: false }];
+        await store.save(h, s0); }
       return json(200, {
-        ok: true, handle: h, secret,
-        mcp_url: `${base}/mcp?handle=${h}&k=${secret}`,
+        ok: true, handle: h, secret, connector_token: ct,
+        mcp_url: `${base}/mcp?handle=${h}&k=${ct}`,
         logs_url: `${base}/api/u/${h}/logs`,
         budget_url: `${base}/api/u/${h}/budget`,
         feed_url: `${base}/api/u/${h}/feed`,

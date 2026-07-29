@@ -44,7 +44,9 @@ export function emptyStore() {
   // webhooks: [{url, secret, headers, format}] · leases: [{id, tokens, expires, label}]
   // signal: last-notified state for transition webhooks · config: per-handle overrides
   // directives: [{id, session, surface, action, note, rise, created, expires, delivered_to}]
-  return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, directives: [], ops: [] };
+  // connector_tokens: [{id, token, label, created, revoked}] — the scoped credential the
+  // claude.ai connector URL carries, so the account secret never has to travel in a query string
+  return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, directives: [], ops: [], connector_tokens: [] };
 }
 
 // Ops ring: everything that happens ON the tally besides emits — MCP budget checks,
