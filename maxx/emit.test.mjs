@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir, hostname } from "node:os";
 import path from "node:path";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -16,7 +16,7 @@ const A = "aaaa1111-0000-0000-0000-000000000001";
 const B = "bbbb2222-0000-0000-0000-000000000002";
 
 // A laptop with two logins: default root on account A, ~/.claude-alt on account B.
-function makeHome({ accounts } = {}) {
+function makeHome({ accounts, install } = {}) {
   const home = mkdtempSync(path.join(tmpdir(), "maxx-emit-"));
   const row = (id) => JSON.stringify({
     timestamp: new Date().toISOString(), requestId: id,
@@ -32,14 +32,44 @@ function makeHome({ accounts } = {}) {
   writeFileSync(path.join(home, ".claude-alt", "projects", "-projb", "s2.jsonl"), row("r2"));
   mkdirSync(path.join(home, ".maxx"), { recursive: true });
   writeFileSync(path.join(home, ".maxx", "config.json"),
-    JSON.stringify({ handle: "ha", secret: "sa", logsUrl: "https://example.invalid", accounts }));
+    JSON.stringify({ handle: "ha", secret: "sa", logsUrl: "https://example.invalid", accounts, ...install }));
   return home;
 }
+
+const readCfg = (home) => JSON.parse(readFileSync(path.join(home, ".maxx", "config.json"), "utf8"));
 
 function emitJson(home) {
   const out = execFileSync("node", [EMIT, "--json"], { env: { ...process.env, HOME: home }, encoding: "utf8" });
   return JSON.parse(out.slice(out.indexOf("[")));
 }
+
+// A config copied onto a second machine must not report as the first machine's surface.
+test("emit: a config carrying ANOTHER machine's host stamp mints a fresh install", () => {
+  const home = makeHome({
+    accounts: { [A]: { handle: "ha", secret: "sa" } },
+    install: { installId: "3b1cc3c3-laptop", host: "some-other-box" },
+  });
+  const envs = emitJson(home);
+  const cfg = readCfg(home);
+  assert.notEqual(cfg.installId, "3b1cc3c3-laptop", "copied config kept the origin machine's installId");
+  assert.equal(cfg.host, hostname(), "config was not re-stamped for this machine");
+  assert.equal(envs[0].install_id, cfg.installId);
+  assert.notEqual(envs[0].surface, "laptop:3b1cc3c3", "two machines would report as one surface");
+});
+
+// The stamp is new, so every existing install has an id and no host. Adopting keeps
+// their surface stable; re-minting would orphan the history already filed under it.
+test("emit: a pre-stamp config keeps its installId and gains this machine's host", () => {
+  const home = makeHome({
+    accounts: { [A]: { handle: "ha", secret: "sa" } },
+    install: { installId: "3b1cc3c3-laptop" },
+  });
+  const envs = emitJson(home);
+  const cfg = readCfg(home);
+  assert.equal(cfg.installId, "3b1cc3c3-laptop", "an existing install's surface must not churn");
+  assert.equal(cfg.host, hostname());
+  assert.equal(envs[0].install_id, "3b1cc3c3-laptop");
+});
 
 test("emit: each login root ships to its own account's handle", () => {
   const home = makeHome({ accounts: {

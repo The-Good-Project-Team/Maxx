@@ -35,6 +35,7 @@ import { createReadStream, readFileSync, writeFileSync, mkdirSync, readdirSync, 
 import { readdir, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir, hostname } from "node:os";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractSetupToken } from "./token.mjs";
@@ -182,7 +183,21 @@ const args = parseArgs(process.argv.slice(2));
 const cfg = readJSON(CONFIG, {});
 const handle = cfg.handle || "unknown";
 const secret = cfg.secret || "";
-const installId = cfg.installId || hostname();
+// A config that lands on a SECOND machine (VM clone, dotfile sync, rsync of ~/.maxx)
+// carries the first machine's installId, so both boxes report as ONE surface and the
+// board can neither attribute burn nor address a directive. Stamp the host: a mismatch
+// means this config was copied, so mint a fresh install. A config with an id but no
+// host predates the stamp — adopt it, don't churn the surface it already reports under.
+function bindInstall(c) {
+  const host = hostname();
+  if (c.installId && c.host === host) return c.installId;
+  const id = c.installId && !c.host ? c.installId : randomUUID();
+  c.installId = id;
+  c.host = host;
+  try { writeFileSync(CONFIG, JSON.stringify(c, null, 2)); } catch {}
+  return id;
+}
+const installId = bindInstall(cfg);
 const base = (process.env.MAXX_LOGS_URL || cfg.logsUrl || "https://api.meetmaxx.co").replace(/\/$/, "");
 const surface = cfg.surface || `laptop:${installId.slice(0, 8)}`;
 
