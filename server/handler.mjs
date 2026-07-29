@@ -1008,13 +1008,17 @@ ${TABS_CSS}
 /* the wall row carries a link — it must never truncate into an unclickable ellipsis */
 .walert.wrap{white-space:normal;overflow:visible;text-overflow:clip}
 .walert.wrap a{text-decoration:underline}
-.trio{display:grid;grid-template-columns:1.25fr 1fr 1fr;margin-top:20px;border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.trio>div{padding:18px 22px;border-right:1px solid var(--line)}
-.trio>div:last-child{border-right:none}
+/* The trio reflows on its OWN width, not the viewport's: on the landing page the dash is
+   embedded beside the activity terminal, so the card is ~590px inside a 1230px viewport —
+   a viewport media query never fires and three 42px numerals got cropped by the overflow
+   clip below. auto-fit drops it to 2-up, then 1-up, wherever it is. The 1px gap over a
+   --line background draws the dividers, so they stay right however the tiles wrap. */
+.trio{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;margin-top:20px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.trio>div{padding:18px 22px;background:var(--card);min-width:0}
 .trio .big{display:flex;align-items:baseline;gap:7px;margin-top:9px;font-family:var(--mono)}
 .trio .big .v{font-size:42px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--ink)}
 .trio .big .u{font-size:19px;font-weight:600;color:#8a93a5}
-.trio .sub{font-family:var(--mono);font-size:13.5px;color:#8a93a5;margin-top:7px}
+.trio .sub{font-family:var(--mono);font-size:13.5px;color:#8a93a5;margin-top:7px;overflow-wrap:anywhere}
 .chart48{position:relative;height:170px;margin-top:12px}
 .chart48 .zero{position:absolute;left:0;right:0;bottom:0;border-top:1.5px solid #d4d7e2;z-index:1}
 .chart48 .avgline{position:absolute;left:0;right:0;border-top:1.5px dashed #e8b58a;z-index:2}
@@ -1078,9 +1082,6 @@ tr.dirrow td{background:#faf8f2;border-bottom:1px solid #f0f1f6;padding-left:22p
 @media(max-width:640px){
 body{padding:12px}
 .card{padding:22px 16px 18px}
-.trio{grid-template-columns:1fr}
-.trio>div{border-right:none;border-bottom:1px solid var(--line)}
-.trio>div:last-child{border-bottom:none}
 .bar{grid-template-columns:52px minmax(60px,1fr);gap:10px}
 .bar .num{grid-column:1/-1;white-space:normal}
 /* source/model/session splits: drop the decorative track bar, let values wrap —
@@ -1143,6 +1144,11 @@ td{border-bottom-color:#222b40}
    <div class="klabel">THIS SESSION</div>
    <div class="big"><span class="v" id="runV" style="font-size:38px">—</span></div>
    <div class="sub" id="runSub"></div>
+  </div>
+  <div>
+   <div class="klabel">SURFACES</div>
+   <div class="big"><span class="v" id="surfV" style="font-size:38px">—</span></div>
+   <div class="sub" id="surfSub"></div>
   </div>
  </div>
 
@@ -1312,6 +1318,14 @@ if(location.search)history.replaceState(null,'',location.pathname);
       runV.textContent=over>0?'−'+hum(over):'0';runV.style.color='var(--red)';
       runSub.textContent='over pace'+(b.session_burst!=null?' · coin-spree '+hum(b.coin_spree_low)+'–'+hum(b.coin_spree_high):'');
     }
+    // SURFACES: how many machines and cloud agents are pouring into this one tally — the
+    // count IS the product claim, and it is the one number no per-machine /usage can show.
+    var surfV=document.getElementById('surfV'),surfSub=document.getElementById('surfSub');
+    // "directive" is the bookkeeping channel the orchestrator writes through, not a machine
+    var sf=(b.surfaces||[]).filter(function(s){return (s.surface||'')!=='directive'});
+    var nCloud=sf.filter(function(s){return /^cloud/.test(s.surface||'')}).length;
+    surfV.textContent=sf.length;surfV.style.color='var(--ink)';
+    surfSub.textContent=sf.length?(sf.length-nCloud)+' machine'+(sf.length-nCloud===1?'':'s')+' · '+nCloud+' cloud':'none reporting';
   }
 
   function renderAll(){
