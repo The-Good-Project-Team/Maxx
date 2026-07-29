@@ -107,6 +107,17 @@ test("gate: a clear WITHOUT rise stays advisory — it never relaunches the sess
   } finally { srv.close(); }
 });
 
+// Fail-closed is the point of a budget gate, but the denial is the only thing the customer
+// sees during an outage. If it does not name a way out it reads as "maxx broke my agents".
+test("gate: an unreachable tally denies with a message the customer can act on", async () => {
+  // nothing listening on this port, and a fresh HOME means no cached verdict to fall back on
+  const out = await hook(makeHome(), "http://127.0.0.1:1", { tool: "Task", session: "s-outage" });
+  const reason = JSON.parse(out).hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /permissionDecision|cannot reach|unreachable/i);
+  assert.match(reason, /--fail open/, "a denial with no escape hatch is indistinguishable from a broken tool");
+  assert.match(reason, /gate\.mjs/, "name the command, not just the flag");
+});
+
 test("gate: no directive pending → ungated tool stays silent", async () => {
   const srv = await directiveServer([]);
   try {

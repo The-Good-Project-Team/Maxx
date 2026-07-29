@@ -13,6 +13,12 @@ SKILL="$CLAUDE/skills/maxx"
 MODE="${1:-copy}"
 
 command -v node >/dev/null || { echo "maxx needs node on PATH." >&2; exit 1; }
+# Claude Code runs hooks and the statusline in a NON-LOGIN shell, so the PATH that has `node`
+# right now is not the PATH they get. Under nvm/fnm/volta — where node lives in a
+# version-managed dir sourced by .zshrc — a wired `node …` resolves to nothing and the
+# statusline, the budget gate and the fenix hook all fail silently. Pin the interpreter by
+# absolute path instead; process.execPath is the real binary behind whatever `node` is here.
+NODE_BIN="$(node -e 'process.stdout.write(process.execPath)')"
 
 # Run standalone via `curl … | bash`? The sibling .mjs files aren't here — fetch the repo and re-exec.
 if [ ! -f "$SRC/render.mjs" ]; then
@@ -68,12 +74,30 @@ place "$SRC/FENIX-SKILL.md" "$CLAUDE/skills/fenix/SKILL.md"
 # window.json on a cadence, so no Stop hook is needed. (Older installs added a brain.mjs Stop hook — we
 # remove it here so upgraders aren't left with a dangling hook after brain.mjs was folded away.)
 [ -f "$CLAUDE/settings.json" ] && cp "$CLAUDE/settings.json" "$CLAUDE/settings.json.bak-maxx"
-RENDER="node $SKILL/render.mjs" SKILLDIR="$SKILL" \
+RENDER="$NODE_BIN $SKILL/render.mjs" SKILLDIR="$SKILL" NODE_BIN="$NODE_BIN" \
 node - "$CLAUDE/settings.json" <<'JS'
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 const p = process.argv[2];
-let d = {}; try { d = JSON.parse(readFileSync(p, "utf8")); } catch {}
+// An unreadable settings.json used to fall through to {} and get written back with ONLY maxx's
+// keys — silently deleting the user's model, theme, permissions and every other tool's hooks.
+// A backup is taken just before this, but nothing told them to look for it. Refuse instead:
+// their file is worth more than our install.
+let d = {};
+if (existsSync(p)) {
+  try {
+    d = JSON.parse(readFileSync(p, "utf8"));
+  } catch (e) {
+    console.error(`\nmaxx: ${p} is not valid JSON — ${e.message}`);
+    console.error(`maxx: NOT touching it. Your settings are exactly as they were.`);
+    console.error(`maxx: fix that file (a copy is at ${p}.bak-maxx), then re-run the installer.\n`);
+    process.exit(2);
+  }
+  if (d === null || typeof d !== "object" || Array.isArray(d)) {
+    console.error(`\nmaxx: ${p} is valid JSON but not an object — refusing to overwrite it.\n`);
+    process.exit(2);
+  }
+}
 d.statusLine = { type: "command", command: process.env.RENDER, padding: 0, refreshInterval: 2 }; // seconds; 1s + a ~0.5s node render per pane starved older CPUs (ghostty typing jitter). Prefer bun for RENDER when installed — ~5x cheaper per tick than node on the same script.
 // drop any legacy maxx Stop hook (brain.mjs, now removed) so it doesn't fail every turn.
 if (d.hooks?.Stop) {
@@ -86,20 +110,20 @@ d.hooks = d.hooks || {};
 d.hooks.PreToolUse = (d.hooks.PreToolUse || []).filter((h) => !JSON.stringify(h).includes("gate.mjs"));
 d.hooks.PreToolUse.push({
   matcher: "Agent|Task|Workflow|ScheduleWakeup|CronCreate",
-  hooks: [{ type: "command", command: `node ${process.env.SKILLDIR}/gate.mjs`, timeout: 10 }],
+  hooks: [{ type: "command", command: `${process.env.NODE_BIN} ${process.env.SKILLDIR}/gate.mjs`, timeout: 10 }],
 });
 // fenix rebirth: on session start, inject (and consume) a pending .fenix/handoff.md
 // from the cwd — the other half of /fenix (write handoff → /clear → rise here).
 d.hooks.SessionStart = (d.hooks.SessionStart || []).filter((h) => !JSON.stringify(h).includes("fenix.mjs"));
 d.hooks.SessionStart.push({
-  hooks: [{ type: "command", command: `node ${process.env.SKILLDIR}/fenix.mjs --wake`, timeout: 10 }],
+  hooks: [{ type: "command", command: `${process.env.NODE_BIN} ${process.env.SKILLDIR}/fenix.mjs --wake`, timeout: 10 }],
 });
 mkdirSync(dirname(p), { recursive: true });
 writeFileSync(p, JSON.stringify(d, null, 2));
 JS
 
 echo "maxx installed ($MODE)."
-echo "  statusline -> node $SKILL/render.mjs"
+echo "  statusline -> $NODE_BIN $SKILL/render.mjs"
 echo "  skill      -> $SKILL   (/maxx)"
 echo "Start a new Claude Code session to see the bar."
 

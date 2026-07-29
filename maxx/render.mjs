@@ -999,4 +999,14 @@ function main() {
   try { writeFileSync(odoPath, JSON.stringify(odo)); } catch {} // persist the odometer counters for next render
   process.stdout.write(out.join("\n") + "\n");
 }
-main();
+// The statusline is the product's face, and it is rendered by a hook: if this process throws,
+// Claude Code shows NOTHING — no bar, no error — and the user concludes maxx is broken with no
+// way to find out why. Any corrupt file under ~/.maxx (truncated write, disk full, a permission
+// change) can do it. Fail visibly and cheaply instead: one line the user can act on, exit 0 so
+// the hook itself is never the thing that looks broken.
+try {
+  main();
+} catch (e) {
+  process.stdout.write(`maxx: statusline error — ${String(e && e.message || e).slice(0, 120)}\n`);
+  process.stderr.write(`maxx render failed: ${e && e.stack || e}\n`);
+}

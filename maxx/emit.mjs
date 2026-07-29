@@ -440,13 +440,45 @@ if (args.installAgent) {
     console.log(`maxx: launchd agent ${label} installed + running (log: ~/.maxx/emit.log)`);
     console.log(`maxx: watchdog ${wdLabel} installed — every 5 min, restarts a wedged emitter (log: ~/.maxx/watchdog.log)`);
   } else {
-    console.log(`maxx: no launchd here — create a systemd user unit:\n
-  ~/.config/systemd/user/maxx-emit.service:
-    [Unit]\n    Description=maxx emit --watch
-    [Service]\n    ExecStart=${process.execPath} ${self} --watch\n    Restart=always
-    [Install]\n    WantedBy=default.target
+    // Linux/WSL. This used to print the unit and let the user install it by hand, which meant
+    // the shipper was never running for anyone who skimmed the installer output — and a machine
+    // that ships nothing is invisible to the tally, which is the whole product. Write and start
+    // it. Restart=always covers the wedge case the macOS watchdog exists for.
+    // systemd resolves user units under $XDG_CONFIG_HOME, which is NOT always ~/.config —
+    // write anywhere else and `systemctl --user enable` cannot see the file we just wrote.
+    const unitDir = path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "systemd", "user");
+    const unit = path.join(unitDir, "maxx-emit.service");
+    const body = `[Unit]
+Description=maxx emit --watch
+After=network-online.target
 
-  systemctl --user daemon-reload && systemctl --user enable --now maxx-emit`);
+[Service]
+ExecStart=${process.execPath} ${self} --watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+`;
+    const { execFileSync } = await import("node:child_process");
+    try {
+      mkdirSync(unitDir, { recursive: true });
+      writeFileSync(unit, body);
+      const sc = (...a) => execFileSync("systemctl", ["--user", ...a], { stdio: "pipe" });
+      sc("daemon-reload");
+      sc("enable", "--now", "maxx-emit");
+      console.log(`maxx: systemd user unit installed + running (logs: journalctl --user -u maxx-emit)`);
+      // Without linger a user unit dies at logout, so a headless box stops shipping the moment
+      // the ssh session ends — the exact machine most worth watching.
+      console.log(`maxx: on a headless box also run once:  loginctl enable-linger $USER`);
+    } catch (e) {
+      // no systemd (WSL1, some containers) — degrade to something that still works
+      console.log(`maxx: wrote ${unit}, but systemctl --user failed: ${String(e.message).split("\n")[0]}`);
+      // On a headless box this is usually no user manager for a non-login session, not a bad unit
+      console.log(`  headless/ssh box? run:  sudo loginctl enable-linger $USER   then re-run this`);
+      console.log(`  with systemd:  systemctl --user daemon-reload && systemctl --user enable --now maxx-emit`);
+      console.log(`  without it:    ${process.execPath} ${self} --watch &   (or add that to your shell profile)`);
+    }
   }
   process.exit(0);
 }

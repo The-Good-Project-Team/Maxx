@@ -47,7 +47,11 @@ const POLL = path.join(DIR, `directive-poll${SUF}.json`);
 const POLL_EVERY_SEC = 60;        // an ungated tool call polls for directives at most this often
 const LOG = path.join(DIR, "gate.log");
 const CACHE_FRESH_SEC = 60;       // reuse a verdict this fresh without a network call
-const CACHE_GRACE_SEC = 600;      // server unreachable: trust a cached verdict up to this age
+// Server unreachable: trust the last verdict this long. 10m was tuned for a fleet the author
+// could see; for a paying customer it turns a routine blip — wifi drop, a deploy, a DNS hiccup —
+// into "you cannot spawn agents", which reads as the product breaking their tool. An hour-old
+// verdict is still a far better estimate than none, and the weekly wall moves slowly.
+const CACHE_GRACE_SEC = 3600;
 const GATED = /^(Agent|Task|Workflow|ScheduleWakeup|CronCreate)$/;
 
 const readJSON = (p, d) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return d; } };
@@ -288,7 +292,17 @@ if (b.verdict === "calibrating") {
 }
 if (b.verdict === "stale" || b.verdict === "unreachable") {
   if (pol.fail === "open") allow(`fail-open, verdict=${b.verdict}`);
-  deny(`budget signal ${b.verdict} (fail-closed). Tokens again: unknown until the signal returns`);
+  // Fail-closed is the point of a budget gate — an invisible budget must read as no budget.
+  // But a denial the user cannot act on is just a broken tool, so name the two ways out.
+  deny(
+    b.verdict === "unreachable"
+      ? `cannot reach the maxx tally (${base}) and the cached verdict is over ${Math.round(CACHE_GRACE_SEC / 60)}m old, ` +
+        `so spending is unmeasured (fail-closed). Check your connection, or work without the gate: ` +
+        `node ~/.claude/skills/maxx/gate.mjs --fail open   (revert with --fail closed)`
+      : `budget signal stale — no machine has read /usage recently enough to trust any wall. ` +
+        `Open an interactive Claude Code session on a linked machine to re-anchor, or: ` +
+        `node ~/.claude/skills/maxx/gate.mjs --fail open`,
+  );
 }
 // 2. the weekly reserve wall — absolute, even in spree
 if (b.week != null && b.week * 100 >= pol.weeklyStop) {
