@@ -42,7 +42,7 @@ test("rollSession: no weekly data → falls back to the raw 5h cap", () => {
   assert.equal(r.sessionSafe, 30e6);
 });
 
-test("render --status: weekly bar is the coin fraction of the fixed tank, not Anthropic's %", () => {
+test("render --status: weekly bar is anchored to Anthropic's 7d %, scaled to the fixed tank", () => {
   const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
   mkdirSync(path.join(home, ".maxx"), { recursive: true });
   const stdin = JSON.stringify({
@@ -56,13 +56,31 @@ test("render --status: weekly bar is the coin fraction of the fixed tank, not An
   const out = execFileSync("node", [path.join(HERE, "render.mjs"), "--status"],
     { input: stdin, env: { ...process.env, HOME: home }, encoding: "utf8" });
   const s = JSON.parse(out);
-  // Coin model: the tank is a fixed 1B, same for every account — never tok ÷ pct. The bar reads
-  // OUR coin burn against it (none staged here → 0%), deliberately DECOUPLED from the plan's 37%.
+  // The tank stays a fixed 1B, same for every account — never tok ÷ pct. What MOVES the bar is
+  // Anthropic's own 7d %: it rides in on stdin every render, so it can't collapse the way the local
+  // bucket sum does mid-rewrite, and the bar reads exactly what /usage says.
   assert.equal(s.weekly.cap, 1e9, "weekly tank is the fixed 1B coin cap");
-  assert.equal(s.weekly.usedPct, 0, "no ledger burn → 0% of tank");
-  assert.notEqual(s.weekly.usedPct, 37, "the coin gauge is not pinned to Anthropic's %");
+  assert.equal(s.weekly.usedPct, 37, "week bar must track Anthropic's 7d %");
+  assert.equal(s.weekly.used, 0.37 * 1e9, "the % is scaled to the tank, not reported raw");
   // Anthropic's real 5h wall is still surfaced as the safety reading, untouched by the coin model.
   assert.equal(s.session.rawUsedPct, 6, "raw 5h wall still matches /usage five_hour %");
+});
+
+// The anchor is only as good as its fallback: no live % (offline, pre-first-/usage) must not
+// blank the bar — it drops back to the local bucket sum rather than reading a stale 37%.
+test("render --status: no 7d % on stdin → week bar falls back to the local bucket sum", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
+  mkdirSync(path.join(home, ".maxx"), { recursive: true });
+  const stdin = JSON.stringify({
+    rate_limits: { five_hour: { used_percentage: 6, resets_at: in6d } },
+    context_window: { used_percentage: 10 },
+    model: { display_name: "Opus" },
+  });
+  const out = execFileSync("node", [path.join(HERE, "render.mjs"), "--status"],
+    { input: stdin, env: { ...process.env, HOME: home }, encoding: "utf8" });
+  const s = JSON.parse(out);
+  assert.equal(s.weekly.cap, 1e9, "the tank does not move when the anchor is missing");
+  assert.equal(s.weekly.usedPct, 0, "no live % and no staged burn → 0% of tank");
 });
 
 test("render stamps the signed-in account on rl.json/status.json (CLAUDE_CONFIG_DIR-aware)", () => {
