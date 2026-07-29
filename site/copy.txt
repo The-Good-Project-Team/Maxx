@@ -30,8 +30,8 @@ Install line: curl -fsSL https://meetmaxx.co/install | bash
 
 HERO VISUALS (in order)
 -----------------------
-1. The live dashboard, iframed (meetmaxx.co/u/reif/dash — public view, names redacted)
-   Caption: Share it — viewers see names redacted. Binge-watch Reif's -> meetmaxx.co/u/reif/dash
+1. The live dashboard, iframed (meetmaxx.co/u/reif_tgp/dash — public view, names redacted)
+   Caption: Share it — viewers see names redacted. Binge-watch Reif's -> meetmaxx.co/u/reif_tgp/dash
 2. Statusline recording (statusline.mp4, autoplay/muted/loop, poster statusline-poster.jpg)
    Caption: Same numbers in your statusline, every second.
 
