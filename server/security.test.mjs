@@ -85,6 +85,32 @@ test("repeated wrong credentials get throttled, per handle+IP", async () => {
   assert.equal(other.status, 401, "a different client is judged on its own record, not the attacker's");
 });
 
+// Rotation has to exist before it is needed, and it has to not take the fleet down: every
+// machine holds the secret in a config file, and they cannot all be edited at once.
+test("rotation issues a new secret while the old one keeps working through its grace window", async () => {
+  let clock = 1_800_000_000;
+  const store = createMemoryStore();
+  const handler = createHandler({ store, now: () => clock });
+  const { secret: old } = J(await handler({ method: "POST", url: "/api/signup", headers: {}, body: JSON.stringify({ handle: "acme" }) }));
+
+  const rot = J(await handler({ method: "POST", url: `/api/u/acme/rotate-secret?k=${old}`, headers: {}, body: JSON.stringify({ grace_sec: 600 }) }));
+  assert.ok(rot.secret && rot.secret !== old, "rotation must actually issue a different secret");
+
+  const emit = (k) => handler({ method: "POST", url: `/api/u/acme/logs?k=${k}`, headers: {}, body: "{}" });
+  assert.equal((await emit(rot.secret)).status, 200, "the new secret works immediately");
+  assert.equal((await emit(old)).status, 200, "a machine not yet updated must keep working");
+
+  clock += 601;
+  assert.equal((await emit(old)).status, 401, "once the window closes the exposed secret is dead");
+  assert.equal((await emit(rot.secret)).status, 200);
+});
+
+test("only the account secret can rotate the account secret", async () => {
+  const { handler, connector_token } = await setup();
+  const r = await handler({ method: "POST", url: `/api/u/acme/rotate-secret?k=${connector_token}`, headers: {}, body: "{}" });
+  assert.equal(r.status, 401, "a URL-borne token must never be able to seize the account");
+});
+
 test("credential comparison does not depend on a shared prefix", async () => {
   const { handler, secret } = await setup();
   const near = secret.slice(0, -1) + (secret.slice(-1) === "a" ? "b" : "a");

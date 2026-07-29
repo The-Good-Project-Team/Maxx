@@ -1820,16 +1820,25 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     if (!want) return true; // no secret configured at all → open (local/dev)
     if (!token) return false;
     if (sameSecret(token, want)) return true;
-    if (!isConnectorToken(token)) return false;
-    const live = await connectorTokens(handle);
-    return live.some((t) => !t.revoked && sameSecret(token, t.token));
+    if (isConnectorToken(token)) {
+      const live = await connectorTokens(handle);
+      return live.some((t) => !t.revoked && sameSecret(token, t.token));
+    }
+    return prevSecretOk(await store.load(handle), token, now());
   };
+  // The just-rotated secret, honored until its grace window closes, so a fleet can be
+  // updated machine by machine instead of all going dark the instant rotation happens.
+  const prevSecretOk = (s, token, t) =>
+    !!(s?.secret_prev && s.secret_prev.expires > t && sameSecret(token, s.secret_prev.secret));
   // Full authority: the master secret only. Guards the endpoints where a stolen
   // connector token would otherwise be as good as the account itself.
   const ownerAuthed = async (handle, token) => {
     const want = (await store.getSecret?.(handle)) || (await secretFor(handle)) || fallbackSecret;
     if (!want) return true;
-    return !!token && sameSecret(token, want);
+    if (!token) return false;
+    if (sameSecret(token, want)) return true;
+    // a mid-rotation machine still holds the old secret and is still the owner
+    return prevSecretOk(await store.load(handle), token, now());
   };
 
   // ---- webhook push (#1/#3): fire transition events to registered URLs.
@@ -2118,6 +2127,38 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
 
     // ---- magic link mint: CLI (holding the secret as bearer) asks for a one-time
     // sign-in URL — single-use, 120s TTL, opens the dash with zero copy-paste.
+    // ---- rotate the account secret -------------------------------------------
+    // Needed the day a secret is exposed — and ours were, in every ?k= URL that reached a
+    // proxy log before connector tokens existed. A hard swap would break every surface at
+    // once (each machine holds the secret in ~/.maxx/config.json), so the old one keeps
+    // working for a grace window: rotate, update machines, let the old expire. Expand then
+    // contract, the same shape a schema migration uses.
+    const rt = p.match(/^\/api\/u\/([^/]+)\/rotate-secret$/);
+    if (rt && method === "POST") {
+      const h = decodeURIComponent(rt[1]);
+      if (!store.setSecret) return json(404, { error: "rotation not enabled on this deploy" });
+      if (!(await ownerAuthed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
+      const graceSec = Math.min(Math.max(Number(b.grace_sec) || 1800, 0), 24 * 3600);
+      const t = now();
+      const old = await store.getSecret(h);
+      const next = randomBytes(18).toString("base64url");
+      const s = await store.load(h);
+      s.secret_prev = old && graceSec > 0 ? { secret: old, expires: Math.round(t + graceSec) } : null;
+      logOp(s, "auth:rotate", `secret rotated, old valid ${Math.round(graceSec / 60)}m`, t);
+      await store.save(h, s);
+      await store.setSecret(h, next);
+      return json(200, {
+        ok: true, secret: next,
+        old_valid_until: s.secret_prev ? s.secret_prev.expires : null,
+        next: [
+          "SAVE it — shown once.",
+          `On every machine: edit ~/.maxx/config.json and replace "secret" (${graceSec / 60}m before the old one stops working).`,
+          "Connector URLs are unaffected: they carry a ct_ token, not this secret.",
+        ],
+      });
+    }
+
     // ---- connector tokens: the credential that is allowed to live in a URL ----
     // GET  lists them (never the token itself — it is shown once, like the secret)
     // POST mints one, DELETE {id} revokes. Master secret only: a token must never be able
