@@ -208,9 +208,18 @@ export function computeBudget(store, now) {
   // never re-block a fresh one (that was the 2026-07-23 reif_tgp false-over).
   const weekWallHit = a && a.week_pct >= 0.99 && wr > now;
   const fiveWallHit = a && a.five_pct >= 0.99 && fr > now;
-  const slSpend = null, slOver = 0, slBank = null;
+  const slOver = 0;
 
   const weeklyLeft = weekCap != null ? Math.max(0, weekCap - week) : null;
+  // The week bar's even-pace mark: bank = cap×elapsed − used, the same ruler the CLI prints
+  // (maxx/pace.mjs). It went to a hardcoded null when the statusline passthrough was dropped,
+  // which silently took the ╎ off the weekly bar while the legend went on promising it.
+  // Elapsed needs a LIVE reset: without one — or with a sentinel reset far in the future —
+  // elapsed collapses toward 0 and the bank comes back sign-flipped, so suppress instead.
+  const weekElapsed = wr > now && wr - now <= 8 * 24 * 3600
+    ? Math.min(1, Math.max(0, 1 - (wr - now) / WEEK))
+    : null;
+  const slBank = weekElapsed != null && weekCap != null ? Math.round(weekCap * weekElapsed - week) : null;
   // The SESSION REMAINDER: the weekly coin headroom spread over the 5h windows left = a fair
   // share for this window. We SHOW it as-is and let routines pace against it — we do NOT clamp
   // it to our even-pace sub-cap or zero it out when a window front-loads. Over-pace is surfaced

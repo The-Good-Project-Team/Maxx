@@ -43,6 +43,40 @@ test("coin model: counts are the ledger's windowed sums, cap is the fixed tank",
   assert.ok(Math.abs(b.week - 52e6 / COINS_MAX) < 1e-9);
 });
 
+// The week bar's ╎ mark is drawn from week_bank; a null bank silently erases it while the
+// legend keeps promising "╎ = even pace". Bank is the CLI's ruler: cap×elapsed − used.
+test("week_bank is the even-pace bank: cap×elapsed − used, + when under pace", () => {
+  const s = emptyStore();
+  // 3 days into the week (resets in 4), so even pace would have spent 3/7 of the tank.
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 100e6 });
+  s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 4 * 86400 });
+  const b = computeBudget(s, T);
+  const expected = COINS_MAX * (3 / 7) - 100e6;
+  assert.ok(b.week_bank != null, "a live week reset must yield a bank — null erases the pace mark");
+  assert.ok(Math.abs(b.week_bank - expected) < 1e6, `bank ${b.week_bank} ≉ ${expected}`);
+  assert.ok(b.week_bank > 0, "spent 100M where even pace allows ~429M → banked, so positive");
+});
+
+test("week_bank goes negative once burn outruns the even-pace line", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 800e6 });
+  s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.8, five_reset: T + 4 * H, week_reset: T + 4 * 86400 });
+  assert.ok(computeBudget(s, T).week_bank < 0, "800M spent against a ~429M even-pace line is over pace");
+});
+
+// A sentinel reset (seen live: resets_at = 9999999999) collapses elapsed toward 0, which
+// flips the bank's sign. Suppress it rather than draw the mark in the wrong place.
+test("week_bank is suppressed when the week reset is missing or a far-future sentinel", () => {
+  const mk = (weekReset) => {
+    const s = emptyStore();
+    s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 100e6 });
+    s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.1, five_reset: T + 4 * H, week_reset: weekReset });
+    return computeBudget(s, T).week_bank;
+  };
+  assert.equal(mk(0), null, "no reset → no elapsed → no mark");
+  assert.equal(mk(9999999999), null, "a sentinel reset must not fabricate an elapsed");
+});
+
 test("net_per_min = sustainable weekly pace − recent burn (the pace model)", () => {
   const s = emptyStore();
   const wr = T + 100000; // week resets in 100000s
