@@ -214,9 +214,26 @@ async function directives(session) {
 }
 const dirs = pollDue(hook.session_id) ? await directives(hook.session_id) : [];
 const clearDir = dirs.find((d) => d.action === "clear");
+// Two strengths. The advisory one asks for a /clear — fine when a human is watching the
+// session. `rise` means the session is PAST the context wall, where every further turn
+// re-bills the whole context and there may be nobody there to press the key: /clear is a
+// keystroke no hook can send, but a fresh process is a fresh context, so hand the session
+// the one sequence it can run itself. The handoff is written by the model on purpose —
+// fenix's own fallback is a raw transcript tail, which is a far worse thing to wake up to.
 const clearCtx = clearDir
-  ? `MAXX DIRECTIVE (orchestrator asks): /clear this session${clearDir.note ? ` — ${clearDir.note}` : ""}. ` +
-    `Finish the immediate step cheaply, then tell the user to /clear (or /compact) before continuing.`
+  ? clearDir.rise
+    ? `MAXX DIRECTIVE — PAST THE CONTEXT WALL${clearDir.note ? ` (${clearDir.note})` : ""}. ` +
+      `Every turn from here re-bills your whole context, so do not start new work. ` +
+      `Finish only the step in flight, then RENEW YOURSELF, in this order: ` +
+      `(1) write .fenix/handoff.md exactly per ~/.claude/skills/fenix/SKILL.md — what is in motion, ` +
+      `decisions made, the next concrete step; (2) run ` +
+      `\`node ~/.claude/skills/maxx/fenix.mjs --rise\`, which consumes that handoff and relaunches ` +
+      `you with a clean context; (3) END YOUR TURN — do not keep working here. The rise does not ` +
+      `kill this session, it only starts the next one: whatever you do after step 2 burns the fat ` +
+      `context AND runs beside your successor. It is capped (generation limit) and it waits for the ` +
+      `window to refill if you are at the spend wall. If a human is present, offer /clear instead.`
+    : `MAXX DIRECTIVE (orchestrator asks): /clear this session${clearDir.note ? ` — ${clearDir.note}` : ""}. ` +
+      `Finish the immediate step cheaply, then tell the user to /clear (or /compact) before continuing.`
   : null;
 
 // Ungated tool: no spend to weigh, so the only thing to carry is the advisory. Never deny here —

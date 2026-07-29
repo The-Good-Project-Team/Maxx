@@ -150,6 +150,41 @@ test("watchdog fires on a climbing cost-per-turn before the wall", () => {
   assert.ok(!/past the/.test(d.note.split("Burning")[0]) || d.note.includes("climbing"), "leads with the climb, not the wall");
 });
 
+// An unattended session has nobody to press /clear, and past the wall every further turn
+// re-bills the whole context. `rise` is how the watchdog says "advising is not enough here".
+test("past-wall clear is marked rise; a climbing-but-under-wall one is only advisory", () => {
+  const T = 1_800_000_000;
+  const anchored = () => {
+    const s = emptyStore();
+    s.anchors.push({ ts: T - 60, five_pct: 0.2, week_pct: 0.3, five_reset: T + 3600, week_reset: T + 2 * 86400 });
+    return s;
+  };
+  const past = anchored();
+  for (let i = 0; i < 5; i++)
+    past.events.push({ surface: "laptop:a", root: "sess-hot", ts: T - 60 * i, billed: 20e6, ctx: 430e3 });
+  autoAdvise(past, T);
+  assert.equal(past.directives.find((d) => d.session === "sess-hot").rise, true,
+    "past the wall, waiting on a human keystroke is the expensive option");
+
+  const ramp = anchored();
+  [80e3, 85e3, 82e3, 210e3, 240e3, 260e3].forEach((c, i) =>
+    ramp.events.push({ surface: "laptop:a", root: "sess-ramp", ts: T - (6 - i) * 60, billed: c * 4, turns: 4, ctx: 180e3 }));
+  ramp.events.push({ surface: "laptop:a", root: "sess-ramp", ts: T - 30, billed: 30e6, turns: 3, ctx: 190e3 });
+  autoAdvise(ramp, T);
+  assert.equal(ramp.directives.find((d) => d.session === "sess-ramp").rise, false,
+    "still room to finish the thought — do not renew a session that is merely getting pricey");
+});
+
+test("rise survives the wire to the session that must act on it", () => {
+  const s = emptyStore();
+  const T = 1_800_000_000;
+  addDirective(s, { session: "sess-1", action: "clear", rise: true, note: "ctx 613k" }, T);
+  const [d] = pendingDirectives(s, { session: "sess-1" }, T);
+  assert.equal(d.rise, true, "the gate cannot escalate what the payload drops");
+  addDirective(s, { session: "sess-2", action: "clear" }, T);
+  assert.equal(pendingDirectives(s, { session: "sess-2" }, T)[0].rise, false, "defaults to advisory, never renews on its own");
+});
+
 test("pending directives ride along in the budget payload", () => {
   const s = emptyStore();
   const T = 1_800_000_000;

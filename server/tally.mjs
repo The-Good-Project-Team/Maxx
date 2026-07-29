@@ -415,6 +415,9 @@ export function addDirective(store, d, now) {
   const dir = {
     id: `d${Math.round(now)}-${(store.directives.length + 1).toString(36)}`,
     session, surface: d.surface || null, action, note: d.note || null,
+    // rise = "advising a /clear is not enough here". An unattended session has no human to
+    // press the key, so the gate escalates this one to a handoff-then-relaunch instead.
+    rise: !!d.rise,
     created: Math.round(now), expires: Math.round(now + ttl), delivered_to: [],
   };
   store.directives.push(dir);
@@ -481,6 +484,10 @@ export function autoAdvise(store, now) {
       // of falling back to "busiest channel on that machine"
       surface: t.surface ? (t.project ? `${t.surface} · ${t.project}` : t.surface) : null,
       action: "clear",
+      // Past the wall every turn re-bills the whole context, so waiting for a human to press
+      // /clear costs the most exactly when nobody is watching. Climbing-but-under-wall stays
+      // advisory — there is still room to finish the thought.
+      rise: pastWall,
       note:
         `${why}. Burning ${kf(rate)}/min against a sustainable ${kf(pace)}/min — ` +
         `every turn re-bills the whole context`,
@@ -516,8 +523,8 @@ export function pendingDirectives(store, { session, surface = null, peek = false
         feedNote(store, d.session, `✓ ${d.action} delivered→${String(session).slice(0, 8)}`, now);
       }
     }
-  return hits.map(({ id, session: s, surface: sf, action, note, created, expires }) =>
-    ({ id, session: s, surface: sf, action, note, created, expires }));
+  return hits.map(({ id, session: s, surface: sf, action, note, rise, created, expires }) =>
+    ({ id, session: s, surface: sf, action, note, rise: !!rise, created, expires }));
 }
 
 // #3 runaway detection — sessions burning ≥ rate for ≥ sustain minutes.
