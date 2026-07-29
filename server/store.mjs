@@ -6,11 +6,21 @@
  * on Netlify swaps in a Blobs adapter (same two methods) with zero handler
  * changes. A store doc is exactly what server/tally.mjs's emptyStore() returns.
  */
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { emptyStore } from "./tally.mjs";
 
 const safe = (h) => String(h).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown";
+
+// A plain writeFileSync truncates the file and then fills it: crash, disk-full or a
+// restart mid-write leaves a half-written doc, and the whole handle's ledger — every
+// event, every anchor — reads as corrupt on the next load. Write beside it and rename;
+// rename is atomic on POSIX, so a reader sees either the old doc or the new one.
+const writeAtomic = (p, text) => {
+  const tmp = `${p}.tmp-${process.pid}`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, p);
+};
 
 // Per-handle secrets live in one auth doc (`_auth`), separate from event stores.
 // Signup handles are forbidden a leading "_" so they can never collide with it.
@@ -24,14 +34,13 @@ export function createFileStore(dir) {
       try { return JSON.parse(readFileSync(p, "utf8")); } catch { return emptyStore(); }
     },
     async save(handle, store) {
-      const p = path.join(dir, `${safe(handle)}.json`);
-      writeFileSync(p, JSON.stringify(store));
+      writeAtomic(path.join(dir, `${safe(handle)}.json`), JSON.stringify(store));
     },
     async getSecret(handle) { return auth()[safe(handle)] || null; },
     async setSecret(handle, secret) {
       const a = auth();
       a[safe(handle)] = secret;
-      writeFileSync(authPath, JSON.stringify(a, null, 2));
+      writeAtomic(authPath, JSON.stringify(a, null, 2));
     },
     // every handle with a store doc (for the transition-notifier sweep)
     async listHandles() {

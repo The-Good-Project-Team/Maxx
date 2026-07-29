@@ -1704,6 +1704,35 @@ const rpcErr = (id, code, message) => json(200, { jsonrpc: "2.0", id, error: { c
 // fallbackSecret = shared operator secret that also gates unclaimed handles on a
 // public deploy — it must NOT make handles look "taken" to signup.
 export function createHandler({ store, secretFor = () => null, fallbackSecret = null, now = () => Date.now() / 1000, probe = probeAnchor }) {
+  // ---- per-handle mutex -----------------------------------------------------
+  // Every mutating path here is load → mutate → save with an await in the middle. Two
+  // requests for the same handle therefore both read the PRE-write doc, and the second
+  // save silently drops whatever the first added — which is exactly the product's own
+  // workload: a laptop and a cloud routine emitting at the same second. The tally runs as
+  // one process, so serializing per handle makes each request's read-modify-write atomic.
+  // Keyed by handle, so different customers never wait on each other.
+  const chains = new Map();
+  function withHandleLock(key, fn) {
+    const prev = chains.get(key) || Promise.resolve();
+    const run = prev.then(fn, fn);            // a failed predecessor must not skip us
+    const tail = run.catch(() => {});         // ...and must not poison the chain either
+    chains.set(key, tail);
+    tail.then(() => { if (chains.get(key) === tail) chains.delete(key); });
+    return run;
+  }
+  // Which handle a request touches. Everything handle-scoped is /u/{h} or /api/u/{h};
+  // signup writes the shared _auth doc, and an MCP call carries its handle in the query.
+  const lockKey = (req) => {
+    try {
+      const u = new URL(req.url, "http://x");
+      const m = u.pathname.match(/^\/(?:api\/)?u\/([a-zA-Z0-9][a-zA-Z0-9_-]{2,31})/);
+      if (m) return m[1].toLowerCase();
+      if (u.pathname === "/api/signup") return "_auth";
+      if (u.pathname === "/mcp") return (u.searchParams.get("handle") || "_mcp").toLowerCase();
+    } catch {}
+    return null;
+  };
+
   const bearer = (headers) => {
     const h = headers.authorization || headers.Authorization || "";
     const m = /^Bearer\s+(.+)$/i.exec(h);
@@ -1848,11 +1877,15 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   async function sweepTransitions() {
     if (!store.listHandles) return;
     for (const h of await store.listHandles()) {
-      const s = await store.load(h);
-      if (!(s.webhooks || []).length) continue;
-      const { events } = settle(h, s);
-      await store.save(h, s);
-      if (events.length) console.log(`sweep: ${h} fired ${events.map((e) => e.event).join(",")}`);
+      // same lock as the request path: the sweep is a load→mutate→save too, and it runs on a
+      // timer, so without it the one writer that is guaranteed to collide with a live emit is us
+      await withHandleLock(h, async () => {
+        const s = await store.load(h);
+        if (!(s.webhooks || []).length) return;
+        const { events } = settle(h, s);
+        await store.save(h, s);
+        if (events.length) console.log(`sweep: ${h} fired ${events.map((e) => e.event).join(",")}`);
+      });
     }
   }
 
@@ -1860,7 +1893,8 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // web signup form can call the API cross-origin.
   async function handle(req) {
     if ((req.method || "GET") === "OPTIONS") return { status: 204, headers: { ...CORS }, body: "" };
-    const r = await route(req);
+    const key = lockKey(req);
+    const r = key ? await withHandleLock(key, () => route(req)) : await route(req);
     return { ...r, headers: { ...CORS, ...(r.headers || {}) } };
   }
 
