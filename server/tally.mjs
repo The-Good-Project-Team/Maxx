@@ -43,7 +43,7 @@ const sec = (iso) => (iso ? Date.parse(iso) / 1000 : 0);
 export function emptyStore() {
   // webhooks: [{url, secret, headers, format}] · leases: [{id, tokens, expires, label}]
   // signal: last-notified state for transition webhooks · config: per-handle overrides
-  // directives: [{id, session, surface, action, note, created, expires, delivered_to}]
+  // directives: [{id, session, surface, action, note, rise, created, expires, delivered_to}]
   return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, directives: [], ops: [] };
 }
 
