@@ -43,6 +43,8 @@ const GATE = path.join(DIR, "gate.json");
 // writes one gate-cache per login root (suffix rule matches render/limit/emit)
 const SUF = process.env.CLAUDE_CONFIG_DIR ? "-" + path.basename(process.env.CLAUDE_CONFIG_DIR).replace(/^\.claude-?/, "") : "";
 const CACHE = path.join(DIR, `gate-cache${SUF}.json`);
+const POLL = path.join(DIR, `directive-poll${SUF}.json`);
+const POLL_EVERY_SEC = 60;        // an ungated tool call polls for directives at most this often
 const LOG = path.join(DIR, "gate.log");
 const CACHE_FRESH_SEC = 60;       // reuse a verdict this fresh without a network call
 const CACHE_GRACE_SEC = 600;      // server unreachable: trust a cached verdict up to this age
@@ -169,14 +171,32 @@ let hook = {};
 try { hook = JSON.parse(input); } catch { process.exit(0); }   // not a hook call → allow
 
 const tool = hook.tool_name || "";
-if (!GATED.test(tool)) process.exit(0);                         // not an expensive tool → allow
+const gated = GATED.test(tool);
 
 if (!pol.enabled) {
   // overturned — allow, already noted at overturn time; keep a local trace
-  log(`allow (gate OFF${gate.overturn ? `, overturn: ${gate.overturn.reason}` : ""}) tool=${tool}`);
+  if (gated) log(`allow (gate OFF${gate.overturn ? `, overturn: ${gate.overturn.reason}` : ""}) tool=${tool}`);
   process.exit(0);
 }
 if (!cfg.handle || !cfg.secret) process.exit(0);                // no maxx account on this box → not our call
+
+// A session that only edits and runs commands never spawns a gated tool, so gating the
+// directive fetch on those alone left the loudest sessions — the ones grinding a build past
+// the context wall — unreachable. Any tool call can carry a directive; ungated ones just poll
+// at most once a minute, so the channel costs one request per session per minute, not one per
+// tool call. Budget verdicts still ride only on the gated path, where the spend actually is.
+function pollDue(session) {
+  if (gated) return true;
+  if (!session) return false;
+  const now = Date.now() / 1000;
+  const seen = readJSON(POLL, {});
+  if (now - (seen[session] || 0) < POLL_EVERY_SEC) return false;
+  // prune: a session id is dead once it stops calling tools, so don't grow this file forever
+  for (const [s, at] of Object.entries(seen)) if (now - at > 3600) delete seen[s];
+  seen[session] = now;
+  try { mkdirSync(DIR, { recursive: true }); writeFileSync(POLL, JSON.stringify(seen)); } catch {}
+  return true;
+}
 
 // ---- directive channel: orchestrator → THIS session, via the tally ----
 // GET consumes (clear = one-shot, pause = sticky until ttl/resume). Fail-open:
@@ -192,12 +212,24 @@ async function directives(session) {
     return (await res.json()).directives || [];
   } catch { return []; }
 }
-const dirs = await directives(hook.session_id);
+const dirs = pollDue(hook.session_id) ? await directives(hook.session_id) : [];
 const clearDir = dirs.find((d) => d.action === "clear");
 const clearCtx = clearDir
   ? `MAXX DIRECTIVE (orchestrator asks): /clear this session${clearDir.note ? ` — ${clearDir.note}` : ""}. ` +
     `Finish the immediate step cheaply, then tell the user to /clear (or /compact) before continuing.`
   : null;
+
+// Ungated tool: no spend to weigh, so the only thing to carry is the advisory. Never deny here —
+// a pause still lands on the gated path, where the expensive work it means to stop actually is.
+if (!gated) {
+  if (clearCtx) {
+    log(`clear-directive delivered on ungated tool=${tool}`);
+    console.log(JSON.stringify({
+      hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: clearCtx },
+    }));
+  }
+  process.exit(0);
+}
 
 const deny = (why) => {
   log(`DENY tool=${tool} ${why} [${polLine()}]`);
