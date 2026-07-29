@@ -1082,10 +1082,6 @@ tr.dirrow td{background:#faf8f2;border-bottom:1px solid #f0f1f6;padding-left:22p
 @media(max-width:640px){
 body{padding:12px}
 .card{padding:22px 16px 18px}
-/* On a phone the card is as narrow as the viewport, and auto-fit's 210px floor is a hard
-   minimum — it will lay a second track and overflow rather than drop to one. Pin 1-up here;
-   auto-fit still handles the case this can't see, a narrow card inside a wide viewport. */
-.trio{grid-template-columns:minmax(0,1fr)}
 .bar{grid-template-columns:52px minmax(60px,1fr);gap:10px}
 .bar .num{grid-column:1/-1;white-space:normal}
 /* source/model/session splits: drop the decorative track bar, let values wrap —
