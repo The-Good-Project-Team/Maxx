@@ -844,9 +844,42 @@ function main() {
     const heat = col === RED ? "running hot" : "running a little hot";
     return { text: `${label} — ${lever}`, phrase: `${label} ${heat} — ${lever}`, col };
   }
-  // narrow terminal: one compact line — the two quotas.
-  if (cols < 88) {
-    const l = fg(DIM, "session ") + fg(qcol, qv) + fg(DIM, "   weekly ") + fg(wcol, wv);
+  // Context colour fires on whichever wall arrives first: a share of the window (small windows) or
+  // a hard coin count (1M windows, where 65% is already 650k — long past the point of restarting).
+  // Red at 500k = the driver's own line for "/fenix instead of carrying this context further".
+  const ctxCol = (total >= 500_000 || ctxPct >= 85) ? RED : (total >= 350_000 || ctxPct >= 65) ? AMBER : DIM;
+  // WHOSE numbers these are (the session login's handle via the accounts map), so a multi-login box
+  // is legible at a glance. Lives at the LEFT edge of the meta row, not the right: the right side is
+  // the first thing a half-width pane cuts, and the handle is the one field you can't infer from the
+  // rest of the row. It's a live link to the dash (OSC 8); plain text on terminals without it.
+  const who = (() => {
+    try {
+      const c = JSON.parse(readFileSync(path.join(HOME, ".maxx", "config.json"), "utf8"));
+      const h = c.accounts?.[sessAccount]?.handle || c.handle;
+      return h && h !== "unknown" ? "@" + h : "";
+    } catch { return ""; }
+  })();
+
+  // Narrow terminal: no rails — one line that PACKS in priority order and stops when the width runs
+  // out, instead of cliffing to the same two numbers on every small pane. Order is decision-value:
+  // the two walls first, then the context number (the /fenix trigger), then which pane this even is.
+  // The rails themselves survive down to ~70 cols (the meter floor is 20 cells + a 46-cell label and
+  // badge budget, and the optional badges already drop themselves via fits()), so hand off there.
+  if (cols < 70) {
+    const cand = [
+      fg(DIM, "sess ") + fg(qcol, qv),
+      fg(DIM, "week ") + fg(wcol, wv),
+      total > 0 ? fg(ctxCol, tkf(total)) : null,
+      sid ? fg(DIM, String(sid).slice(0, 4)) : null,
+      branch ? fg(DIM, trunc(branch, 18)) : null,
+      who ? fg(BRAND, who) : null,
+    ].filter(Boolean);
+    let l = "";
+    for (const seg of cand) {
+      const add = (l ? fg(DIM, " · ") : "") + seg;
+      if (dispWidth(l) + dispWidth(add) > cols - 2) break; // priority order — once one won't fit, stop
+      l += add;
+    }
     process.stdout.write(padLine(l, cols) + "\n");
     return;
   }
@@ -946,7 +979,6 @@ function main() {
   // Order: model · last-turn coins · context coins · branch · session-id. Signed with the login
   // handle at the right (footStr). Colour rides the last-turn number (vs its own recent average)
   // and the context size. Cache %, $ cost, and the ctx % are dropped — noise the driver can't act on.
-  const ctxCol = ctxPct >= 85 ? RED : ctxPct >= 65 ? AMBER : DIM;
   // last-turn coins — colour compares it against the last 10 turns of THIS session (▲ dearer).
   const hist = turnHistory(sid, lastTurns(p.transcript_path, 10), total);
   let lastSeg = "";
@@ -956,28 +988,26 @@ function main() {
     const last = hist[hist.length - 1];
     const r = avg > 0 ? last / avg : 1;
     const lCol = r >= 1.35 ? RED : r >= 1.12 ? AMBER : r <= 0.88 ? GREEN : DIM;
-    lastSeg = fg(lCol, tkf(last)) + fg(DIM, " last turn");
+    // "65k/72 turns" — last turn's coins over how many turns this session has run. The pair is
+    // what makes the context number add up: turns × typical turn ≈ where the context sits.
+    lastSeg = fg(lCol, tkf(last)) + fg(DIM, "/" + hist.length + " turn" + (hist.length === 1 ? "" : "s"));
   }
   const dot = fg(DIM, "  ·  ");
-  const segs = [fg(DIM, fam.toLowerCase())];
+  const segs = [];
+  if (who) segs.push(link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
+  segs.push(fg(DIM, fam.toLowerCase()));
   if (lastSeg) segs.push(lastSeg);
-  if (total > 0) segs.push(fg(DIM, "coin context ") + fg(ctxCol, tkf(total)));
+  if (total > 0) segs.push(fg(ctxCol, tkf(total)) + fg(DIM, " session"));
   if (branch) segs.push(fg(DIM, trunc(branch, 34)));
   if (sid) segs.push(fg(DIM, "id " + String(sid).slice(0, 4)));
+  // padLine never truncates — an over-wide row WRAPS and breaks the rail into five lines. A long
+  // branch name on a half-width pane is enough to do it, so drop segments off the tail until it fits.
+  while (segs.length > 1 && dispWidth(segs.join(dot)) > W) segs.pop();
   let metaRow = segs.join(dot);
 
   // coach pulled for now — the meters + cushion/over carry it. keep /maxx as a quiet sign-off at
-  // the right of the stats line — signed with WHOSE numbers these are (the session
-  // login's handle via the accounts map), so a multi-login box is legible at a glance.
-  const who = (() => {
-    try {
-      const c = JSON.parse(readFileSync(path.join(HOME, ".maxx", "config.json"), "utf8"));
-      const h = c.accounts?.[sessAccount]?.handle || c.handle;
-      return h && h !== "unknown" ? "@" + h : "";
-    } catch { return ""; }
-  })();
-  // @handle is a live link to the dash (OSC 8); plain text on terminals without it
-  const footStr = (who ? link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)) + fg(DIM, " · ") : "") + fg(DIM, "/maxx");
+  // the right of the stats line; it's the one thing here that's fine to lose on a narrow pane.
+  const footStr = fg(DIM, "/maxx");
   const metaFull = dispWidth(metaRow) + 3 + dispWidth(footStr) <= W
     ? metaRow + blank(W - dispWidth(metaRow) - dispWidth(footStr)) + footStr
     : metaRow;

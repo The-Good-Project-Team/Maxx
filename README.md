@@ -58,7 +58,14 @@ Two rails, both anchored to the exact `five_hour` / `seven_day` percentages `/us
 
 **`week`** — tokens left in your 7-day limit, updated every second. The fill is what remains; the `┊` tick marks even-burn pace. Fill past the tick and you are banked, short of it and you are spending too fast.
 
-**meta** — context fill, model, branch, spend, cache-hit rate, and `137k/+43k turn`: what your last 3 turns cost on average, and how far the newest turn sits from that average. That delta moves first when a context starts re-billing itself, well before the 5h meter reacts. The `@you` sign-off is a link to your dash (OSC 8 — cmd-click it in iTerm2, Ghostty, kitty).
+**meta** — the bottom row, left to right: `@you` · model · `65k/72 turns` · `251k session` · branch · `id 590e`.
+
+- `@you` is a link to your dash (OSC 8 — cmd-click it in iTerm2, Ghostty, kitty). It sits at the left edge because the right side is the first thing a half-width pane cuts.
+- `65k/72 turns` — what your last turn cost, over how many turns this session has run. The pair is what makes the session number add up. The turn cost is colored against this session's own 10-turn average, so it reddens when a turn is unusually dear — that moves first when a context starts re-billing itself, well before the 5h meter reacts.
+- `251k session` — the context you are carrying. Amber at 350k, red at 500k or 85% of the window, whichever comes first. Red is your cue to start a fresh session rather than keep paying to re-read this one.
+- `id 590e` — the first 4 characters of the session id, the same tag your dash puts on the row when two panes share a project.
+
+Narrow terminal? Below 70 columns the rails give way to a single line that packs in priority order and stops when the width runs out: `sess 27% · week 51% · 360k · 590e · main · @you`.
 
 **the wall** — hit the 5-hour wall and the bar says so and hands you [Switzerland in 8K](https://www.youtube.com/watch?v=linlz7-Pnvw) with the reset clock. Claude stopped you anyway; the dash shows the same row. Time for some contemplation.
 

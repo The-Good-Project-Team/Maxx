@@ -64,8 +64,9 @@ Lead: Two rails: this session, and the week.
 
 session: safe to spend right now.
 week: what's left of your 7 days, live.
-context: how full, plus model, branch, spend, cache.
-@you: the sign-off in the bar links to your dash. Cmd-click it.
+bottom row: @you · model · 65k/72 turns · 251k session · branch · id 590e. The turn cost reddens when it's dear for this session; the context number goes amber at 350k, red at 500k — start fresh.
+@you: first thing on the row, and a link to your dash. Cmd-click it.
+small window: under 70 columns the rails give way to one packed line — sess 27% · week 51% · 360k · 590e · main.
 the wall: hit it and maxx hands you Switzerland in 8K with the reset clock. Contemplate.
 
 Animated notes (cycle under the demo rail):
