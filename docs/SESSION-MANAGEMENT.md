@@ -37,6 +37,17 @@ Concurrency breaks the gate. Spawn five agents at once and all five read the sam
 allowance, then all five spend it. Call `maxx_reserve` for the tokens the fan-out needs
 *first*: an active lease subtracts from the allowance every other caller sees.
 
+The lease has a lifecycle, not just a grant:
+
+- **Release when the fan-out lands.** `maxx_release({ lease_id })` — the spend is already
+  in the tally via emits, so an unreleased lease *double-throttles* every other dispatcher
+  until its TTL runs out (default 1h, max 6h).
+- **Renew instead of stacking.** A run outliving its TTL calls `maxx_reserve` again *with
+  its own `lease_id`* — the old lease is replaced (resize/extend), and the old hold does
+  not count against the new grant.
+- **Bounds.** 100 active leases per handle; total held tokens are capped by the allowance
+  itself. A lease throttles `session_to_spend` but never flips the verdict to `over`.
+
 ### 3. Steer — while they run
 
 `maxx_directive` addresses a specific session:
@@ -122,6 +133,7 @@ addressed, and the fleet looks smaller than it is.
 | a machine's burn never appears | no emitter, or its config was copied from another machine | install the watcher; `emit.mjs` re-stamps a copied config with a fresh install id |
 | directives queue but never deliver | no `gate.mjs` PreToolUse hook on that box | wire the hook; use an absolute node path — hooks run in a non-login shell |
 | the fleet overspends despite gating | concurrent spawns each read the full allowance | `maxx_reserve` before the fan-out |
+| `session_to_spend` stuck low after a fan-out ended | lease never released — still throttling until TTL | `maxx_release` when the fan-out lands |
 | verdict flips to `stale`, everything blocks | no machine has read `/usage` in over 12h | open an interactive session on any linked machine |
 | budget reads richer than reality | a run gated but never emitted | always `maxx_emit` at the end of a run |
 

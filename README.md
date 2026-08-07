@@ -106,7 +106,7 @@ Every feed row says where it came from — 💻 machine, ☁️ cloud:
 ![feed rows with surface icons and per-session attribution](assets/readme/feed.png)
 
 - **Laptops** — `emit.mjs --watch` ships counts continuously (launchd agent on macOS).
-- **Cloud routines and claude.ai** — add the printed URL as a custom MCP connector. Any agent holding it gets the budget-gate rules on connect and can call `maxx_budget` / `maxx_emit` against your account only.
+- **Cloud routines and claude.ai** — add the printed URL as a custom MCP connector. Any agent holding it gets the budget-gate rules on connect and can call `maxx_budget` / `maxx_emit` / `maxx_reserve` / `maxx_release` against your account only.
 - **Your dashboard** — `meetmaxx.co/u/<you>` is a live card; `/u/<you>/dash` is the dash: burn rate, per-session attribution, channels (💻 machines, ☁️ cloud), and what each is costing per turn. The dash is the page you share — viewers see it live with names redacted (`machine 1`, `******2`); only your secret shows the real names.
 - **Your own tooling** — `GET /api/u/<you>/budget` serves live availability and top burners; webhooks push `over` / `recovered` / `week-80` / `week-90` / `week-95` / `runaway` transitions.
 
