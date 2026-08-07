@@ -180,10 +180,18 @@ claude.ai → **Settings → Connectors → Add custom connector**:
   the budget owner; alternatively pass `handle` in each tool call's arguments)
 - **Auth:** Bearer — the same secret as the server env / laptop config.
 
-It exposes two tools:
+It exposes four tools:
 - `maxx_emit({ surface, sessions[], anchor? })` — report usage metadata (counts
   only). Cloud routines leave `anchor` unset (they can't read /usage).
 - `maxx_budget()` — read the omni-surface budget to gate spend.
+- `maxx_reserve({ tokens, ttl_sec?, label?, lease_id? })` — hold part of
+  `session_to_spend` before a fan-out so concurrent dispatchers can't
+  double-spend the same allowance. Pass your own `lease_id` to renew/resize
+  (replaces the lease instead of stacking). Leases auto-expire at `ttl_sec`
+  (default 1h, max 6h).
+- `maxx_release({ lease_id })` — give the hold back when the fan-out lands or is
+  cancelled. The spend is already in the tally via `maxx_emit`; an unreleased
+  lease keeps throttling every other dispatcher until its TTL.
 
 ## 3. Enable it on the routines + gate on it
 

@@ -56,7 +56,7 @@ const TOOLS = [
   },
   {
     name: "maxx_reserve",
-    description: "Reserve part of session_to_spend before spawning agents, so concurrent dispatchers don't double-spend the same allowance. Granted leases subtract from the session_to_spend other callers see and auto-expire at ttl_sec. Returns {granted, lease_id, remaining}. Call before a fan-out; size tokens to the fleet you're about to spawn.",
+    description: "Reserve part of session_to_spend before spawning agents, so concurrent dispatchers don't double-spend the same allowance. Granted leases subtract from the session_to_spend other callers see and auto-expire at ttl_sec. Returns {granted, lease_id, remaining}. Call before a fan-out; size tokens to the fleet you're about to spawn. Pass your existing lease_id to RENEW: the old lease is replaced by the new grant (resize/extend) instead of stacking. When the fan-out completes, call maxx_release — the spend has landed via emits, so a lingering lease double-throttles everyone else until TTL.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -64,8 +64,21 @@ const TOOLS = [
         tokens: { type: "integer", description: "Tokens to reserve" },
         ttl_sec: { type: "integer", description: "Lease lifetime (default 3600)" },
         label: { type: "string", description: "Who/what this lease is for" },
+        lease_id: { type: "string", description: "Your existing lease to replace (renew/resize) instead of stacking a new one" },
       },
       required: ["tokens"],
+    },
+  },
+  {
+    name: "maxx_release",
+    description: "Release a reservation lease when the fan-out it guarded completes (or is cancelled). The tokens actually spent are already in the tally via maxx_emit; releasing returns the UNSPENT hold to session_to_spend immediately instead of after TTL. Returns {ok, released}.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      properties: {
+        handle: { type: "string" },
+        lease_id: { type: "string", description: "The lease_id maxx_reserve returned" },
+      },
+      required: ["lease_id"],
     },
   },
   {
@@ -1728,7 +1741,16 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       const m = u.pathname.match(/^\/(?:api\/)?u\/([a-zA-Z0-9][a-zA-Z0-9_-]{2,31})/);
       if (m) return m[1].toLowerCase();
       if (u.pathname === "/api/signup") return "_auth";
-      if (u.pathname === "/mcp") return (u.searchParams.get("handle") || "_mcp").toLowerCase();
+      if (u.pathname === "/mcp") {
+        // The handle may ride in the JSON-RPC body (args.handle) instead of the query.
+        // Locking those on "_mcp" serialized them with each other but NOT with query-form
+        // MCP or HTTP requests for the same handle — so two dispatchers reserving through
+        // different transports held different locks, both read the pre-write doc, and
+        // both granted the same allowance (double-spend).
+        let h = u.searchParams.get("handle");
+        if (!h) { try { h = JSON.parse(req.body || "{}").params?.arguments?.handle; } catch {} }
+        return (h || "_mcp").toLowerCase();
+      }
     } catch {}
     return null;
   };
@@ -1918,12 +1940,20 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
 
   // #4: grant a lease against the CURRENT allowance (which already subtracts
   // other active leases) — two concurrent dispatchers can't double-spend.
-  async function reserve(handle, { tokens, ttl_sec = 3600, label = null } = {}) {
+  // Bounded so a retry loop can't grow the doc without limit: total lease tokens are
+  // already capped by the allowance, but 1-token grants could stack thousands of rows.
+  const MAX_LEASES = 100;
+  async function reserve(handle, { tokens, ttl_sec = 3600, label = null, lease_id = null } = {}) {
     tokens = Math.round(Number(tokens));
     if (!(tokens > 0)) return { granted: false, error: "tokens must be > 0" };
     const s = await store.load(handle);
     const t = now();
     s.leases = (s.leases || []).filter((l) => l.expires > t);
+    // renew: passing your own lease_id REPLACES that lease (resize/extend) instead of
+    // stacking a second one — the old hold doesn't count against the new grant's allowance.
+    if (lease_id) s.leases = s.leases.filter((l) => l.id !== lease_id);
+    if (s.leases.length >= MAX_LEASES)
+      return { granted: false, error: `too many active leases (max ${MAX_LEASES})` };
     await maybeRefreshAnchor(handle, s, t);   // a fan-out must not be sized off a dead anchor
     const b = computeBudget(s, t);
     const avail = b.session_to_spend ?? 0;
@@ -1936,6 +1966,21 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     logOp(s, "reserve", `${Math.round(tokens / 1000)}k granted${label ? ` · ${label}` : ""}`, t);
     await store.save(handle, s);
     return { granted: true, lease_id: lease.id, tokens, remaining: avail - tokens, expires_at: lease.expires };
+  }
+
+  // The other half of the lease contract: a fan-out that lands must give its hold back.
+  // The spend already reached the ledger via emits, so a lingering lease double-throttles
+  // every other dispatcher's session_to_spend until the TTL runs out.
+  async function release(handle, { lease_id = null } = {}) {
+    const s = await store.load(handle);
+    const t = now();
+    s.leases = (s.leases || []).filter((l) => l.expires > t);
+    const before = s.leases.length;
+    s.leases = s.leases.filter((l) => l.id !== lease_id);
+    const released = before - s.leases.length;
+    if (released) logOp(s, "release", `lease ${String(lease_id).slice(0, 8)} released`, t);
+    await store.save(handle, s);
+    return { ok: true, released };
   }
 
   // periodic sweep for time-driven transitions (refill while idle) — serve.mjs
@@ -2348,11 +2393,7 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       const h = decodeURIComponent(m[1]);
       if (!(await authed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
       let b; try { b = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
-      const s = await store.load(h);
-      const before = (s.leases || []).length;
-      s.leases = (s.leases || []).filter((l) => l.id !== b.lease_id);
-      await store.save(h, s);
-      return json(200, { ok: true, released: before - s.leases.length });
+      return json(200, await release(h, b));
     }
     // ---- per-handle config (#3 overrides: runaway_rate_5m, runaway_min) ----
     m = p.match(/^\/api\/u\/([^/]+)\/config$/);
@@ -2511,7 +2552,9 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
             "pace − recent burn; if negative you're spending faster than the week can sustain, so re-check " +
             "before each expensive step, not just once. (2) Before a FAN-OUT (spawning multiple agents at " +
             "once) call `maxx_reserve` for the tokens you'll need FIRST — otherwise every concurrent agent " +
-            "sees the same full allowance and the fleet can overspend it. Hard gate — check it every run. " +
+            "sees the same full allowance and the fleet can overspend it — and call `maxx_release` with the " +
+            "lease_id when the fan-out completes: the spend is already in the tally via emits, so an unreleased " +
+            "lease double-throttles every other dispatcher until its TTL. Hard gate — check it every run. " +
             "BURN REPORT — the gate is half the contract; the other half is that YOUR burn appears in the " +
             "tally. At the END of every run (and at checkpoints in a long one) you MUST call `maxx_emit` " +
             "with surface \"cloud:<routine-name>\" and one sessions[] entry carrying your best-effort " +
@@ -2552,6 +2595,9 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
           }
           if (name === "maxx_reserve") {
             return rpcOk(id, { content: [{ type: "text", text: JSON.stringify(await reserve(h, args)) }] });
+          }
+          if (name === "maxx_release") {
+            return rpcOk(id, { content: [{ type: "text", text: JSON.stringify(await release(h, args)) }] });
           }
           if (name === "maxx_directive") {
             const s = await store.load(h);
