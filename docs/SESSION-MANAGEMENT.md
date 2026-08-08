@@ -31,6 +31,23 @@ faster than the week can sustain, so re-check *between* expensive steps, not onc
 The four verdicts (`ok` / `degraded` / `over` / `stale`) are the server's policy — read them,
 never re-derive your own staleness rule. See `server/CONNECTOR.md`.
 
+**Two brakes sit on the same matcher, and either can deny.** `maxx/gate.mjs` is the
+network-backed fleet policy above. `~/.claude/hooks/spend-guard.mjs` is an independent
+offline backstop: it reads the local meter (`tracker.mjs session --json`, no network) and
+denies `Agent|Task|Workflow|ScheduleWakeup|CronCreate` once the roll-session is over its paced
+share. It fails open on a missing or stale meter, but says so on stderr every time — an
+unmeasured budget must never read as headroom.
+
+**A brake gates on the spawn's own size, not on how much the conversation already burned.**
+`overGraceTokens` is an absolute number, so it cannot express "let a cheap recurring job
+through": once you are 5.6M over, no grace short of 5.6M unblocks a read-only babysit loop
+costing four queries per wake — and the burn that put you over was context re-billing, not that
+loop. So scheduling tools are judged on *frequency*, the honest proxy for a recurring job's
+size: `ScheduleWakeup` / `CronCreate` spaced at least `recurringMinIntervalSec` apart (default
+600s) skip the cumulative gate entirely, while a once-a-minute loop is still blocked. `Agent` /
+`Task` / `Workflow` burn immediately, so they stay gated on cumulative spend. Knobs live in
+`~/.claude/hooks/governor.json`; set `recurringMinIntervalSec: 0` to drop the exemption.
+
 ### 2. Reserve — before you fan out
 
 Concurrency breaks the gate. Spawn five agents at once and all five read the same full
@@ -136,6 +153,8 @@ addressed, and the fleet looks smaller than it is.
 | `session_to_spend` stuck low after a fan-out ended | lease never released — still throttling until TTL | `maxx_release` when the fan-out lands |
 | verdict flips to `stale`, everything blocks | no machine has read `/usage` in over 12h | open an interactive session on any linked machine |
 | budget reads richer than reality | a run gated but never emitted | always `maxx_emit` at the end of a run |
+| a cheap recurring job is blocked while the real burn was the conversation | `spend-guard` gating a marginally-free spawn on cumulative spend | space it ≥ `recurringMinIntervalSec` (600s) and it is exempt; raising `overGraceTokens` will not help |
+| a rise chain dies mid-mission at generation 5 | 5 rises in a row landed no commit | land the work in progress — the counter resets when `HEAD` moves — or raise `MAXX_RISE_MAX_GEN` |
 
 ## Reference
 
@@ -147,6 +166,8 @@ addressed, and the fleet looks smaller than it is.
 | budget cache reused without a call | 60s | `maxx/gate.mjs` `CACHE_FRESH_SEC` |
 | cached verdict trusted while server is down | 600s, then fail-closed | `maxx/gate.mjs` `CACHE_GRACE_SEC` |
 | rise generation cap | 5 rises with nothing landed (`MAXX_RISE_MAX_GEN`); resets when `HEAD` moves | `maxx/fenix.mjs` |
+| recurring-spawn exemption | runs ≥ 600s apart skip the spend gate (`recurringMinIntervalSec`) | `~/.claude/hooks/governor.json` |
+| paced-share burst allowance | `overGraceTokens`, currently 2M | `~/.claude/hooks/governor.json` |
 
 Related: `server/CONNECTOR.md` (deploy, verdicts, install) · `maxx/SKILL.md` (per-session use) ·
 `maxx/FENIX-SKILL.md` (handoff format).

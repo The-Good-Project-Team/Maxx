@@ -56,7 +56,9 @@ channel is the last piece.
   (format dash).
 - Gate: `maxx/gate.mjs` PreToolUse deny on Agent|Task|Workflow|ScheduleWakeup|
   CronCreate; policy knobs --mode paced|spree --margin --weekly-stop --fail;
-  overturn recorded to feed. Superseded spend-guard (removed from settings).
+  overturn recorded to feed. (Stale as of 2026-08-08: this said gate.mjs superseded
+  spend-guard and that spend-guard was removed from settings. Both are registered on
+  this matcher today and either can deny — see `docs/SESSION-MANAGEMENT.md`.)
 - Emit: launchd `co.meetmaxx.emit` --watch; log lines carry per-session
   attribution + `ctx Xk ≈Yk/action` + pace line. Weekly matches statusline
   (0.45% structural floor).
