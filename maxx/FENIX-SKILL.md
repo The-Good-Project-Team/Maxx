@@ -70,7 +70,9 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
    `--rise` is a CHAIN, not a fork: every risen generation carries the standing
    order to fenix again when its context passes ~70% or it must stop mid-mission —
    so the loop sustains itself until `.fenix/DONE.md` appears. Brakes built in:
-   generation cap (`.fenix/generation`, default 5, `MAXX_RISE_MAX_GEN` overrides)
+   generation cap (`.fenix/generation`, default 5, `MAXX_RISE_MAX_GEN` overrides) — counted per
+   unit of work, not for the lifetime of the directory: the counter resets whenever `HEAD` moved
+   since the last rise, so the cap only trips after 5 consecutive rises that landed no commit
    and the budget wall — at the 5h wall the rise self-schedules for right after
    the window refills (detached sleeper, no crontab). Child permission flags
    default to `--permission-mode acceptEdits`; `MAXX_RISE_FLAGS` overrides.

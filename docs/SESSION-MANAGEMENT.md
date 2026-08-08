@@ -146,7 +146,7 @@ addressed, and the fleet looks smaller than it is.
 | directive poll, ungated tools | 60s per session | `maxx/gate.mjs` `POLL_EVERY_SEC` |
 | budget cache reused without a call | 60s | `maxx/gate.mjs` `CACHE_FRESH_SEC` |
 | cached verdict trusted while server is down | 600s, then fail-closed | `maxx/gate.mjs` `CACHE_GRACE_SEC` |
-| rise generation cap | 5 (`MAXX_RISE_MAX_GEN`) | `maxx/fenix.mjs` |
+| rise generation cap | 5 rises with nothing landed (`MAXX_RISE_MAX_GEN`); resets when `HEAD` moves | `maxx/fenix.mjs` |
 
 Related: `server/CONNECTOR.md` (deploy, verdicts, install) · `maxx/SKILL.md` (per-session use) ·
 `maxx/FENIX-SKILL.md` (handoff format).

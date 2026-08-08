@@ -16,7 +16,7 @@
  * session in this directory pick it up automatically via --wake.
  */
 import { readFileSync, writeFileSync, writeSync, renameSync, statSync, readdirSync, existsSync, openSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 
 const DIR = path.join(process.cwd(), ".fenix");
@@ -111,16 +111,35 @@ if (arg === "--wake") {
 // but a new process is a fresh context by construction. Each risen generation carries the
 // standing order to fenix AGAIN when its context gets heavy or its turn would end with work
 // in motion — so the chain continues until the mission is done or a brake trips:
-//   · generation cap (.fenix/generation, default 5, MAXX_RISE_MAX_GEN overrides)
+//   · generation cap (.fenix/generation, default 5, MAXX_RISE_MAX_GEN overrides) — counted PER
+//     UNIT OF WORK: the counter resets whenever HEAD moved since the last rise, so a chain that
+//     keeps landing commits never trips it; only a chain landing nothing does.
 //   · budget brake: at the 5h wall the rise is not refused but DELAYED — a detached sleeper
 //     re-runs --rise right after the window refills (the "cron" half, no crontab needed).
 // Child flags: --permission-mode acceptEdits by default; MAXX_RISE_FLAGS overrides.
 if (arg === "--rise") {
   if (!existsSync(HANDOFF)) { console.error("fenix: no pending handoff to rise from."); process.exit(1); }
   const GEN_F = path.join(DIR, "generation");
-  const gen = (() => { try { return parseInt(readFileSync(GEN_F, "utf8"), 10) || 0; } catch { return 0; } })();
+  // The cap is a RUNAWAY brake, not a lifetime quota. Counting every rise a directory ever did
+  // kills the chain at generation 5 even when each generation landed clean work — punishing the
+  // healthy long-running case at exactly the moment continuity matters most. So the counter is
+  // scoped to a unit of work: it RESETS whenever HEAD moved (something landed) since the last
+  // rise. Cap now means "5 rises in a row that landed nothing", which is the actual runaway.
+  const head = (() => {
+    try { return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+    catch { return ""; } // not a git repo → no landing signal, fall back to plain lifetime counting
+  })();
+  const prev = (() => {
+    try {
+      const v = JSON.parse(readFileSync(GEN_F, "utf8"));
+      return typeof v === "number" ? { gen: v, head: "" } : { gen: v.gen || 0, head: v.head || "" };
+    } catch { return { gen: 0, head: "" }; }
+  })();
+  const landed = Boolean(head && prev.head && head !== prev.head);
+  const gen = landed ? 0 : prev.gen;
+  if (landed) console.log(`fenix: work landed since last rise (${prev.head.slice(0, 7)} → ${head.slice(0, 7)}) — generation counter reset.`);
   const maxGen = parseInt(process.env.MAXX_RISE_MAX_GEN || "5", 10);
-  if (gen >= maxGen) { console.error(`fenix: generation cap (${gen}/${maxGen}) — chain ends here. rm .fenix/generation to restart.`); process.exit(1); }
+  if (gen >= maxGen) { console.error(`fenix: generation cap (${gen}/${maxGen} rises with NOTHING landed) — chain ends here. Commit progress and rise again, or rm .fenix/generation.`); process.exit(1); }
   // budget brake — the maxx window cache knows if we're at the wall
   const HOME = process.env.HOME || "";
   let win = null, rl = null;
@@ -141,7 +160,7 @@ if (arg === "--rise") {
   const body = readFileSync(HANDOFF, "utf8");
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${ts}.md`)); // consume FIRST: the child's --wake hook must not double-inject
-  writeFileSync(GEN_F, String(gen + 1));
+  writeFileSync(GEN_F, JSON.stringify({ gen: gen + 1, head }));
   const log = path.join(DIR, `rise-${ts}.log`);
   const fd = openSync(log, "a");
   const flags = (process.env.MAXX_RISE_FLAGS || "--permission-mode acceptEdits").split(/\s+/).filter(Boolean);
