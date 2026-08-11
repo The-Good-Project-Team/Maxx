@@ -394,3 +394,42 @@ test("the cap is the fixed tank — sl and probe anchors never resize it", () =>
   assert.equal(after.week_cap_tokens, COINS_MAX, "still the tank — a probe cannot re-derive a cap");
   assert.equal(after.weekly_left_tokens, COINS_MAX - 60e6, "left = tank − ledger, stable across anchors");
 });
+
+// The coin pcts are OUR tank; the /usage pcts are Anthropic's. A fleet that outspends the
+// tank pins `week` at 1.0 while the real subscription is untouched — lucky2 2026-08-11:
+// reif_tgp held 1.377B coins against the 1e9 tank and every account_pool pass read
+// "gated:week" all night with the real weekly at 0%. A caller that hard-stops an account
+// needs the real reading, and until now the payload simply did not carry it.
+test("the payload carries Anthropic's real /usage pcts, distinct from the coin tank", () => {
+  const s = emptyStore();
+  const wr = T + 3 * 86400;
+  s.events.push({ surface: "lucky2:m", root: "r1", ts: T - 3600, billed: 1_377_368_673 });
+  s.anchors.push({ ts: T - 600, five_pct: 0.03, week_pct: 0.02, five_reset: T + 2 * H, week_reset: wr });
+  const b = computeBudget(s, T);
+  assert.equal(b.week, 1, "coins ÷ tank pins at 1 — the fiction that gated the fleet");
+  assert.equal(b.usage_week_pct, 0.02, "the real weekly is 2%, and must be readable");
+  assert.equal(b.usage_five_pct, 0.03);
+  assert.equal(b.usage_week_live, true, "week_reset is ahead of now → a live reading");
+  assert.equal(b.usage_five_live, true);
+});
+
+// BLIND is not EMPTY: with no anchor there is no real reading, and a gate must be able to
+// tell that apart from "the real limit says 0%". Null, never 0.
+test("no anchor → the /usage pcts are null, not zero", () => {
+  const b = computeBudget(emptyStore(), T);
+  assert.equal(b.usage_week_pct, null);
+  assert.equal(b.usage_five_pct, null);
+  assert.equal(b.usage_week_live, false);
+});
+
+// A reading whose window has already reset describes a DEAD window (the 2026-07-23
+// reif_tgp false-over). The pct still ships — a caller may want it — but `live` is false
+// so nobody re-blocks a fresh window with last week's 99%.
+test("an anchor whose window already reset reads not-live", () => {
+  const s = emptyStore();
+  s.anchors.push({ ts: T - 8 * 86400, five_pct: 0.99, week_pct: 0.99, five_reset: T - 7 * 86400, week_reset: T - 6 * 86400 });
+  const b = computeBudget(s, T);
+  assert.equal(b.usage_week_pct, 0.99, "the reading still ships");
+  assert.equal(b.usage_week_live, false, "but its window is dead — never a fresh block");
+  assert.equal(b.usage_five_live, false);
+});

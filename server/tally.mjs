@@ -337,6 +337,20 @@ export function computeBudget(store, now) {
 
   return {
     quota, week: weekPct,
+    // Anthropic's REAL /usage utilization, straight off the freshest anchor — the only
+    // numbers here that describe the actual subscription. `quota`/`week` above are coins
+    // ÷ our own fixed tank: a fleet that outspends the tank pins week at 1.0 and reads as
+    // "out" while the real weekly sits at 0% (lucky2, 2026-08-11: reif_tgp 1.377B coins on
+    // a 1e9 tank → gated:week all night with real quota untouched). Callers that hard-STOP
+    // an account must gate on these; the coin pcts pace, they do not prove emptiness.
+    // Null when never anchored; pair with anchor_age_sec (below) — an old anchor describes
+    // a possibly-dead window, so treat a stale reading as unknown, never as empty.
+    usage_week_pct: a && a.week_pct != null ? a.week_pct : null,
+    usage_five_pct: a && a.five_pct != null ? a.five_pct : null,
+    // the anchor's own window ends — how to tell a live reading from one describing a
+    // window that has already reset (the 2026-07-23 false-over)
+    usage_week_live: !!(a && a.week_pct != null && wr > now),
+    usage_five_live: !!(a && a.five_pct != null && fr > now),
     five_reset: fiveReset, week_reset: wr || null,
     five_reset_in_sec: resetIn(fiveReset), week_reset_in_sec: resetIn(wr),
     tokens_again:
