@@ -433,3 +433,39 @@ test("an anchor whose window already reset reads not-live", () => {
   assert.equal(b.usage_week_live, false, "but its window is dead — never a fresh block");
   assert.equal(b.usage_five_live, false);
 });
+
+// ---------------------------------------------------------------------------
+// The coin tank does not get a vote on `verdict` (Reif, 2026-08-13: "the only limits are
+// the built in session and weekly limits by claude").
+//
+// Live that day, both fleet accounts, same minute — verdict=over from `weekPct >= 1` alone:
+//
+//   reif_tgp  week_billed 1.377B vs OUR 1B cap   Anthropic's real week: 100%
+//   reif      week_billed 1.405B vs OUR 1B cap   Anthropic's real week:  82%
+//
+// The second account had 242M real tokens it was not permitted to spend, and every consumer
+// of this field read "over" and stopped. A counter that can deny is a limit nobody agreed to.
+// ---------------------------------------------------------------------------
+
+test("a spent coin tank is NOT over while Anthropic's real windows have room", () => {
+  const s = emptyStore();
+  // 1.4B billed against a 1B configured cap -> weekPct pins at 1.0 (the old `over` trigger)
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 4 * H, billed: 1_405_000_000 });
+  // ...while Anthropic's own anchor says 82% of the real week, 26% of the 5h window
+  s.anchors.push({ ts: T - 60, five_pct: 0.26, week_pct: 0.82, five_reset: T + 2 * H, week_reset: T + 112 * H });
+  const b = computeBudget(s, T);
+  assert.notEqual(b.verdict, "over", "the coin tank denied an account Anthropic still allows");
+  assert.equal(b.verdict, "ok");
+});
+
+test("Anthropic's own wall is still absolute", () => {
+  for (const [label, anchor] of [
+    ["weekly", { five_pct: 0.1, week_pct: 0.99 }],
+    ["5h", { five_pct: 0.99, week_pct: 0.1 }],
+  ]) {
+    const s = emptyStore();
+    s.events.push({ surface: "laptop:a", root: "r1", ts: T - 4 * H, billed: 1e6 });
+    s.anchors.push({ ts: T - 60, ...anchor, five_reset: T + 2 * H, week_reset: T + 86400 });
+    assert.equal(computeBudget(s, T).verdict, "over", `${label} wall no longer stops anything`);
+  }
+});
