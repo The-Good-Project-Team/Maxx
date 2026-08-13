@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { weekPaceToken, plausibleReset } from "./pace.mjs";
+import { sessionShare } from "./session.mjs";
 import { weighUsage, COINS_MAX, COINS_FIVE } from "./limit.mjs";
 
 // ─── color: one HSL→hex + an rgb→hsl round-trip for shading ────────────────────
@@ -228,18 +229,36 @@ function sessionBrief(st) {
   const row = (label, val, ctx) => `  ${label.padEnd(11)}${String(val).padEnd(14)}${ctx}`;
   const out = [];
   // machine line: SAFE is weekly-paced (plan against it); BURST is the hard 5h ceiling.
-  out.push(`SESSION_SAFE=${toSpend} SESSION_BURST=${burst} NET_PER_MIN=${net} SUSTAINABLE_PER_MIN=${sustainable} OVER=${over} SESSION_RESETS_IN_MIN=${s.minLeft ?? "?"} RAW_5H_CAP=${s.rawCap ?? "?"} RAW_5H_USED_PCT=${s.rawUsedPct ?? "?"} WEEKLY_LEFT=${w.headroom || 0} WEEKLY_RESETS_IN=${w.resetIn || "?"} SESSIONS_LEFT_WEEK=${sess ?? "?"}`);
+  out.push(`SESSION_SAFE=${toSpend} SESSION_BURST=${burst} NET_PER_MIN=${net} SUSTAINABLE_PER_MIN=${sustainable} OVER=${over} SESSION_RESETS_IN_MIN=${s.minLeft ?? "?"} RAW_5H_CAP=${s.rawCap ?? "?"} RAW_5H_USED_PCT=${s.rawUsedPct ?? "?"} WEEKLY_LEFT=${w.headroom || 0} WEEKLY_RESETS_IN=${w.resetIn || "?"} SESSIONS_LEFT_WEEK=${sess ?? "?"} ${(() => {
+    const sh = sessionShare({ weekPct: (w.usedPct ?? 0) / 100, weekResetInSec: w.secLeft, weekBilled: w.used, fiveBilled: s.used });
+    return sh
+      ? `BLOCK_SHARE_PCT=${(sh.allowancePct * 100).toFixed(2)} BLOCK_USED_PCT=${(sh.usedPct * 100).toFixed(2)} BLOCKS_LEFT_WEEK=${sh.blocksLeft} ON_PACE=${sh.onPace ? 1 : 0}`
+      : "BLOCK_SHARE_PCT=? BLOCK_USED_PCT=? BLOCKS_LEFT_WEEK=? ON_PACE=?";
+  })()}`);
   out.push("");
   out.push("maxx · this session");
   out.push("");
-  out.push(row("safe", abbr(toSpend), "plan against this — weekly budget ÷ windows left, capped at the 5h wall"));
-  out.push(row("burst", abbr(burst), "hard 5h ceiling — reachable now, but it borrows from future windows"));
-  out.push(row("net", (net >= 0 ? "+" : "−") + abbr(net) + "/min", net >= 0 ? "under weekly pace — the week will last" : "over weekly pace — easing off recovers it"));
-  out.push(row("week", abbr(w.headroom || 0) + " left", `· ${sess ?? "?"} windows left · resets in ${w.resetIn || "?"}`));
+  // PERCENTAGES, off Anthropic's own windows. The coin rows above them are still printed for
+  // anything that greps this output, but the share is the number to steer by: what this 5h
+  // block may spend as a fraction of the WEEK. "% of my 5h limit" is the seductive wrong
+  // answer — it reads 100%-is-fine every block, and six blocks of that ends the week early.
+  const share = sessionShare({
+    weekPct: (w.usedPct ?? 0) / 100,
+    weekResetInSec: w.secLeft,
+    weekBilled: w.used,
+    fiveBilled: s.used,
+  });
+  const pctStr = (x) => `${(x * 100).toFixed(1)}%`;
+  out.push(row("this block", share ? pctStr(share.allowancePct) : "—",
+    share ? `of the week is yours to spend now · ${share.blocksLeft} block${share.blocksLeft === 1 ? "" : "s"} left before it resets` : "no weekly reading yet"));
+  out.push(row("used", share ? pctStr(share.usedPct) : "—",
+    share ? (share.onPace ? "within this block's share" : "past this block's share — it borrows from later blocks, it breaches nothing") : ""));
+  out.push(row("5h", `${s.rawUsedPct ?? s.usedPct ?? "?"}% used`, `resets in ${s.resetIn || "?"} · Anthropic's own window`));
+  out.push(row("week", `${w.usedPct ?? "?"}% used`, `resets in ${w.resetIn || "?"} · the only wall that can stop you`));
   out.push("");
-  out.push("  SAFE = your weekly coins ÷ the 5h windows left this week. Plan work against it: future");
-  out.push("  windows keep giving fair shares, so an overspend now is recovered later — you don't have to");
-  out.push("  claw it back this window. BURST past pace reaches the hard 5h wall but eats into future weeks.");
+  out.push("  THIS BLOCK is what remains of your WEEK divided by the 5h blocks left in it. Spend to it and");
+  out.push("  the week lasts; spend past it and later blocks get less. Nothing here can deny you anything —");
+  out.push("  the only real limits are Anthropic's 5h and weekly windows, and they enforce themselves.");
   return out.join("\n");
 }
 

@@ -304,11 +304,17 @@ if (b.verdict === "stale" || b.verdict === "unreachable") {
         `node ~/.claude/skills/maxx/gate.mjs --fail open`,
   );
 }
-// 2. the weekly reserve wall — absolute, even in spree
-if (b.week != null && b.week * 100 >= pol.weeklyStop) {
+// 2. the weekly wall — absolute, even in spree. ANTHROPIC's number when we have it
+// (usage_week_pct on a live window); `b.week` is coins against our own tank and is the
+// fallback only. Measured 2026-08-13: the tank read 100% for two accounts whose real weeks
+// were 100% and 82%, so gating on it denied work Anthropic was still serving.
+const realWeek = b.usage_week_live && b.usage_week_pct != null ? b.usage_week_pct : null;
+const weekFrac = realWeek ?? b.week;
+if (weekFrac != null && weekFrac * 100 >= pol.weeklyStop) {
   // a weekly wall only lifts at week_reset — the 5h refill doesn't lower week %
   const wh = b.week_reset_in_sec != null ? `${Math.round(b.week_reset_in_sec / 3600)}h` : "?";
-  deny(`weekly at ${Math.round(b.week * 100)}% ≥ weekly_stop ${pol.weeklyStop}%. Tokens again: at week_reset (${wh})`);
+  deny(`weekly at ${Math.round(weekFrac * 100)}%${realWeek == null ? " (coin estimate — no live /usage anchor)" : ""} ` +
+       `≥ weekly_stop ${pol.weeklyStop}%. Tokens again: at week_reset (${wh})`);
 }
 // 3. spree: pacing off, wall already checked
 if (pol.mode === "spree") allow("spree");
@@ -318,11 +324,16 @@ if (pol.mode === "spree") allow("spree");
 // FIXED-window spend is the old-server fallback only: it disagrees with the rolling
 // standing (fixed spend never decays), which blocked agents while the bar said banked.
 const safe = b.session_safe;
-if (b.session_to_spend != null) {
-  const slack = Math.round((safe || 0) * (pol.margin / 100));
-  if (b.session_to_spend <= 0 && (b.session_over || 0) >= slack)
-    deny(`roll-session standing gone (over by ${b.session_over || 0}` +
-         `${pol.margin ? `, past the ${pol.margin}% margin (${slack})` : ""}). Tokens again: ${b.tokens_again || "next 5h window"}`);
+// A spent COIN standing no longer denies anything (Reif, 2026-08-13: "it's just a counter").
+// session_to_spend pins at 0 the moment an account passes our own configured weekly cap,
+// which was true of both fleet accounts while one still had 18% of its real week — and this
+// gate turned that into a refused tool call. Anthropic's walls above are the stop; below is
+// pacing advice, and pacing advice does not get to deny. With a live /usage anchor the coin
+// path is skipped entirely.
+if (realWeek != null) {
+  // real numbers available and under the wall — nothing here may block
+} else if (b.session_to_spend != null) {
+  // no live anchor: coins are the only signal there is, so they still pace (never deny)
 } else if (safe != null) {
   const allowed = Math.round(safe * (1 + pol.margin / 100));
   if ((b.five_billed || 0) >= allowed)
