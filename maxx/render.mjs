@@ -794,6 +794,15 @@ function main() {
   const wMinLeft = wStat.secLeft > 0 ? wStat.secLeft / 60 : 0;
   const localPace = wMinLeft > 0 ? wStat.headroom / wMinLeft : 0;
   const netPerMin = gcFresh ? gc.b.net_per_min : Math.round(localPace - (burn5 || 0) / 5);
+  // This block's share of the WEEK — the number the bar now leads with. See session.mjs for why
+  // "% of your 5h limit" is the wrong one (it reads 100%-is-fine every window, and six of those
+  // in a row ends the week on Wednesday).
+  const blockShare = sessionShare({
+    weekPct: gcFresh && gc.b.usage_week_pct != null ? gc.b.usage_week_pct : null,
+    weekResetInSec: gcFresh ? gc.b.week_reset_in_sec : null,
+    weekBilled: gcFresh ? gc.b.week_billed : null,
+    fiveBilled: gcFresh ? gc.b.five_billed : null,
+  });
   // is the weekly the binding wall (realMax below the raw 5h cap)? = the session allowance is being
   // held down to protect the week. Kept for agents; no longer a separate tag on the bar.
   sStat.weeklyPaced = !!(haveWeek && cap5s && realMax < cap5s);
@@ -951,10 +960,19 @@ function main() {
       if (isSession) {
         // signed standing: banked → "+Xk" (ink), over → "−Xk" (red). The sign IS the meaning — no "over"
         // word. Odometer-counted (fast-jump on big swings, else ±1k) — bar snaps, number rolls to catch up.
-        const standK = step1("sess", standing / 1000);
-        const over_ = standK < 0;
-        const d = fg(DIM, "  ") + fg(over_ ? zoneCol(u, e) : INK, (over_ ? "−" : "+") + kstr(standK));
-        if (fits(s, d)) s += d;
+        // Percentages of the WEEK, not coins: what this 5h block may spend, and what it has.
+        // Falls back to the coin standing only when there is no live /usage reading to divide.
+        if (blockShare) {
+          const pctS = (x) => (x * 100).toFixed(1) + "%";
+          const d = fg(DIM, "  ") + fg(INK, pctS(blockShare.allowancePct)) + fg(DIM, " share")
+                  + fg(DIM, "  ·  ") + fg(blockShare.onPace ? INK : AMBER, pctS(blockShare.usedPct)) + fg(DIM, " used");
+          if (fits(s, d)) s += d;
+        } else {
+          const standK = step1("sess", standing / 1000);
+          const over_ = standK < 0;
+          const d = fg(DIM, "  ") + fg(over_ ? zoneCol(u, e) : INK, (over_ ? "−" : "+") + kstr(standK));
+          if (fits(s, d)) s += d;
+        }
         // trailing rate = refill − recent (5-MIN) burn, SIGN and COLOR follow the NET itself.
         // This is the one net every surface shows (dash, card, agent budget all use
         // five/300 − burn_5m/5). NOT burn60/standing-signed: a 60-second window flips to
@@ -975,8 +993,17 @@ function main() {
         // week (1.3%, noise) read as "you breached your weekly cap" while 91% of the tank
         // remained. Fixed: "ahead pace"/"behind pace" (never "over"), AMBER not RED (RED belongs
         // only to the real verdict), and dead-banded so a sub-5%-of-cap wobble prints nothing.
-        const leftK = step1("wkleft", stat.headroom / 1000);
-        const d = fg(DIM, "  ") + fg(INK, kstr(leftK)) + fg(DIM, " left"); if (fits(s, d)) s += d;
+        // ANTHROPIC's week when we have it — the only number that can actually stop you. The
+        // coin reserve ("X left") is the fallback, and it is the number that read 0 for two
+        // accounts on 2026-08-13 while the real weeks were 100% and 82%.
+        const realWeekPct = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
+        if (realWeekPct != null) {
+          const leftPct = Math.max(0, Math.round((1 - realWeekPct) * 100));
+          const d = fg(DIM, "  ") + fg(INK, leftPct + "%") + fg(DIM, " of week left"); if (fits(s, d)) s += d;
+        } else {
+          const leftK = step1("wkleft", stat.headroom / 1000);
+          const d = fg(DIM, "  ") + fg(INK, kstr(leftK)) + fg(DIM, " left"); if (fits(s, d)) s += d;
+        }
         // pace token (weekPaceToken): decided on the RAW bank so it's deterministic; the
         // odometer only rolls the shown digits. See pace.mjs for why it's never "over"/red.
         const pace = weekResetOk ? weekPaceToken(cap7s * e7 - used7, cap7s) : null;
