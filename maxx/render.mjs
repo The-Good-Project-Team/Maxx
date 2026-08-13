@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { weekPaceToken, plausibleReset } from "./pace.mjs";
-import { sessionShare } from "./session.mjs";
+import { sessionShare, advisedWall } from "./session.mjs";
 import { weighUsage, COINS_MAX, COINS_FIVE } from "./limit.mjs";
 
 // ─── color: one HSL→hex + an rgb→hsl round-trip for shading ────────────────────
@@ -249,11 +249,25 @@ function sessionBrief(st) {
     fiveBilled: s.used,
   });
   const pctStr = (x) => `${(x * 100).toFixed(1)}%`;
+  // The three marks, in the order a driver reads them: where I am, where I should stop, where
+  // I will be stopped. All three are percentages of THIS 5h window.
+  const usedPct = s.rawUsedPct ?? s.usedPct ?? null;
+  // Both limits are IMPLIED from Anthropic's own percentages (billed ÷ pct), never configured:
+  // the 5h cap the statusline already derives, and the weekly limit behind the share.
+  const fiveLimitTokens = s.rawCap || (usedPct > 0 && s.used ? s.used / (usedPct / 100) : null);
+  const weekLimitTokens = w.usedPct > 0 && w.used ? w.used / (w.usedPct / 100) : null;
+  const advisedPct = share ? advisedWall({ allowancePct: share.allowancePct, weekLimitTokens, fiveLimitTokens }) : null;
+  out.push(row("used", usedPct != null ? `${usedPct}%` : "—",
+    `of this 5h window · resets in ${s.resetIn || "?"}`));
+  out.push(row("advise", advisedPct != null ? `${advisedPct}%` : "—",
+    advisedPct != null
+      ? (usedPct != null && usedPct > advisedPct
+          ? "you are past the advised wall — later blocks get less, nothing is denied"
+          : "your weekly share, in this window's terms — the wall we recommend")
+      : "no live weekly reading yet"));
+  out.push(row("wall", "100%", "Anthropic's hard 5h limit — hitting it locks you out mid-task"));
   out.push(row("this block", share ? pctStr(share.allowancePct) : "—",
-    share ? `of the week is yours to spend now · ${share.blocksLeft} block${share.blocksLeft === 1 ? "" : "s"} left before it resets` : "no weekly reading yet"));
-  out.push(row("used", share ? pctStr(share.usedPct) : "—",
-    share ? (share.onPace ? "within this block's share" : "past this block's share — it borrows from later blocks, it breaches nothing") : ""));
-  out.push(row("5h", `${s.rawUsedPct ?? s.usedPct ?? "?"}% used`, `resets in ${s.resetIn || "?"} · Anthropic's own window`));
+    share ? `of the WEEK is yours now · ${share.blocksLeft} block${share.blocksLeft === 1 ? "" : "s"} left before it resets` : "no weekly reading yet"));
   out.push(row("week", `${w.usedPct ?? "?"}% used`, `resets in ${w.resetIn || "?"} · the only wall that can stop you`));
   out.push("");
   out.push("  THIS BLOCK is what remains of your WEEK divided by the 5h blocks left in it. Spend to it and");
@@ -962,7 +976,19 @@ function main() {
         // word. Odometer-counted (fast-jump on big swings, else ±1k) — bar snaps, number rolls to catch up.
         // Percentages of the WEEK, not coins: what this 5h block may spend, and what it has.
         // Falls back to the coin standing only when there is no live /usage reading to divide.
-        if (blockShare) {
+        // Three marks on ONE denominator (this 5h window): where you are, the wall we advise,
+        // and Anthropic's hard wall. Comparing a share-of-week against a percent-of-window is
+        // what made the old pacing unreadable — 0.6% and 46% look like a wide margin and are
+        // the same side of the same line.
+        const usedP = gcFresh ? gc.b.session_used_pct : null;
+        const advP = gcFresh ? gc.b.session_advised_pct : null;
+        if (usedP != null && advP != null) {
+          const over_ = usedP > advP;
+          const d = fg(DIM, "  ") + fg(over_ ? AMBER : INK, usedP + "%") + fg(DIM, " used")
+                  + fg(DIM, "  ·  ") + fg(DIM, "advise ") + fg(GREEN, advP + "%")
+                  + fg(DIM, "  ·  ") + fg(DIM, "wall 100%");
+          if (fits(s, d)) s += d;
+        } else if (blockShare) {
           const pctS = (x) => (x * 100).toFixed(1) + "%";
           const d = fg(DIM, "  ") + fg(INK, pctS(blockShare.allowancePct)) + fg(DIM, " share")
                   + fg(DIM, "  ·  ") + fg(blockShare.onPace ? INK : AMBER, pctS(blockShare.usedPct)) + fg(DIM, " used");

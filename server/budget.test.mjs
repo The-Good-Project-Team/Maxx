@@ -584,3 +584,49 @@ test("a failed refresh serves the last good reading rather than nothing", async 
   const after = await h({ method: "GET", url: "/api/u/x/budget", headers: {} });
   assert.equal(after.status, 200, "a broken refresh must not take the endpoint down with it");
 });
+
+// ---------------------------------------------------------------------------
+// The three marks a session shows, all on ONE denominator (Reif, 2026-08-13: "it should show
+// your session usage, the hard wall, and the wall that we recommend").
+// ---------------------------------------------------------------------------
+
+const anchored = (over) => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 2 * H, billed: 14e6 });   // this 5h block
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 3 * 24 * H, billed: 1.5e9 }); // this week
+  s.anchors.push({ ts: T - 60, five_pct: 0.46, week_pct: over ? 0.99 : 0.86,
+                   five_reset: T + 2 * H, week_reset: T + 96 * H });
+  return computeBudget(s, T);
+};
+
+test("session usage, advised wall and hard wall are comparable numbers", () => {
+  const b = anchored(false);
+  assert.equal(b.session_wall_pct, 100, "the hard wall must be stated, never inferred");
+  assert.equal(b.session_used_pct, 46, "usage is Anthropic's own 5h percentage");
+  assert.ok(b.session_advised_pct > 0 && b.session_advised_pct < 100);
+});
+
+test("the advised wall is never the whole 5h window", () => {
+  // Even on a nearly-untouched week, where the weekly share would cover the entire window:
+  const s = emptyStore();
+  s.events.push({ surface: "a", root: "r", ts: T - H, billed: 1e6 });
+  s.anchors.push({ ts: T - 60, five_pct: 0.02, week_pct: 0.02, five_reset: T + 2 * H, week_reset: T + 6 * 24 * H });
+  const b = computeBudget(s, T);
+  assert.ok(b.session_advised_pct <= 85,
+    `advised ${b.session_advised_pct}% — 5h windows are not evenly paced, so the wall is never the plan`);
+});
+
+test("a spent week pulls the advised wall down, not the hard one", () => {
+  const healthy = anchored(false).session_advised_pct;
+  const spent = anchored(true).session_advised_pct;
+  assert.ok(spent < healthy, `advised should tighten as the week runs out (${spent} vs ${healthy})`);
+  assert.equal(anchored(true).session_wall_pct, 100, "Anthropic's wall does not move");
+});
+
+test("no live anchor yields nulls, not a fabricated recommendation", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "a", root: "r", ts: T - H, billed: 1e6 });
+  const b = computeBudget(s, T);
+  assert.equal(b.session_advised_pct, null);
+  assert.equal(b.block_share_pct, null);
+});

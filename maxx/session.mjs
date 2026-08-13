@@ -75,3 +75,24 @@ export function sessionShareLabel(share) {
   const p = (x) => `${(x * 100).toFixed(1)}%`;
   return `${p(share.allowancePct)} of week this block · ${p(share.usedPct)} used`;
 }
+
+/**
+ * The wall we RECOMMEND for this 5h window, as a percentage of that window.
+ *
+ * Converts the weekly share into the window's own denominator so it can sit beside
+ * "used %" and "wall 100%" and be compared at a glance, then caps it below the hard wall.
+ * The cap is not caution for its own sake: 5h windows are not spent evenly — you sleep
+ * through some and burst through others — so planning every window to the wall assumes the
+ * flattest possible week. And the 5h wall is a LOCKOUT: meeting it means finding out
+ * mid-task, with the work half done.
+ *
+ * Mirrors blockShare() in server/tally.mjs. Two runtimes, one rule — if you change the margin
+ * here, change it there, or the bar and the API will advise different numbers.
+ */
+export const WALL_MARGIN_PCT = 85;
+
+export function advisedWall({ allowancePct, weekLimitTokens, fiveLimitTokens } = {}) {
+  if (!(allowancePct >= 0) || !(weekLimitTokens > 0) || !(fiveLimitTokens > 0)) return null;
+  const asWindowPct = ((allowancePct * weekLimitTokens) / fiveLimitTokens) * 100;
+  return Math.round(Math.min(WALL_MARGIN_PCT, asWindowPct) * 10) / 10;
+}

@@ -188,6 +188,7 @@
   <div class="logo"><b>maxx</b></div>
   <div class="links">
     <a href="#math">The math</a>
+    <a href="/counter">Counter, not gate</a>
     <a href="#read">How to read it</a>
     <a href="#install">Install</a>
     <a href="https://github.com/goodindustries/Maxx"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
@@ -248,10 +249,11 @@
     <h2>Here is the math.</h2>
     <p class="lead" style="margin-bottom:18px">It counts <b>coins</b>, not barrels. Four lines. That is the whole product.</p>
     <div class="rail"><span class="lbl">coin&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">1 coin = (input + 5·output + 1.25·cache_write + 0.1·cache_read) × model_price</span>&nbsp;&nbsp;<span class="k-dim">One honest unit of burn.</span></div>
-    <div class="rail"><span class="lbl">tank&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">1,000,000,000 coins / week</span>&nbsp;&nbsp;<span class="k-dim">Your budget — one fixed number, every account.</span></div>
-    <div class="rail"><span class="lbl">pace&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">to_spend = coins_left ÷ 5h_windows_left</span>&nbsp;&nbsp;<span class="k-dim">What to spend this window.</span></div>
+    <div class="rail"><span class="lbl">limit&nbsp;&nbsp;</span> <span class="k-ink">Anthropic's 5-hour and weekly windows</span>&nbsp;&nbsp;<span class="k-dim">The only things that can stop you.</span></div>
+    <div class="rail"><span class="lbl">share&nbsp;&nbsp;</span> <span class="k-ink">this_block = week_left% ÷ 5h_blocks_left</span>&nbsp;&nbsp;<span class="k-dim">What to spend this window.</span></div>
     <div class="rail"><span class="lbl">models&nbsp;</span> <span class="k-ink">haiku ⅓ · sonnet 1 · opus 5⁄3 · fable 10⁄3</span>&nbsp;&nbsp;<span class="k-dim">From Anthropic's price sheet, daily.</span></div>
     <p class="hint" style="margin-top:14px">Fable burns 10 coins where Haiku burns 1. It's an MPG meter for your week — you count coins, the plan bills by the barrel.</p>
+    <p class="hint" style="margin-top:10px">maxx never denies you anything: it counts, Anthropic limits. <a href="/counter" style="color:var(--brand)">Why that distinction matters →</a></p>
   </section>
 </div>
 

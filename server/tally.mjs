@@ -40,6 +40,56 @@ const ANCHOR_DEGRADE_SEC = 12 * 3600;
 
 const sec = (iso) => (iso ? Date.parse(iso) / 1000 : 0);
 
+// This block's share of the week, as percentages of one denominator so the two compare.
+// Returns nulls rather than guesses when there is no live weekly reading to divide.
+function blockShare(anchor, weekBilled, weekReset, fiveBilled, now) {
+  const pct = anchor && anchor.week_pct != null ? anchor.week_pct : null;
+  const fivePct = anchor && anchor.five_pct != null ? anchor.five_pct : null;
+  const resetIn = weekReset ? weekReset - now : null;
+  const none = { block_share_pct: null, block_used_pct: null, blocks_left_week: null, on_pace: null,
+                 session_used_pct: null, session_advised_pct: null, session_wall_pct: 100 };
+  if (!pct || pct <= 0 || pct > 1 || !resetIn || resetIn <= 0 || !weekBilled) return none;
+
+  const weekLimit = weekBilled / pct;                       // implied, never configured
+  const blocksLeft = Math.max(1, Math.ceil(resetIn / FIVE_H));
+  const share = Math.max(0, 1 - pct) / blocksLeft;
+  const used = (fiveBilled || 0) / weekLimit;
+
+  // THE THREE MARKS, all on ONE denominator — this 5h window — so a reader can compare them
+  // without doing arithmetic (Reif, 2026-08-13: "it should show your session usage, the hard
+  // wall, and the wall that we recommend"). Expressing the share as a % of the WEEK and the
+  // usage as a % of the 5h WINDOW is the mistake that made pacing unreadable: 0.6% and 46%
+  // look like a huge margin and are in fact the same side of the same line.
+  //
+  //   session_used_pct     where you are now, against Anthropic's 5h window
+  //   session_advised_pct  the same share as above, converted into this window's terms
+  //   session_wall_pct     Anthropic's hard 5h wall — always 100, stated so nothing infers it
+  // The advised wall is NEVER the full 5h window, even when the weekly share would cover it
+  // (Reif: "we dont recommend using all of the 5hr session limit because those limits are not
+  // evenly paced"). Two reasons, both load-bearing:
+  //   1. The 5h wall is a hard LOCKOUT. Planning to it means discovering it mid-task, with the
+  //      work half-done and nothing to do but wait for the reset.
+  //   2. 5h windows are not spent evenly. You sleep through some and burst through others, so
+  //      a plan that plans every window to the wall is a plan that assumes the flattest
+  //      possible week — which is the one week nobody has.
+  // So the advice is the smaller of the weekly share and a margin below the wall.
+  const WALL_MARGIN_PCT = 85;
+  const fiveLimit = fivePct && fivePct > 0 ? (fiveBilled || 0) / fivePct : null;
+  const advised = fiveLimit
+    ? Math.min(WALL_MARGIN_PCT, ((share * weekLimit) / fiveLimit) * 100)
+    : null;
+
+  return {
+    block_share_pct: Math.round(share * 1000) / 10,         // percent OF THE WEEK, one decimal
+    block_used_pct: Math.round(used * 1000) / 10,           // percent OF THE WEEK
+    blocks_left_week: blocksLeft,
+    on_pace: used <= share,
+    session_used_pct: fivePct != null ? Math.round(fivePct * 1000) / 10 : null,
+    session_advised_pct: advised != null ? Math.round(advised * 10) / 10 : null,
+    session_wall_pct: 100,
+  };
+}
+
 export function emptyStore() {
   // webhooks: [{url, secret, headers, format}] · leases: [{id, tokens, expires, label}]
   // signal: last-notified state for transition webhooks · config: per-handle overrides
@@ -400,6 +450,17 @@ export function computeBudget(store, now) {
     usage_five_live: !!(a && a.five_pct != null && fr > now),
     five_reset: fiveReset, week_reset: wr || null,
     five_reset_in_sec: resetIn(fiveReset), week_reset_in_sec: resetIn(wr),
+    // ---- the number an agent should actually pace against -------------------------------
+    // Computed HERE, server-side, so every caller gets the same answer without re-deriving it
+    // — three separate clients had already written three versions of this arithmetic, and two
+    // of them were wrong in the same direction (pacing off our own coin tank instead of
+    // Anthropic's window). block_share_pct is what THIS 5h block may spend as a percentage of
+    // the WEEK: what remains, divided by the 5h blocks left before the weekly reset.
+    //
+    // Why not "% of your 5h limit": that reads 100%-is-fine every block, because the 5h window
+    // refills. Spend to it six blocks running and the week ends on Wednesday, with every
+    // individual session inside its limits the whole way.
+    ...blockShare(a, week, wr, five, now),
     tokens_again:
       (weekPct != null && weekPct >= 0.99)
         ? `weekly cap — tokens at week_reset (${resetIn(wr) != null ? Math.round(resetIn(wr) / 3600) + "h" : "?"})`

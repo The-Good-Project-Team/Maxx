@@ -48,7 +48,7 @@ const TOOLS = [
   },
   {
     name: "maxx_budget",
-    description: "Read the current omni-surface subscription budget from the central maxx tally: verdict (ok/degraded/over/stale/calibrating — degraded = no fresh /usage anchor, weekly standing still live, proceed on the weekly numbers; calibrating = account has never been anchored, hard stop until a Claude Code session runs), session_to_spend (tokens SAFE to use now — weekly-paced, capped at the 5h wall, nets reserves), session_burst (the top of the coin-spree band, ≥ safe), coin_spree_low / coin_spree_high (the safe spend band for THIS window — 85–97% of the ESTIMATED Anthropic 5h room, since we set the weekly tank but only estimate their 5h window from their %; a hint, not a promise — Anthropic's real wall may cut in sooner), net_per_min (sustainable weekly pace − recent burn: + = under pace, − = over pace), sustainable_per_min (weekly reserve ÷ time to reset), weekly_left_tokens, and the 5h/weekly reset clocks. usage_week_pct / usage_five_pct are Anthropic's REAL /usage utilization (0..1, null when never anchored, paired with usage_week_live / usage_five_live = the anchored window has not reset yet) — `week` and `quota` are coins against OUR tank and pin at 1.0 once a fleet outspends it, so gate a hard STOP on usage_week_pct and let the coin numbers pace, not prove emptiness. Plan agent work against session_to_spend; session_burst is the ceiling if you must exceed pace (it eats future weeks). A negative net_per_min means you're spending faster than sustainable — re-check before each expensive step.",
+    description: "Read this account's live token budget from the central maxx tally. THE RULE: maxx COUNTS, Anthropic LIMITS. Nothing in this payload can deny you work — the only things that stop a call are Anthropic's own 5h and weekly windows, and they enforce themselves by rejecting it. Pace against block_share_pct: the percentage of your WEEK that THIS 5h block may spend (what remains of the week ÷ the 5h blocks left in it), paired with block_used_pct, what it has spent, on the same denominator so the two compare. Going past your share is fine — it borrows from later blocks and breaches nothing; on_pace says which side you are on, blocks_left_week says how many blocks remain. Do NOT pace against '% of the 5h limit': that reads 100%-is-fine every block because the 5h window refills, and six of those in a row ends the week on Wednesday with every session 'within limits'. usage_week_pct / usage_five_pct are Anthropic's REAL /usage utilization (0..1, null when never anchored; usage_week_live / usage_five_live say the anchored window has not reset yet) — these are the ONLY hard stops. verdict is ok / degraded (no fresh /usage anchor, weekly ledger still governs, proceed) / over (a real Anthropic wall) / stale / calibrating (never anchored — set up first). The coin fields (week, quota, session_to_spend, session_burst, coin_spree_*) are maxx's own counters against a configured tank; they pace and they are a fallback when there is no live anchor, they do not prove emptiness — on 2026-08-13 they read empty for two accounts holding 100% and 82% of their real weeks. If a read fails, PROCEED: an unreadable meter is not an exhausted account, and treating those as the same thing cost a fleet 26 hours. Full model: GET /api/model.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: { handle: { type: "string" } },
@@ -1716,6 +1716,59 @@ const rpcErr = (id, code, message) => json(200, { jsonrpc: "2.0", id, error: { c
 // secretFor(handle) = PER-HANDLE secret only (e.g. MAXX_SECRET_<HANDLE> env);
 // fallbackSecret = shared operator secret that also gates unclaimed handles on a
 // public deploy — it must NOT make handles look "taken" to signup.
+
+// The agent-facing statement of what maxx is. Served at GET /api/model and quoted by the MCP
+// tool descriptions, so an agent that has only ever seen the payload can still find the rule.
+const MODEL_BRIEF = `# maxx: a counter, not a gate
+
+**maxx counts. Anthropic limits.** Nothing maxx computes can deny you work. The only things
+that stop a call are Anthropic's own 5h and weekly windows, and they enforce themselves — by
+rejecting the call.
+
+## Pace against these three, they share one denominator (this 5h window)
+
+| field | meaning |
+|---|---|
+| \`session_used_pct\` | where you are now, against Anthropic's 5h window |
+| \`session_advised_pct\` | the wall we recommend — your weekly share, in this window's terms |
+| \`session_wall_pct\` | Anthropic's hard wall. Always 100. Hitting it is a lockout mid-task |
+
+The advised wall is never the whole window. 5h windows are not spent evenly — you sleep
+through some and burst through others — so planning every window to the wall assumes the
+flattest possible week, which is the one week nobody has.
+
+## Where the advice comes from
+
+\`block_share_pct\` is what THIS 5h block may spend as a percentage of your WEEK: what remains
+of the week divided by the 5h blocks left in it (\`blocks_left_week\`). \`block_used_pct\` is what
+it has spent, on the same denominator, so the two compare. \`on_pace\` says which side you are on.
+
+Do NOT pace against "% of my 5h limit". It reads 100%-is-fine every block, because the window
+refills. Six of those in a row ends the week on Wednesday, with every individual session
+"within limits" the whole way.
+
+## Hard stops, and only these
+
+\`usage_week_pct\` and \`usage_five_pct\` are Anthropic's real /usage utilization (0..1, null when
+never anchored). Pair each with \`usage_week_live\` / \`usage_five_live\` — an anchored window that
+has already reset describes a window that no longer exists. \`verdict\` is \`over\` only when one of
+those real walls is hit.
+
+## The coin fields are counters
+
+\`week\`, \`quota\`, \`session_to_spend\`, \`session_burst\`, \`coin_spree_*\` are maxx's own tally
+against a configured tank. They pace, and they are the fallback when there is no live anchor.
+They do not prove emptiness. On 2026-08-13 they read empty for two accounts holding 100% and
+82% of their real Anthropic weeks, and every consumer stopped: a fleet opened zero PRs for 26
+hours over a number maxx invented.
+
+## If you cannot read the meter, PROCEED
+
+An unreadable meter is not an exhausted account. A 403 is not "unreachable" — it is an answer,
+and a fixable one. Treating a failed measurement as a spent budget is the single most expensive
+mistake in this system's history.
+`;
+
 export function createHandler({ store, secretFor = () => null, fallbackSecret = null, now = () => Date.now() / 1000, probe = probeAnchor, allowUnconfigured = true }) {
   // ---- per-handle mutex -----------------------------------------------------
   // Every mutating path here is load → mutate → save with an await in the middle. Two
@@ -2383,6 +2436,18 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
           `Cloud (optional): open https://claude.ai/settings/connectors → Add custom connector → name "Maxx", URL = mcp_url above. Every agent with it gets the budget-gate rules automatically. NOTE: it auto-attaches to NEW routines only — add it to pre-existing routines by hand.`,
         ],
       });
+    }
+
+    // GET /api/model — the rules, in the API, because that is where agents read (Reif:
+    // "this needs to be in the api so that agents can know what the heck is going on").
+    // A page a human opens cannot reach an agent mid-run; a route can. Plain text, no auth:
+    // it describes behaviour, not data.
+    if (p === "/api/model" && (method === "GET" || method === "HEAD")) {
+      return {
+        status: 200,
+        headers: { "content-type": "text/markdown; charset=utf-8", "cache-control": "public, max-age=300", ...CORS },
+        body: MODEL_BRIEF,
+      };
     }
 
     // ---- REST ----
