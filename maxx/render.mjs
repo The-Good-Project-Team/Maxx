@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { weekPaceToken, plausibleReset } from "./pace.mjs";
-import { sessionShare, advisedWall } from "./session.mjs";
+import { sessionShare } from "./session.mjs";
 import { weighUsage, COINS_MAX, COINS_FIVE } from "./limit.mjs";
 
 // ─── color: one HSL→hex + an rgb→hsl round-trip for shading ────────────────────
@@ -251,12 +251,15 @@ function sessionBrief(st) {
   const pctStr = (x) => `${(x * 100).toFixed(1)}%`;
   // The three marks, in the order a driver reads them: where I am, where I should stop, where
   // I will be stopped. All three are percentages of THIS 5h window.
-  const usedPct = s.rawUsedPct ?? s.usedPct ?? null;
-  // Both limits are IMPLIED from Anthropic's own percentages (billed ÷ pct), never configured:
-  // the 5h cap the statusline already derives, and the weekly limit behind the share.
-  const fiveLimitTokens = s.rawCap || (usedPct > 0 && s.used ? s.used / (usedPct / 100) : null);
-  const weekLimitTokens = w.usedPct > 0 && w.used ? w.used / (w.usedPct / 100) : null;
-  const advisedPct = share ? advisedWall({ allowancePct: share.allowancePct, weekLimitTokens, fiveLimitTokens }) : null;
+  // The CENTRAL numbers win. The server sees every surface on the account; this machine sees
+  // one. Deriving the advised wall locally gave 20.5% where the server said 2.4% for the same
+  // window — not a rounding difference but a different denominator, because rawCap is the
+  // statusline's paced share, not Anthropic's 5h limit in the units the weekly figure uses.
+  // Two numbers for one question is worse than one number that is occasionally stale.
+  const central = readJSON(MAXX("gate-cache.json"), null);
+  const cb = central && central.b && central.at && Date.now() / 1000 - central.at < 300 ? central.b : null;
+  const usedPct = cb?.session_used_pct ?? s.rawUsedPct ?? s.usedPct ?? null;
+  const advisedPct = cb?.session_advised_pct ?? null;
   out.push(row("used", usedPct != null ? `${usedPct}%` : "—",
     `of this 5h window · resets in ${s.resetIn || "?"}`));
   out.push(row("advise", advisedPct != null ? `${advisedPct}%` : "—",
@@ -264,7 +267,7 @@ function sessionBrief(st) {
       ? (usedPct != null && usedPct > advisedPct
           ? "you are past the advised wall — later blocks get less, nothing is denied"
           : "your weekly share, in this window's terms — the wall we recommend")
-      : "no live weekly reading yet"));
+      : "no central reading yet — run a turn, or `maxx setup`"));
   out.push(row("wall", "100%", "Anthropic's hard 5h limit — hitting it locks you out mid-task"));
   out.push(row("this block", share ? pctStr(share.allowancePct) : "—",
     share ? `of the WEEK is yours now · ${share.blocksLeft} block${share.blocksLeft === 1 ? "" : "s"} left before it resets` : "no weekly reading yet"));

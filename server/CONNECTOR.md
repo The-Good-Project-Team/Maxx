@@ -16,7 +16,7 @@ Three ways to sign up (all hit `POST /api/signup`):
 
 ```bash
 # 1. install the statusline + skill (also places emit.mjs/watch.mjs)
-curl -fsSL https://raw.githubusercontent.com/goodindustries/Maxx/main/maxx/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/The-Good-Project-Team/Maxx/main/maxx/install.sh | bash
 
 # 2. claim your handle (writes ~/.maxx/config.json, prints your connector URL)
 node ~/.claude/skills/maxx/emit.mjs --signup <your-handle>

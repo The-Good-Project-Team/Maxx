@@ -1,3 +1,6 @@
 # short installer: curl -fsSL https://meetmaxx.co/install | bash  → repo install.sh (proxied)
-/install  https://raw.githubusercontent.com/goodindustries/Maxx/main/maxx/install.sh  200!
+/install  https://raw.githubusercontent.com/The-Good-Project-Team/Maxx/main/maxx/install.sh  200!
 
+
+# /counter → the model page (pretty URL, same file)
+/counter  /counter.html  200

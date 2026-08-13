@@ -23,7 +23,7 @@
 # proxies to the repo's install.sh (single source of truth, no duplicated file).
 [[redirects]]
   from = "/install"
-  to = "https://raw.githubusercontent.com/goodindustries/Maxx/main/maxx/install.sh"
+  to = "https://raw.githubusercontent.com/The-Good-Project-Team/Maxx/main/maxx/install.sh"
   status = 200
   force = true
 

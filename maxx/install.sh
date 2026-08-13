@@ -25,7 +25,7 @@ if [ ! -f "$SRC/render.mjs" ]; then
   command -v git >/dev/null || { echo "maxx needs git to self-install (or clone the repo and run maxx/install.sh)." >&2; exit 1; }
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   echo "maxx: fetching…"
-  git clone --depth 1 https://github.com/goodindustries/Maxx.git "$TMP/Maxx" >/dev/null 2>&1 || { echo "maxx: clone failed." >&2; exit 1; }
+  git clone --depth 1 https://github.com/The-Good-Project-Team/Maxx.git "$TMP/Maxx" >/dev/null 2>&1 || { echo "maxx: clone failed." >&2; exit 1; }
   exec bash "$TMP/Maxx/maxx/install.sh" "$@"
 fi
 

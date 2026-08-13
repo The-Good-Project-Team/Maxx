@@ -1,7 +1,7 @@
 # maxx — where to submit
 
 A prioritized, actionable checklist for getting **maxx** in front of people building tools.
-Repo: `github.com/goodindustries/Maxx` · Install: `/plugin marketplace add goodindustries/Maxx` → `/plugin install maxx@maxx`
+Repo: `github.com/The-Good-Project-Team/Maxx` · Install: `/plugin marketplace add The-Good-Project-Team/Maxx` → `/plugin install maxx@maxx`
 
 ---
 

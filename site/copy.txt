@@ -79,7 +79,7 @@ SECTION: INSTALL
 ----------------
 H2: Install
 Lead: One line in your terminal. Restart Claude Code. Done.
-Hint 1: Plugin manager (skill only, no bar): /plugin marketplace add goodindustries/Maxx · /plugin install maxx@maxx.
+Hint 1: Plugin manager (skill only, no bar): /plugin marketplace add The-Good-Project-Team/Maxx · /plugin install maxx@maxx.
 Hint (terminals): Plain ANSI — works in every terminal Claude Code does.
 Hint 2: Then /maxx for your stats. /maxx session for this window.
 

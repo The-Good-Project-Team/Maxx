@@ -26,7 +26,7 @@ Restart Claude Code. Done. (Needs Node and git on your `PATH`.)
 <summary>Rather clone than pipe curl into bash?</summary>
 
 ```bash
-git clone https://github.com/goodindustries/Maxx.git && Maxx/maxx/install.sh
+git clone https://github.com/The-Good-Project-Team/Maxx.git && Maxx/maxx/install.sh
 ```
 </details>
 
@@ -36,7 +36,7 @@ git clone https://github.com/goodindustries/Maxx.git && Maxx/maxx/install.sh
 In Claude Code:
 
 ```text
-/plugin marketplace add goodindustries/Maxx
+/plugin marketplace add The-Good-Project-Team/Maxx
 /plugin install maxx@maxx
 ```
 </details>
