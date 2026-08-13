@@ -117,3 +117,50 @@ test("credential comparison does not depend on a shared prefix", async () => {
   assert.equal((await handler({ method: "POST", url: `/api/u/acme/logs?k=${near}`, headers: { "x-forwarded-for": "10.9.9.9" }, body: "{}" })).status, 401,
     "an almost-right secret must be as rejected as a wholly wrong one");
 });
+
+// ---------------------------------------------------------------------------
+// An unclaimed handle is not an open one (2026-08-13).
+//
+// authed() ended with `if (!want) return true` — no secret configured anywhere meant anything
+// authenticates. That is correct for local dev (every test in this repo builds a handler with
+// no secrets) and wrong on a public deploy: a handle nobody has signed up for accepts writes
+// from strangers, so a name a real user is about to claim can be pre-filled with usage that
+// was never theirs. Production passes allowUnconfigured:false; the flag is what keeps the two
+// worlds apart instead of one silently inheriting the other's posture.
+// ---------------------------------------------------------------------------
+
+test("unclaimed handle rejects writes when the deploy closes it", async () => {
+  const h = createHandler({ store: createMemoryStore(), allowUnconfigured: false });
+  const r = await h({
+    method: "POST", url: "/api/u/nobody-claimed-this/logs", headers: {},
+    body: JSON.stringify({ surface: "laptop:a", billed: 1e6 }),
+  });
+  assert.equal(r.status, 401, "an unclaimed handle accepted a write from an unauthenticated caller");
+});
+
+test("a signed-up handle is unaffected by the flag — its own secret still governs", async () => {
+  const store = createMemoryStore();
+  await store.setSecret?.("claimed", "s3cret");
+  for (const allowUnconfigured of [true, false]) {
+    const h = createHandler({ store, allowUnconfigured });
+    const bad = await h({
+      method: "POST", url: "/api/u/claimed/logs", headers: { authorization: "Bearer wrong" },
+      body: JSON.stringify({ surface: "laptop:a", billed: 1e6 }),
+    });
+    assert.equal(bad.status, 401, `wrong secret accepted (allowUnconfigured=${allowUnconfigured})`);
+    const ok = await h({
+      method: "POST", url: "/api/u/claimed/logs", headers: { authorization: "Bearer s3cret" },
+      body: JSON.stringify({ surface: "laptop:a", billed: 1e6 }),
+    });
+    assert.equal(ok.status, 200, `own secret rejected (allowUnconfigured=${allowUnconfigured})`);
+  }
+});
+
+test("local dev keeps its open default so a no-secret handler still works", async () => {
+  const h = createHandler({ store: createMemoryStore() });
+  const r = await h({
+    method: "POST", url: "/api/u/devbox/logs", headers: {},
+    body: JSON.stringify({ surface: "laptop:a", billed: 1e6 }),
+  });
+  assert.equal(r.status, 200);
+});

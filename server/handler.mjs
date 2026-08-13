@@ -1716,7 +1716,7 @@ const rpcErr = (id, code, message) => json(200, { jsonrpc: "2.0", id, error: { c
 // secretFor(handle) = PER-HANDLE secret only (e.g. MAXX_SECRET_<HANDLE> env);
 // fallbackSecret = shared operator secret that also gates unclaimed handles on a
 // public deploy — it must NOT make handles look "taken" to signup.
-export function createHandler({ store, secretFor = () => null, fallbackSecret = null, now = () => Date.now() / 1000, probe = probeAnchor }) {
+export function createHandler({ store, secretFor = () => null, fallbackSecret = null, now = () => Date.now() / 1000, probe = probeAnchor, allowUnconfigured = true }) {
   // ---- per-handle mutex -----------------------------------------------------
   // Every mutating path here is load → mutate → save with an await in the middle. Two
   // requests for the same handle therefore both read the PRE-write doc, and the second
@@ -1839,7 +1839,13 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // the operator fallback that also gates unclaimed handles on a public deploy.
   const authed = async (handle, token) => {
     const want = (await store.getSecret?.(handle)) || (await secretFor(handle)) || fallbackSecret;
-    if (!want) return true; // no secret configured at all → open (local/dev)
+    // No secret anywhere for this handle. Open is right for local/dev (every test here builds a
+    // handler with no secrets at all) and wrong for a public deploy, where it means any handle
+    // nobody has signed up for yet accepts writes from anyone — someone can fill a name a real
+    // user is about to claim with usage that was never theirs. Signed-up users are unaffected
+    // either way: their secret lives in the store, so `want` is set and this branch never runs.
+    // Production passes allowUnconfigured:false (see server/netlify-fn.mjs).
+    if (!want) return allowUnconfigured;
     if (!token) return false;
     if (sameSecret(token, want)) return true;
     if (isConnectorToken(token)) {
@@ -1856,7 +1862,7 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // connector token would otherwise be as good as the account itself.
   const ownerAuthed = async (handle, token) => {
     const want = (await store.getSecret?.(handle)) || (await secretFor(handle)) || fallbackSecret;
-    if (!want) return true;
+    if (!want) return allowUnconfigured;   // same posture as authed(), see the note there
     if (!token) return false;
     if (sameSecret(token, want)) return true;
     // a mid-rotation machine still holds the old secret and is still the owner

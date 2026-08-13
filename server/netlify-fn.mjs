@@ -22,6 +22,10 @@ const handler = createHandler({
     process.env[`MAXX_SECRET_${h.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] ||
     process.env.MAXX_SECRET ||
     null,
+  // A handle with no secret configured anywhere stays CLOSED on the public deploy: an
+  // unclaimed name must not accept writes from strangers just because nobody set MAXX_SECRET.
+  // Signed-up handles carry their own secret in the store and are unaffected.
+  allowUnconfigured: false,
 });
 
 export default async (req) => {
