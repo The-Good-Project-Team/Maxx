@@ -19,13 +19,18 @@ const dir = arg("--dir", process.env.MAXX_STATE_DIR || path.join(homedir(), ".ma
 
 // Auth: signup-minted secrets live in the store (_auth.json). MAXX_SECRET_<HANDLE>
 // env is a per-user override; MAXX_SECRET (shared) gates unclaimed handles when set.
-// Nothing set = open (localhost dev only — never expose an open instance publicly).
+//
+// This is the entrypoint the PUBLIC deploy runs (api.meetmaxx.co, via the maxx-tally unit),
+// not just a dev server — so "nothing set = open" is not an acceptable default here. Bind to
+// localhost with MAXX_OPEN=1 for dev; anything reachable keeps unclaimed handles closed, so a
+// name nobody has signed up for cannot be filled with usage that was never theirs.
 const secretFor = async (h) =>
   process.env[`MAXX_SECRET_${String(h).toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] || null;
 const handler = createHandler({
   store: createFileStore(dir),
   secretFor,
   fallbackSecret: process.env.MAXX_SECRET || null,
+  allowUnconfigured: process.env.MAXX_OPEN === "1",
 });
 
 const server = http.createServer(async (req, res) => {
