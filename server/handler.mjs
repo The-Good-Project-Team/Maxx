@@ -1937,11 +1937,69 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     return true;
   }
 
-  async function budget(handle) {
+  // Budget is the hottest read in the product (every gate check, every fleet pass, every
+  // dashboard poll) and the most expensive: load + parse the whole doc, then scan every event.
+  // Measured 2026-08-13 at the origin, before retention: 22-27s per call on a 37MB doc, which
+  // the edge served as 502s and every client read as "unreachable".
+  //
+  // The memo is keyed on the doc itself changing. Any write goes through save() below, which
+  // bumps the generation for that handle, so a cached answer can never outlive the data it was
+  // computed from — this is a cache with an exact invalidation, not a TTL that hopes.
+  const budgetMemo = new Map();   // handle -> {gen, sec, value}
+  const generation = new Map();   // handle -> counter, bumped on every save
+  const inFlight = new Map();     // handle -> promise, so N readers cause 1 recompute
+  const bump = (handle) => generation.set(handle, (generation.get(handle) || 0) + 1);
+
+  // Every write invalidates, not just the ones this file remembers to. There are 23 save()
+  // call sites (leases, directives, config, tokens, ingest); a cache that each of them has to
+  // opt into is a cache that goes stale the first time someone adds a 24th. Wrapping the store
+  // makes invalidation a property of writing, not of remembering — caught immediately by the
+  // lease test: a released hold has to stop subtracting at once, not whenever the memo felt
+  // like expiring.
+  const rawStore = store;
+  store = {
+    ...rawStore,
+    load: (h) => rawStore.load(h),
+    save: async (h, doc) => { bump(h); budgetMemo.delete(h); return rawStore.save(h, doc); },
+  };
+
+  async function recomputeBudget(handle, t) {
     const s = await store.load(handle);
+    if (await maybeRefreshAnchor(handle, s, t)) { await store.save(handle, s); bump(handle); }
+    const value = computeBudget(s, t);
+    budgetMemo.set(handle, { gen: generation.get(handle) || 0, sec: Math.floor(t), value });
+    if (budgetMemo.size > 500) budgetMemo.delete(budgetMemo.keys().next().value);
+    return value;
+  }
+
+  // STALE-WHILE-REVALIDATE (Reif, 2026-08-13: "the delay is 0, and the worst case is the next
+  // one uses up all the tokens and is stopped by the wall").
+  //
+  // A caller waiting on this read is the thing that has actually hurt: 22-27s per call on a
+  // 37MB doc, served as 502s by the edge, read as "unreachable" by every client, and turned
+  // into tier=standby by the fleet. Waiting bought nothing, because the number it waits for is
+  // a COUNTER — being one pass out of date costs at most one overspend, and Anthropic's wall
+  // stops that on its own. Being slow costs the whole fleet.
+  //
+  // So: a cached reading is returned immediately, however old, and the recompute runs behind
+  // it. Only the very first read for a handle blocks, because there is genuinely nothing to
+  // answer with. Concurrent readers share one recompute rather than stampeding a 37MB parse.
+  function refreshInBackground(handle, t) {
+    if (inFlight.has(handle)) return inFlight.get(handle);
+    const p = recomputeBudget(handle, t)
+      .catch(() => budgetMemo.get(handle)?.value)   // a failed refresh must not poison the cache
+      .finally(() => inFlight.delete(handle));
+    inFlight.set(handle, p);
+    return p;
+  }
+
+  async function budget(handle) {
     const t = now();
-    if (await maybeRefreshAnchor(handle, s, t)) await store.save(handle, s);
-    return computeBudget(s, t);
+    const hit = budgetMemo.get(handle);
+    const gen = generation.get(handle) || 0;
+    if (hit && hit.gen === gen && hit.sec === Math.floor(t)) return hit.value;  // same second, same data
+    if (hit) { refreshInBackground(handle, t); return hit.value; }              // stale, but instant
+    return refreshInBackground(handle, t);                                      // cold: nothing to serve
   }
 
   // #4: grant a lease against the CURRENT allowance (which already subtracts

@@ -147,7 +147,13 @@ export function applyEnvelope(store, env, now = Math.floor(Date.now() / 1000)) {
 // lifetime_billed is identical before and after a compaction. Retention is deliberately much
 // wider than the widest window that is actually read (7d), because a wrong retention silently
 // changes numbers and a generous one only costs disk.
-export const RETENTION_SEC = 30 * 24 * 3600;
+// 10 days, not 30. The widest window any reader uses is WEEK (7d); 30 days was picked to be
+// "generous" and turned out to be the thing keeping 82,150 events resident — none of them old
+// enough to age out, all of them re-scanned per request. 10d keeps three full days of margin
+// past the only window that is read, and the lifetime odometer is unaffected either way
+// (dropped billed goes to lifetime_base). MAXX_RETENTION_DAYS overrides for a box that wants
+// a longer local history.
+export const RETENTION_SEC = Number(process.env.MAXX_RETENTION_DAYS || 10) * 24 * 3600;
 export const MAX_ANCHORS = 500;
 
 export function compact(store, now) {

@@ -2,6 +2,7 @@
 // from before the wall reset must not count against the fresh window.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHandler } from "./handler.mjs";
 import { emptyStore, computeBudget, applyEnvelope, COINS_MAX, compact } from "./tally.mjs";
 
 const T = 1_800_000_000, H = 3600;
@@ -524,4 +525,62 @@ test("a store inside retention is left completely alone", () => {
   compact(s, T);
   assert.equal(s.events.length, 1);
   assert.equal(s.lifetime_base, 0);
+});
+
+// ---------------------------------------------------------------------------
+// A budget read never waits on a recompute (Reif, 2026-08-13: "the delay is 0, and the worst
+// case is the next one uses up all the tokens and is stopped by the wall").
+//
+// The number is a COUNTER. Being one pass out of date costs at most one overspend, which
+// Anthropic's wall stops by itself. Being slow cost the fleet 26 hours: 22-27s per call →
+// edge 502s → client timeouts → "unreachable" → tier=standby → nothing spawned.
+// ---------------------------------------------------------------------------
+
+test("a second read is served instantly from the last reading, not recomputed", async () => {
+  let loads = 0;
+  const slowStore = {
+    async load() { loads++; await new Promise((r) => setTimeout(r, 60)); return emptyStore(); },
+    async save() {},
+  };
+  // The clock MUST advance between the two reads, or the same-second shortcut answers and the
+  // stale path — the one under test — never runs. (It passed for that wrong reason first.)
+  let clock = T;
+  const h = createHandler({ store: slowStore, now: () => clock });
+
+  const first = Date.now();
+  await h({ method: "GET", url: "/api/u/x/budget", headers: {} });
+  const coldMs = Date.now() - first;
+
+  clock = T + 30;                      // a later second: same data, stale memo
+  const second = Date.now();
+  await h({ method: "GET", url: "/api/u/x/budget", headers: {} });
+  const warmMs = Date.now() - second;
+
+  assert.ok(coldMs >= 50, `the cold read should have paid the load cost, took ${coldMs}ms`);
+  assert.ok(warmMs < 25, `a warm read waited ${warmMs}ms — the whole point is that it does not`);
+  assert.equal(loads, 2, "the background refresh should still have been kicked off");
+});
+
+test("concurrent readers share one recompute instead of stampeding the parse", async () => {
+  let loads = 0;
+  const slowStore = {
+    async load() { loads++; await new Promise((r) => setTimeout(r, 40)); return emptyStore(); },
+    async save() {},
+  };
+  const h = createHandler({ store: slowStore, now: () => T });
+  await Promise.all(Array.from({ length: 8 }, () => h({ method: "GET", url: "/api/u/x/budget", headers: {} })));
+  assert.equal(loads, 1, `8 cold readers caused ${loads} parses of a 37MB doc`);
+});
+
+test("a failed refresh serves the last good reading rather than nothing", async () => {
+  let calls = 0;
+  const flakyStore = {
+    async load() { if (++calls > 1) throw new Error("disk gone"); return emptyStore(); },
+    async save() {},
+  };
+  const h = createHandler({ store: flakyStore, now: () => T });
+  const ok = await h({ method: "GET", url: "/api/u/x/budget", headers: {} });
+  assert.equal(ok.status, 200);
+  const after = await h({ method: "GET", url: "/api/u/x/budget", headers: {} });
+  assert.equal(after.status, 200, "a broken refresh must not take the endpoint down with it");
 });
