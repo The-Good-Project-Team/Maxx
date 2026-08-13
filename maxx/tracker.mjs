@@ -11,9 +11,10 @@
  * Fully on-box: reads only usage/token metadata, sends nothing anywhere, never
  * emits prompt or message content.
  */
-import { createReadStream, realpathSync, readFileSync, statSync, writeFileSync, unlinkSync } from "node:fs";
+import { createReadStream, realpathSync, readFileSync, statSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -40,6 +41,9 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "session") out.cmd = "session";
+    else if (a === "setup") out.cmd = "setup";
+    else if (a === "switch" || a === "use") out.cmd = "switch";
+    else if (a === "report" || a === "week") out.cmd = "report";
     else if (a === "turn") out.cmd = "turn";
     else if (a === "refresh") out.cmd = "refresh";
     else if (a === "config") out.cmd = "config";
@@ -51,6 +55,35 @@ function parseArgs(argv) {
   }
   if (out.cmd === "config") { out.key = rest[0]; out.val = rest.length > 1 ? rest.slice(1).join(" ") : undefined; }
   return out;
+}
+
+// An account's isolated login lives in its own CLAUDE_CONFIG_DIR — that is what makes
+// switching an env var rather than a re-login. MAXX_DIR_<HANDLE> overrides; otherwise the
+// convention nonprofit-atlas's account_pool.sh already uses on this fleet: ~/.claude-<handle>,
+// with the DEFAULT ~/.claude for whichever account is the box's primary login.
+function configDirFor(handle, email) {
+  const env = process.env[`MAXX_DIR_${String(handle).toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
+  if (env) return env;
+  // Discover by WHO IS LOGGED IN, not by directory naming. Every authenticated config dir
+  // records its own account in .claude.json (oauthAccount.emailAddress) and ~/.maxx/config.json
+  // records each handle's email, so the two join exactly. Naming conventions do not survive
+  // contact with real machines: this laptop has ~/.claude, ~/.claude-gmail and
+  // ~/.claude-reif_personal, and the handle `reif` lives in none of the directories a
+  // ~/.claude-<handle> rule would have guessed.
+  if (email) {
+    try {
+      for (const d of readdirSync(homedir())) {
+        if (!d.startsWith(".claude")) continue;
+        const dir = path.join(homedir(), d);
+        try {
+          const j = JSON.parse(readFileSync(path.join(dir, ".claude.json"), "utf8"));
+          if (j.oauthAccount?.emailAddress === email) return dir;
+        } catch { /* not an authenticated config dir */ }
+      }
+    } catch { /* unreadable home */ }
+  }
+  const byName = path.join(homedir(), `.claude-${handle}`);
+  return existsSync(byName) ? byName : null;
 }
 
 // ─── walk projects dir for .jsonl session files ───────────────────────────────
@@ -483,6 +516,39 @@ if (isMainModule()) {
       } catch {
         w(a.raw ? "{}" : "  session: no pacing data yet — open Claude Code so the statusline seeds ~/.maxx/status.json.");
       }
+    } else if (a.cmd === "setup") {
+      const { main: setupMain } = await import("./setup.mjs");
+      process.exitCode = await setupMain();
+    } else if (a.cmd === "switch") {
+      // Prints the export line and nothing else when piped, so `eval "$(maxx switch)"` works;
+      // adds the ranking on a terminal, where a human is the one reading it.
+      const { readAccounts, probeAccount } = await import("./setup.mjs");
+      const { pickAccount, rankAccounts, switchCommand } = await import("./switch.mjs");
+      const { base, accounts } = readAccounts();
+      const probed = await Promise.all(accounts.map(async (acct) => {
+        const r = await probeAccount(base, acct);
+        return { handle: r.handle, configDir: configDirFor(r.handle, acct.email),
+                 usage: r.error ? undefined : { weekPct: r.weekPct, fivePct: r.fivePct } };
+      }));
+      const pick = pickAccount(probed);
+      if (!pick) { console.error("  no account has a live usage reading — run `maxx setup`"); process.exitCode = 1; }
+      else {
+        if (process.stdout.isTTY) {
+          for (const r of rankAccounts(probed)) {
+            w(`  ${r.handle.padEnd(12)} ${r.binding == null ? "unknown" : Math.round(r.binding * 100) + "% used"}${r.handle === pick.handle ? "   ← pick" : ""}`);
+          }
+          if (pick.walled) w("  every account is at its wall — this is the emptiest of them");
+        }
+        const cmd = switchCommand(pick);
+        if (cmd) w(cmd);
+        else { console.error(`  @${pick.handle} has no known CLAUDE_CONFIG_DIR — set MAXX_DIR_${pick.handle.toUpperCase()}`); process.exitCode = 1; }
+      }
+    } else if (a.cmd === "report") {
+      const { readAccounts, probeAccount } = await import("./setup.mjs");
+      const { weeklyReport, renderReport } = await import("./report.mjs");
+      const { base, accounts } = readAccounts();
+      const probed = await Promise.all(accounts.map((acct) => probeAccount(base, acct)));
+      w(renderReport(weeklyReport(probed)));
     } else if (a.cmd === "turn") {
       const t = await lastTurn(a.dir);
       if (!t) w("  turn: no session log found for this directory.");

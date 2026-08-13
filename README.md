@@ -76,12 +76,19 @@ Narrow terminal? Below 70 columns the rails give way to a single line that packs
 Every number on the bar comes from four lines. Check them against `/usage` any time.
 
 ```text
-pace    to_spend = week_left ÷ 5h_windows_left     The sustainable spend for this next 5hr period.
-anchor  cap = burned ÷ used%                       Pinned to Claude's own /usage numbers every refresh.
+share   this_block = week_left% ÷ 5h_blocks_left    What this window may spend, as % of your WEEK.
+anchor  limit = burned ÷ used%                      Pinned to Claude's own /usage numbers every refresh.
 burn    (input + 5·output + 1.25·cache_write
-         + 0.1·cache_read) × model_price           Different models cost different.
-models  haiku ⅓ · sonnet 1 · opus 5⁄3 · fable 10⁄3  Price-weighted, refreshed daily from Anthropic's price sheet.
+         + 0.1·cache_read) × model_price            Different models cost different.
+models  haiku ⅓ · sonnet 1 · opus 5⁄3 · fable 10⁄3   Price-weighted, refreshed daily from Anthropic's price sheet.
 ```
+
+The first line is the one to steer by, and the reason it divides is worth stating. "% of my 5h
+limit" is the tempting number and it is wrong: it reads 100%-is-fine every window, because the
+5h window refills. Spend to it six windows running and the week is gone by Wednesday, with
+every individual session "within limits". So the share is what remains of your WEEK divided by
+the 5h blocks left in it. Spend past it and later blocks get less — nothing breaks, nothing is
+denied.
 
 A Fable token costs ten times a Haiku token. Unweighted, a Haiku subagent token would count the same as a Fable token; weighted, the pacing is honest.
 
@@ -112,7 +119,9 @@ Every feed row says where it came from — 💻 machine, ☁️ cloud:
 
 ### The gate and the watchdog
 
-`gate.mjs` installs as a PreToolUse hook and denies expensive spawns when the tally says you are out. Verdicts are `ok`, `degraded` (no machine has read `/usage` lately, so the weekly ledger governs), `over`, `stale`, and `calibrating` (a brand-new account before its first Claude Code session anchors the caps — pages render it neutral, agents treat it as a stop).
+`gate.mjs` installs as a PreToolUse hook and denies expensive spawns when **Anthropic's own** windows are at the wall — never when maxx's counters merely say so. maxx counts; Anthropic limits. A count that can deny is a limit nobody agreed to, and on 2026-08-13 that distinction cost a fleet 26 hours of silence: two accounts read "over" against maxx's own weekly cap while Anthropic still had 18% of the real week available on one of them.
+
+Verdicts are `ok`, `degraded` (no machine has read `/usage` lately, so the weekly ledger governs), `over` (a real Anthropic wall, the only thing that stops work), `stale`, and `calibrating` (a brand-new account before its first Claude Code session anchors the caps — pages render it neutral, agents treat it as a stop).
 
 | fresh account: calibrating | first session anchors it: live |
 |---|---|
