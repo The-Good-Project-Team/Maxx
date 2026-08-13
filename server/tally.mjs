@@ -46,7 +46,9 @@ export function emptyStore() {
   // directives: [{id, session, surface, action, note, rise, created, expires, delivered_to}]
   // connector_tokens: [{id, token, label, created, revoked}] — the scoped credential the
   // claude.ai connector URL carries, so the account secret never has to travel in a query string
-  return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, directives: [], ops: [], connector_tokens: [] };
+  // lifetime_base: billed total of events that compaction has already dropped, so the
+  // lifetime odometer survives retention (see compact()).
+  return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, directives: [], ops: [], connector_tokens: [], lifetime_base: 0 };
 }
 
 // Ops ring: everything that happens ON the tally besides emits — MCP budget checks,
@@ -130,7 +132,42 @@ export function applyEnvelope(store, env, now = Math.floor(Date.now() / 1000)) {
       } : null,
     });
   }
+  compact(store, now);
   return { accepted, deduped, billed };
+}
+
+// Retention. Nothing here reads an event older than the weekly window, but every request
+// loaded and re-scanned all of them forever: reif_tgp's doc reached 82,150 events / 36MB and
+// its budget call took 22-27s at the ORIGIN, which the edge turned into intermittent 502s and
+// every client turned into "unreachable" — the 6s timeouts that started this whole hunt.
+// reif had 39,852 anchors for the same reason: the probe path caps at 500, the PUSH path
+// never capped at all.
+//
+// The odometer must not move: dropped events are summed into lifetime_base first, so
+// lifetime_billed is identical before and after a compaction. Retention is deliberately much
+// wider than the widest window that is actually read (7d), because a wrong retention silently
+// changes numbers and a generous one only costs disk.
+export const RETENTION_SEC = 30 * 24 * 3600;
+export const MAX_ANCHORS = 500;
+
+export function compact(store, now) {
+  const cutoff = now - RETENTION_SEC;
+  if (store.events.length) {
+    const keep = [];
+    let dropped = 0;
+    for (const e of store.events) {
+      if (e.ts >= cutoff) keep.push(e);
+      else dropped += e.billed || 0;
+    }
+    if (keep.length !== store.events.length) {
+      store.lifetime_base = (store.lifetime_base || 0) + dropped;
+      store.events = keep;
+    }
+  }
+  // Anchors are readings, not history: only the newest matters, plus enough tail for the
+  // sl-cap lookback. 500 is what the probe path already enforced.
+  if (store.anchors.length > MAX_ANCHORS) store.anchors = store.anchors.slice(-MAX_ANCHORS);
+  return store;
 }
 
 export const latestAnchor = (store) =>
@@ -284,8 +321,9 @@ export function computeBudget(store, now) {
     }
   }
 
-  // lifetime odometer: the whole store, backfill included (weighted units)
-  const lifetime = store.events.reduce((s, e) => s + e.billed, 0);
+  // lifetime odometer: the whole store, backfill included (weighted units), plus whatever
+  // compaction has already retired — so retention never rolls the odometer backwards.
+  const lifetime = (store.lifetime_base || 0) + store.events.reduce((s, e) => s + e.billed, 0);
 
   // #5 burn rate (account-wide, last 5m) + time-to-empty at that rate
   const burn5m = store.events.reduce((s, e) => (e.ts > now - 300 && e.ts <= now + 60 ? s + e.billed : s), 0);

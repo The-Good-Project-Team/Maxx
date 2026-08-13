@@ -2,7 +2,7 @@
 // from before the wall reset must not count against the fresh window.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { emptyStore, computeBudget, applyEnvelope, COINS_MAX } from "./tally.mjs";
+import { emptyStore, computeBudget, applyEnvelope, COINS_MAX, compact } from "./tally.mjs";
 
 const T = 1_800_000_000, H = 3600;
 const FIVE_SUB = Math.round((COINS_MAX * 5 * H) / (7 * 24 * H)); // 5h even-pace share ≈ 29.76M
@@ -468,4 +468,60 @@ test("Anthropic's own wall is still absolute", () => {
     s.anchors.push({ ts: T - 60, ...anchor, five_reset: T + 2 * H, week_reset: T + 86400 });
     assert.equal(computeBudget(s, T).verdict, "over", `${label} wall no longer stops anything`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Retention (2026-08-13). Found by deploying: reif_tgp's doc had grown to 82,150 events /
+// 36MB, and every single budget request parsed and re-scanned all of it —
+//
+//   $ curl -o /dev/null -w "%{time_total}" http://127.0.0.1:8791/api/u/reif_tgp/budget
+//   26.616729s      (at the ORIGIN, inside the VM)
+//
+// which the edge served as intermittent 502s and every client read as "unreachable". The 6s
+// client timeouts that started this hunt were not wrong about the symptom.
+//
+// The odometer must not move when history is dropped, or retention becomes a silent data bug.
+// ---------------------------------------------------------------------------
+
+test("compaction drops old events without moving the lifetime odometer", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 200 * 24 * H, billed: 500e6 });  // ancient
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 60 * 24 * H, billed: 300e6 });   // old
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 2 * H, billed: 7e6 });           // current
+  s.anchors.push({ ts: T - 60, five_pct: 0.2, week_pct: 0.3, five_reset: T + H, week_reset: T + 86400 });
+  const before = computeBudget(s, T);
+
+  compact(s, T);
+
+  assert.equal(s.events.length, 1, "events outside retention must be dropped");
+  const after = computeBudget(s, T);
+  assert.equal(after.lifetime_billed, before.lifetime_billed, "the odometer rolled backwards");
+  assert.equal(after.week_billed, before.week_billed, "the weekly window changed");
+  assert.equal(after.five_billed, before.five_billed, "the 5h window changed");
+});
+
+test("compaction is idempotent — running it twice changes nothing further", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "a", root: "r", ts: T - 90 * 24 * H, billed: 1e6 });
+  s.events.push({ surface: "a", root: "r", ts: T - H, billed: 2e6 });
+  compact(s, T);
+  const once = { base: s.lifetime_base, n: s.events.length };
+  compact(s, T);
+  assert.deepEqual({ base: s.lifetime_base, n: s.events.length }, once);
+});
+
+test("anchors are capped on every path, not just the probe's", () => {
+  const s = emptyStore();
+  for (let i = 0; i < 900; i++) s.anchors.push({ ts: T - i * 60, five_pct: 0.1, week_pct: 0.2, five_reset: T + H, week_reset: T + 86400 });
+  compact(s, T);
+  assert.equal(s.anchors.length, 500, "reif reached 39,852 anchors this way");
+  assert.equal(s.anchors[s.anchors.length - 1].ts, T - 899 * 60, "the tail kept must be contiguous");
+});
+
+test("a store inside retention is left completely alone", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "a", root: "r", ts: T - 3 * H, billed: 5e6 });
+  compact(s, T);
+  assert.equal(s.events.length, 1);
+  assert.equal(s.lifetime_base, 0);
 });
