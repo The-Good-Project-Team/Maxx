@@ -67,23 +67,37 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
 2. **Truth check** — every "Just landed" claim needs evidence you actually have.
    Unverified work goes under "In motion", never "landed".
 
-3. **Hand back control.** Straight truth, twice over: `/clear` is a human keystroke — no
-   model, hook, or tool can clear a session's own context. And a SessionStart hook can
-   only ADD CONTEXT; it cannot make the model take a turn. So after `/clear` the handoff
-   is loaded and waiting, but nothing moves until the human sends one message — any
-   message. Never promise that it "resumes automatically"; it resumes on the next
-   keystroke. (Verified: a `/clear` at 16:48 injected the handoff correctly, then sat at
-   zero assistant turns until it was abandoned.) The handoff now stays live for a grace
-   window (default 20m, `MAXX_WAKE_GRACE_MIN`) and is delivered to EVERY session started
-   inside it, so a `/clear` you walk away from no longer burns the thread; it archives
-   once the window passes. Two exits, pick by presence:
-   - **Human present:** say exactly — `handoff written → .fenix/handoff.md · hit /clear,
-     then send anything ("go") — it picks up from there.`
-   - **Unattended / human says "rise":** run
-     `node ~/.claude/skills/maxx/fenix.mjs --rise` — consumes the handoff and
-     spawns a detached headless continuation (fresh process = fresh context; log
-     in `.fenix/rise-<ts>.log`). Then END your turn — the continuation owns the
-     work now; doing more here defeats the rebirth.
+3. **RISE. This is the default and it needs no permission.** Run:
+
+   ```
+   node ~/.claude/skills/maxx/fenix.mjs --rise
+   ```
+
+   then **END YOUR TURN**. It consumes the handoff and spawns a detached headless
+   continuation — a fresh process is a fresh context by construction — logging to
+   `.fenix/rise-<ts>.log`. The continuation owns the work now; doing anything else in
+   this session defeats the rebirth.
+
+   **Why this is the default, and not "if unattended":** it used to be, and the numbers
+   are damning. Measured in `nonprofit-atlas/.fenix/`: **98 handoffs written, 6 rises
+   attempted.** Ninety-two fenix runs ended by telling Reif to hit `/clear` and type
+   "go" — homework, handed to the one person the whole mechanism exists to free. A
+   rebirth loop whose default branch waits on a human keystroke is not a loop.
+
+   Rising is also strictly better than the handback now: the risen child can commit,
+   push, open a PR and merge (see the flags below), so a unit of work can go from
+   handoff to landed with nobody watching. The `/clear` path cannot do that — a
+   SessionStart hook can only ADD CONTEXT, it cannot make a model take a turn.
+
+   **Only hand back instead when the next step genuinely needs the human** — a decision
+   only Reif can make, a credential only he can enter, or he asked to drive. Then say
+   exactly: `handoff written → .fenix/handoff.md · hit /clear, then send anything ("go")
+   — it picks up from there.` Never promise a `/clear` "resumes automatically": it
+   resumes on the next keystroke. (Verified: a `/clear` at 16:48 injected the handoff
+   correctly, then sat at zero assistant turns until abandoned.) For that path the
+   handoff stays live for a grace window (default 20m, `MAXX_WAKE_GRACE_MIN`) and is
+   delivered to EVERY session started inside it, so a `/clear` you walk away from no
+   longer burns the thread; it archives once the window passes.
 
    `--rise` is a CHAIN, not a fork: every risen generation carries the standing
    order to fenix again when its context passes ~70% or it must stop mid-mission —
@@ -109,7 +123,22 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
    it on next session start. `node ~/.claude/skills/maxx/fenix.mjs --status` shows
    pending/consumed.
 
-## When to suggest fenix proactively
+## Fenix yourself — do not wait to be asked
 
-ctx% high on the statusline (≥70%), the session is looping, or a long task is about
-to start that deserves a clean context. One line: "ctx heavy — /fenix?"
+`/fenix` is not only a command the human types. It is what you do when you are running
+out of room, and you do it WITHOUT asking, the same way you would save a file.
+
+Trigger it yourself on any of these:
+- **a maxx directive says you are past the context wall** — that is the machine telling
+  you directly, with numbers; do not ask whether it means it;
+- ctx ≥70% on the statusline;
+- your turn is ending with work still in motion;
+- a long task is about to start that deserves a clean context.
+
+Then run the sequence in step 3: write the handoff, `--rise`, end your turn. Rising is
+the default. Asking the human first is the thing you skip — a rebirth loop that needs
+permission to continue is not a loop, and 92 of the first 98 handoffs on this machine
+ended by handing Reif homework instead of rising.
+
+The only reason to stop and ask is that the NEXT step genuinely needs him: a decision
+only he can make, a credential only he can enter, or he said he wants to drive.
