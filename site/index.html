@@ -155,12 +155,19 @@
   .b-red{background:var(--red)}
   .b-amber{background:var(--amber)}
   .k-red{color:var(--red)} .k-green{color:var(--green)} .k-dim{color:var(--dim)} .k-ink{color:var(--ink)}
-  .dtrack{position:relative;display:inline-block;width:min(56vw,300px);height:16px;background:var(--track);border-radius:4px;vertical-align:middle;overflow:hidden}
-  .dfill{position:absolute;top:0;bottom:0;width:0;transition:width 1.8s cubic-bezier(.4,0,.2,1)}
-  .dfill.amber{left:0;background:linear-gradient(90deg,hsl(38 72% 62%),hsl(38 70% 46%))}
-  .wk-tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:hsl(266 28% 50%);border-radius:1px}
-  .dfill.green{left:0;background:linear-gradient(90deg,hsl(150 42% 60%),hsl(150 46% 37%))}
-  .dfill.red{right:0;background:linear-gradient(270deg,hsl(354 52% 44%),hsl(354 58% 75%))}
+  /* the statusline demo — same typography rules the real bar uses: faint labels, a rule under
+     the advised mark, weight for the reading that has passed it, a squiggle at the hard wall. */
+  .sl{white-space:nowrap;font-size:clamp(10px,1.15vw,14px);letter-spacing:-.01em}
+  .sl .lbl{color:var(--dim);opacity:.85}
+  .sl .sep{color:var(--dim);opacity:.7}
+  .sl .dot{color:var(--dim);opacity:.45}
+  .sl .val{color:var(--ink)} /* no transition: a state change is not an animation, and a half-finished blend reads as a colour nobody chose */
+  .sl .val.over{color:var(--amber);font-weight:700}
+  .sl .val.wk.over{font-weight:400}
+  .sl .val.wall{color:var(--red);font-weight:700;text-decoration:underline wavy;text-underline-offset:3px}
+  .sl .adv{color:var(--dim);text-decoration:underline;text-underline-offset:3px}
+  .sl .brand{color:var(--brand);text-decoration:underline;text-underline-offset:3px}
+  .sl .mark{color:var(--brand);font-weight:700}
   .demo-note{margin:4px 0 16px;font-size:14px;color:var(--dim);min-height:1.2em;transition:opacity .3s}
   .readlist{list-style:none;padding:0;margin:18px 0 0}
   .readlist li{padding:10px 0;border-top:1px solid var(--line);color:var(--dim);font-size:15px}
@@ -228,7 +235,7 @@
     <div class="dots"><i></i><i></i><i></i></div>
     <video id="statusline-vid" src="statusline.mp4" poster="statusline-poster.jpg" width="1100" height="508"
            autoplay muted loop playsinline preload="metadata"
-           aria-label="The maxx statusline running under a live Claude Code session: the session and week rails sit below the transcript while work streams in above them"></video>
+           aria-label="The maxx statusline running under a live Claude Code session: one line below the transcript carrying the session and week readings while work streams in above it"></video>
   </div>
   <p class="caption">Same numbers in your statusline, every second.</p>
   <script>(function(){var v=document.getElementById('statusline-vid');
@@ -257,27 +264,27 @@
   </section>
 </div>
 
+<div class="wrap" style="max-width:1180px;margin-bottom:22px">
+  <h2 style="margin-bottom:6px">How to read the bar</h2>
+  <p class="lead" style="margin-bottom:16px">One line. Four groups, left to right: who you are, this session, this week, where you're working.</p>
+    <div class="rail sl"><span class="brand">@you</span><span class="dot"> · </span><span class="lbl">opus</span><span class="sep">  │  </span><span class="lbl">session </span><span class="val" id="sl-s">34%</span><span class="dot"> · </span><span class="lbl">advise </span><span class="adv" id="sl-sa">22%</span><span class="dot"> · </span><span class="lbl">1h57m</span><span class="sep">  │  </span><span class="lbl">week </span><span class="val wk" id="sl-w">16%</span><span class="dot"> · </span><span class="lbl">advise </span><span class="adv" id="sl-wa">8%</span><span class="dot"> · </span><span class="lbl">6d</span><span class="sep">  │  </span><span class="lbl">Maxx</span><span class="dot"> · </span><span class="lbl">main</span><span class="dot"> · </span><span class="lbl">590e</span><span class="sep">  │  </span><span class="mark">/maxx</span></div>
+    <p class="demo-note" id="sl-note">&nbsp;</p>
+</div>
+
 <div class="grid2">
   <section class="ingrid" id="read">
-    <h2>How to read the bar</h2>
-    <p class="lead" style="margin-bottom:18px">Two rails: this session, and the week.</p>
+    <h2>Anatomy</h2>
+    <p class="lead" style="margin-bottom:18px">Every piece, and what it is telling you.</p>
 
-    <div class="rail">
-      <span class="lbl">session</span>&nbsp;&nbsp;<span class="dtrack"><span class="dfill green" id="df-green"></span><span class="dfill red" id="df-red"></span></span>&nbsp;&nbsp;<span id="df-num"></span> <span class="k-dim">·</span> <span id="df-rate"></span>
-    </div>
-    <p class="demo-note" id="df-note">&nbsp;</p>
-    <div class="rail">
-      <span class="lbl">week&nbsp;&nbsp;&nbsp;</span>&nbsp;&nbsp;<span class="dtrack"><span class="dfill amber" id="wk-fill" style="transition:none"></span><span class="wk-tick" id="wk-tick"></span></span>&nbsp;&nbsp;<span class="k-ink" id="wk-left">318,402k left</span> <span class="k-dim">·</span> <span id="wk-standing" class="k-green">+24,013k banked</span> <span class="k-dim">·</span> <span id="wk-days">6d</span>
-    </div>
-    <p class="demo-note">Fill = what's left. ╎ = pace. Past it: banked. Short: too fast.</p>
 
     <ul class="readlist">
-      <li><b>session</b>: safe to spend right now.</li>
-      <li><b>week</b>: what's left of your 7 days, live.</li>
-      <li><b>bottom row</b>: <code>@you · model · 65k/72 turns · 251k session · branch · id 590e</code>. The turn cost reddens when it's dear for <i>this</i> session; the context number goes amber at 350k, red at 500k — start fresh.</li>
-      <li><b>@you</b>: first thing on the row, and a link to your dash. Cmd-click it.</li>
-      <li><b>small window</b>: under 70 columns the rails give way to one packed line — <code>sess 27% · week 51% · 360k · 590e · main</code>.</li>
-      <li><b>the wall</b>: hit it and maxx hands you <a href="https://www.youtube.com/watch?v=linlz7-Pnvw" rel="noopener">Switzerland in 8K</a> with the reset clock. Contemplate.</li>
+      <li><b>the reading</b> — <code>session 34%</code> — how much of this 5-hour window you have spent. Plain ink while you're under the line.</li>
+      <li><b>the advised mark</b> — <code>advise 22%</code>, with a rule under it — where to stop so the rest of your week keeps its share. A wall, not a target: pass it and nothing is denied, later windows just get less.</li>
+      <li><b>past it</b> — the reading turns <b>amber and bold</b>. At Anthropic's hard wall it turns red with a squiggle under it, the way a spell-checker tells you something is wrong.</li>
+      <li><b>week</b> — the same pair over a longer horizon. Its advised mark is simply how far into the week you are: burn evenly and used tracks elapsed. It speaks in colour only — one shout per line, and the session gets it.</li>
+      <li><b>@you</b> — first thing on the line, and a link to your dash. Cmd-click it. <code>/maxx</code> signs the other end.</li>
+      <li><b>narrow terminal</b> — pieces drop by rank, least useful first: the repo, then the session tag, then the branch, then the clocks. The percentages and the mark never drop.</li>
+      <li><b>the wall</b> — hit it and maxx hands you <a href="https://www.youtube.com/watch?v=linlz7-Pnvw" rel="noopener">Switzerland in 8K</a> with the reset clock. Contemplate.</li>
     </ul>
   </section>
 
@@ -387,67 +394,35 @@
     });
   });
 
-  // animated "how to read" session rail — cycle through the states so people see what each looks like
+  // the statusline demo — cycle the four states so people see what each one looks like before
+  // they ever hit it. Mirrors render.mjs: plain under the advised mark, amber+bold past it,
+  // red+squiggle at the hard wall, and the week never louder than the session.
   (function(){
-    const g=document.getElementById('df-green'), r=document.getElementById('df-red'),
-          num=document.getElementById('df-num'), rate=document.getElementById('df-rate'), note=document.getElementById('df-note');
-    if(!g) return;
+    const s=document.getElementById('sl-s'), sa=document.getElementById('sl-sa'),
+          w=document.getElementById('sl-w'), wa=document.getElementById('sl-wa'),
+          note=document.getElementById('sl-note');
+    if(!s) return;
     const S=[
-      {g:.58,r:0, num:'591k coins',  nc:'k-green', rate:'+61k/min',  rc:'k-green', note:'Under pace. Banking coins.'},
-      {g:.14,r:0, num:'96k coins',   nc:'k-green', rate:'+9k/min',   rc:'k-green', note:'Steady. Right on pace.'},
-      {g:0, r:.32,num:'1,240k over',  nc:'k-red',   rate:'−90k/min',  rc:'k-red', note:'Over pace. Ease off.'},
-      {g:0, r:.92,num:'4,980k over',  nc:'k-red',   rate:'−150k/min', rc:'k-red', note:'About to hit the 5-hour wall, where Claude stops you.'},
+      {s:'20%',sc:'',    sa:'40%', w:'16%',wc:'',    wa:'17%', note:'Under both advised marks. Nothing to do but work.'},
+      {s:'34%',sc:'over',sa:'22%', w:'16%',wc:'',    wa:'17%', note:'Past the session mark. Nothing is denied — later windows in this week just get less.'},
+      {s:'34%',sc:'over',sa:'22%', w:'46%',wc:'over',wa:'17%', note:'The week is running hot too. It states that in colour; only the session gets weight.'},
+      {s:'94%',sc:'wall',sa:'22%', w:'46%',wc:'over',wa:'17%', note:"Anthropic's own 5-hour wall. This is the one that stops you mid-task."},
     ];
-    const RM=matchMedia('(prefers-reduced-motion: reduce)').matches;
     let i=0;
     function apply(){
-      const s=S[i];
-      g.style.width=(s.g*100)+'%'; r.style.width=(s.r*100)+'%';
+      const c=S[i];
       note.style.opacity=0;
       setTimeout(function(){
-        num.textContent=s.num; num.className=s.nc;
-        rate.textContent=s.rate; rate.className=s.rc;
-        note.textContent=s.note; note.style.opacity=1;
+        s.textContent=c.s; s.className='val '+c.sc;
+        w.textContent=c.w; w.className='val wk '+c.wc;
+        sa.textContent=c.sa; wa.textContent=c.wa;
+        note.textContent=c.note; note.style.opacity=1;
       },260);
       i=(i+1)%S.length;
     }
-    // reduced-motion: show one representative (over) state, no cycling.
-    if(RM){ i=2; apply(); } else { apply(); setInterval(apply,7000); }
-  })();
-
-  // week rail — the tank drains slowly over a simulated week, pace tick marching with it
-  (function(){
-    const fill=document.getElementById('wk-fill'), tick=document.getElementById('wk-tick'),
-          left=document.getElementById('wk-left'), standing=document.getElementById('wk-standing'),
-          days=document.getElementById('wk-days');
-    if(!fill) return;
-    const CAP=480000, LOOP=48000; // full simulated week in 48s
-    // fuel curve: start nearly full and banked, burn hot mid-week, ease off late — crosses the pace line
-    function fuelAt(p){ return Math.max(.06, 1 - p*(0.55 + 0.6*p)); } // monotonic; crosses pace at ~0.75
-    if(matchMedia('(prefers-reduced-motion: reduce)').matches){
-      fill.style.width='49%'; tick.style.left='57%';
-      left.textContent='234,978k left'; standing.textContent='−38,400k over'; standing.className='k-red';
-      days.textContent='4d'; return;
-    }
-    let t0=performance.now();
-    (function frame(now){
-      let p=((now-t0)%LOOP)/LOOP;
-      const fuel=fuelAt(p), pace=1-p;
-      fill.style.width=(fuel*100)+'%';
-      const ratio=pace>.02?fuel/pace:1;
-      fill.style.background=(fuel<.1||ratio<.5)
-        ? 'linear-gradient(90deg,hsl(354 58% 72%),hsl(354 55% 48%))'
-        : ratio<.85
-          ? 'linear-gradient(90deg,hsl(38 72% 62%),hsl(38 70% 46%))'
-          : 'linear-gradient(90deg,hsl(150 42% 60%),hsl(150 46% 37%))';
-      tick.style.left=Math.min(99.3,pace*100)+'%';
-      left.textContent=Math.round(CAP*fuel).toLocaleString()+'k left';
-      const net=Math.round(CAP*(fuel-pace));
-      if(net>=0){ standing.textContent='+'+net.toLocaleString()+'k banked'; standing.className='k-green'; }
-      else { standing.textContent='−'+Math.abs(net).toLocaleString()+'k over'; standing.className='k-red'; }
-      days.textContent=Math.max(1,Math.ceil(7*(1-p)))+'d';
-      requestAnimationFrame(frame);
-    })(t0);
+    // reduced-motion: show the one state that teaches the most, and hold it.
+    if(matchMedia('(prefers-reduced-motion: reduce)').matches){ i=1; apply(); }
+    else { apply(); setInterval(apply,6000); }
   })();
 
   /* mobile dash embed: keep the iframe's internal viewport at desktop width (1000px)
