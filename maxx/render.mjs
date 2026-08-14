@@ -160,11 +160,15 @@ function ital(fgHex, s) { return paint(fgHex, s, "3"); }
 const CURLY_OK = /ghostty|iterm|wezterm|kitty|vscode/i.test(
   (process.env.TERM_PROGRAM || "") + " " + (process.env.TERM || ""),
 ) && !USE_256;
-const curly = (c, s, uc = c) => {
-  if (!CURLY_OK) return under(c, s);
-  const u = rgb(uc);
-  return `\x1b[4:3;58;2;${u[0]};${u[1]};${u[2]};${sgrFg(rgb(c))}m${s}\x1b[0m`;
+const curly = (c, s, attrs = "") => {
+  if (!CURLY_OK) return paint(c, s, attrs ? attrs + ";4" : "4");
+  const u = rgb(c);
+  return `\x1b[${attrs ? attrs + ";" : ""}4:3;58;2;${u[0]};${u[1]};${u[2]};${sgrFg(rgb(c))}m${s}\x1b[0m`;
 };
+// the wall state: the loudest thing on the line, so it carries the most weight AND the squiggle.
+// Rendered as squiggle-only it was quieter than the amber warning one notch below it, which had
+// the alarm getting softer as the situation got worse.
+const boldCurly = (c, s) => curly(c, s, "1");
 
 // NB the [0-9;:] class — the curly-underline params above use COLON sub-params, and a stripper
 // that only knows semicolons leaves "4:3" in the string and every width measurement is wrong.
@@ -805,8 +809,11 @@ function main() {
   const PAD = 1;
   const W = Math.max(20, cols - PAD - 2); // -2 = a right safety margin so nothing gets clipped
   // the old floor was 40 — a leftover from when a meter needed room. One line of text does not.
-  const SEP = faint(BORDER, "  │  ");     // between groups
-  const dot = faint(DIM, " · ");          // within a group
+  // Punctuation hierarchy: the GROUP break must read stronger than the item break inside it.
+  // These were the other way round — BORDER is lighter than DIM — so the eye found the middots
+  // first and the four groups dissolved into one stream of tokens.
+  const SEP = faint(DIM, "  │  ");        // between groups — the stronger break
+  const dot = faint(BORDER, " · ");       // within a group — the lighter one
 
   // Every piece carries a RANK. When the line is too wide for the pane, the highest rank goes
   // first and we measure again — so a narrow terminal loses the sign-off, then the repo name, then
@@ -832,10 +839,19 @@ function main() {
     const over = advP != null && usedP > advP;
     const walled_ = usedP >= 90;
     const n = usedP + "%";
-    put(1, 0, faint(DIM, "session ") + (walled_ ? curly(RED, n) : over ? bold(AMBER, n) : fg(INK, n)));
+    // BOLD lives here and nowhere else. Two bold alerts on one line is no hierarchy at all — the
+    // eye lands on neither. The session is the wall you can act on in the next ten minutes, so it
+    // gets the weight; the week says its piece in colour alone.
+    put(1, 0, faint(DIM, "session ") + (walled_ ? boldCurly(RED, n) : over ? bold(AMBER, n) : fg(INK, n)));
     // ranks below the week's advise (3): the session wall is the one you can act on in the next
     // ten minutes, so a narrow pane sheds the week's guidance first.
-    if (advP != null) put(1, 2, faint(DIM, "advise ") + under(GREEN, advP + "%"));
+    // NOT green. Green means go, and the advised mark is a wall — the one number on this line you
+    // are being told not to pass. It reads as a value in the text's own ink, and the rule under it
+    // is the whole message. Dropping it also takes the line from four hues down to three.
+    // DIM, not INK: rendered at the reading's own weight the advisory looked LOUDER than the
+    // reading — the underline adds visual mass — and a qualifier must never outweigh what it
+    // qualifies. Muted text with a rule under it is exactly the right amount of voice.
+    if (advP != null) put(1, 2, faint(DIM, "advise ") + under(DIM, advP + "%"));
     if (sStat.resetIn) put(1, 6, faint(DIM, sStat.resetIn));
   }
 
@@ -857,8 +873,10 @@ function main() {
     // only at 95%: below the wall, red is a lie — the week has not stopped you.
     const over = weekAdv != null && weekP - weekAdv > 5;
     const n = weekP + "%";
-    put(2, 0, faint(DIM, "week ") + (weekP >= 95 ? curly(RED, n) : over ? bold(AMBER, n) : fg(INK, n)));
-    if (weekAdv != null) put(2, 3, faint(DIM, "advise ") + under(GREEN, weekAdv + "%"));
+    // amber, never bold — see the session block. Past the weekly pace is worth knowing, not worth
+    // shouting over the wall that can stop you inside the hour.
+    put(2, 0, faint(DIM, "week ") + (weekP >= 95 ? boldCurly(RED, n) : over ? fg(AMBER, n) : fg(INK, n)));
+    if (weekAdv != null) put(2, 3, faint(DIM, "advise ") + under(DIM, weekAdv + "%"));
     if (wStat.resetIn) put(2, 7, faint(DIM, wStat.resetIn));
   }
 
