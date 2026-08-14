@@ -163,9 +163,10 @@
   .sl .dot{color:var(--dim);opacity:.45}
   .sl .val{color:var(--ink)} /* no transition: a state change is not an animation, and a half-finished blend reads as a colour nobody chose */
   .sl .val.over{color:var(--amber);font-weight:700}
-  .sl .val.wk.over{font-weight:400}
+  .sl .val.wk.over,.sl .val.ctx.over{font-weight:400}
   .sl .val.wall{color:var(--red);font-weight:700;text-decoration:underline wavy;text-underline-offset:3px}
-  .sl .adv{color:var(--dim);text-decoration:underline;text-underline-offset:3px}
+  .sl .std{color:var(--ink)}
+  .sl .sl-of{color:var(--dim);opacity:.45}
   .sl .brand{color:var(--brand);text-decoration:underline;text-underline-offset:3px}
   .sl .mark{color:var(--brand);font-weight:700}
   .demo-note{margin:4px 0 16px;font-size:14px;color:var(--dim);min-height:1.2em;transition:opacity .3s}
@@ -266,8 +267,8 @@
 
 <div class="wrap" style="max-width:1180px;margin-bottom:22px">
   <h2 style="margin-bottom:6px">How to read the bar</h2>
-  <p class="lead" style="margin-bottom:16px">One line. Four groups, left to right: who you are, this session, this week, where you're working.</p>
-    <div class="rail sl"><span class="brand">@you</span><span class="dot"> · </span><span class="lbl">opus</span><span class="sep">  │  </span><span class="lbl">session </span><span class="val" id="sl-s">34%</span><span class="dot"> · </span><span class="lbl">advise </span><span class="adv" id="sl-sa">22%</span><span class="dot"> · </span><span class="lbl">1h57m</span><span class="sep">  │  </span><span class="lbl">week </span><span class="val wk" id="sl-w">16%</span><span class="dot"> · </span><span class="lbl">advise </span><span class="adv" id="sl-wa">8%</span><span class="dot"> · </span><span class="lbl">6d</span><span class="sep">  │  </span><span class="lbl">Maxx</span><span class="dot"> · </span><span class="lbl">main</span><span class="dot"> · </span><span class="lbl">590e</span><span class="sep">  │  </span><span class="mark">/maxx</span></div>
+  <p class="lead" style="margin-bottom:16px">One line: who you are, then your three walls — chat, session, week — then where you're working. Each wall reads <b>x/y</b>. <b>y</b> is the standard and never moves. <b>x</b> is where you actually are, and it is the only thing that changes colour.</p>
+    <div class="rail sl"><span class="brand">@you</span><span class="dot"> · </span><span class="lbl">opus</span><span class="sep">  │  </span><span class="lbl">ctx </span><span class="val ctx" id="sl-c">26</span><span class="sl-of">/</span><span class="std" id="sl-ca">35%</span><span class="dot"> · </span><span class="lbl">11 turns</span><span class="sep">  │  </span><span class="lbl">session </span><span class="val" id="sl-s">34</span><span class="sl-of">/</span><span class="std" id="sl-sa">22%</span><span class="dot"> · </span><span class="lbl">1h57m</span><span class="sep">  │  </span><span class="lbl">week </span><span class="val wk" id="sl-w">16</span><span class="sl-of">/</span><span class="std" id="sl-wa">8%</span><span class="dot"> · </span><span class="lbl">6d</span><span class="sep">  │  </span><span class="lbl">Maxx</span><span class="dot"> · </span><span class="lbl">main</span><span class="dot"> · </span><span class="lbl">590e</span><span class="sep">  │  </span><span class="mark">/maxx</span></div>
     <p class="demo-note" id="sl-note">&nbsp;</p>
 </div>
 
@@ -278,12 +279,14 @@
 
 
     <ul class="readlist">
-      <li><b>the reading</b> — <code>session 34%</code> — how much of this 5-hour window you have spent. Plain ink while you're under the line.</li>
-      <li><b>the advised mark</b> — <code>advise 22%</code>, with a rule under it — where to stop so the rest of your week keeps its share. A wall, not a target: pass it and nothing is denied, later windows just get less.</li>
-      <li><b>past it</b> — the reading turns <b>amber and bold</b>. At Anthropic's hard wall it turns red with a squiggle under it, the way a spell-checker tells you something is wrong.</li>
-      <li><b>week</b> — the same pair over a longer horizon. Its advised mark is simply how far into the week you are: burn evenly and used tracks elapsed. It speaks in colour only — one shout per line, and the session gets it.</li>
-      <li><b>@you</b> — first thing on the line, and a link to your dash. Cmd-click it. <code>/maxx</code> signs the other end.</li>
-      <li><b>narrow terminal</b> — pieces drop by rank, least useful first: the repo, then the session tag, then the branch, then the clocks. The percentages and the mark never drop.</li>
+      <li><b>x/y</b> — <code>session 34/22%</code> reads "34% spent, against a standard of 22%". <b>y</b> is solid, fixed, and says nothing: it is the reference. <b>x</b> carries the whole verdict in its colour, so a glance at three pairs tells you where you stand three times without reading a word.</li>
+      <li><b>the three states</b> — plain ink under the standard. <b>Amber</b> past it. Red with a squiggle at the hard wall, the way a spell-checker tells you something is wrong. Only the session is ever <b>bold</b>: two shouts on one line is no hierarchy at all.</li>
+      <li><b>the trailing fact</b> — each wall ends with what it is measured against: the chat has <b>turns</b>, the session has a <b>clock</b>, the week has <b>days</b>.</li>
+      <li><b>ctx</b> — how full this conversation is, and how many turns filled it. Its line is whichever arrives first: 75% of the window, or 350k tokens — on a 1M window that's 35%. Past it, hand off deliberately with <code>/fenix</code> rather than letting auto-compact pick the cut for you.</li>
+      <li><b>session</b> — your 5-hour window. Its line is your weekly share expressed in this window's terms. Pass it and nothing is denied; the rest of the week just gets less.</li>
+      <li><b>week</b> — the only wall that can actually stop you. Its line is simply how far into the week you are: burn evenly and used tracks elapsed. Without it, <code>week 16%</code> is unreadable — excellent on Tuesday, alarming an hour in.</li>
+      <li><b>who and where</b> — <code>@you · model · repo · branch · id</code>, trailing. The numbers lead, because they're what you glance at; this is what you look up once you know the numbers are fine. <b>@you</b> links to your dash — cmd-click it.</li>
+      <li><b>narrow terminal</b> — pieces drop by rank, least useful first: the id, then the repo, then the branch, then who, then each wall's trailing fact. The three readings and the mark never drop.</li>
       <li><b>the wall</b> — hit it and maxx hands you <a href="https://www.youtube.com/watch?v=linlz7-Pnvw" rel="noopener">Switzerland in 8K</a> with the reset clock. Contemplate.</li>
     </ul>
   </section>
@@ -398,25 +401,26 @@
   // they ever hit it. Mirrors render.mjs: plain under the advised mark, amber+bold past it,
   // red+squiggle at the hard wall, and the week never louder than the session.
   (function(){
-    const s=document.getElementById('sl-s'), sa=document.getElementById('sl-sa'),
-          w=document.getElementById('sl-w'), wa=document.getElementById('sl-wa'),
+    const s=document.getElementById('sl-s'),
+          w=document.getElementById('sl-w'),
+          c=document.getElementById('sl-c'),
           note=document.getElementById('sl-note');
     if(!s) return;
     const S=[
-      {s:'20%',sc:'',    sa:'40%', w:'16%',wc:'',    wa:'17%', note:'Under both advised marks. Nothing to do but work.'},
-      {s:'34%',sc:'over',sa:'22%', w:'16%',wc:'',    wa:'17%', note:'Past the session mark. Nothing is denied — later windows in this week just get less.'},
-      {s:'34%',sc:'over',sa:'22%', w:'46%',wc:'over',wa:'17%', note:'The week is running hot too. It states that in colour; only the session gets weight.'},
-      {s:'94%',sc:'wall',sa:'22%', w:'46%',wc:'over',wa:'17%', note:"Anthropic's own 5-hour wall. This is the one that stops you mid-task."},
+      {c:'12',cc:'',    s:'20',sc:'',    w:'16',wc:'',     note:'Every reading under its standard. Nothing to do but work.'},
+      {c:'12',cc:'',    s:'34',sc:'over',w:'16',wc:'',     note:'Past the session standard. Nothing is denied — later windows in this week just get less.'},
+      {c:'52',cc:'over',s:'34',sc:'over',w:'46',wc:'over', note:'Chat and week running hot too. They say so in colour; only the session gets weight.'},
+      {c:'52',cc:'over',s:'94',sc:'wall',w:'46',wc:'over', note:"Anthropic's own 5-hour wall. This is the one that stops you mid-task."},
     ];
     let i=0;
     function apply(){
-      const c=S[i];
+      const x=S[i];
       note.style.opacity=0;
       setTimeout(function(){
-        s.textContent=c.s; s.className='val '+c.sc;
-        w.textContent=c.w; w.className='val wk '+c.wc;
-        sa.textContent=c.sa; wa.textContent=c.wa;
-        note.textContent=c.note; note.style.opacity=1;
+        s.textContent=x.s; s.className='val '+x.sc;
+        w.textContent=x.w; w.className='val wk '+x.wc;
+        c.textContent=x.c; c.className='val ctx '+x.cc;
+        note.textContent=x.note; note.style.opacity=1;
       },260);
       i=(i+1)%S.length;
     }

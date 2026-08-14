@@ -146,13 +146,11 @@ const paint = (c, s, attrs) => `\x1b[${attrs ? attrs + ";" : ""}${sgrFg(rgb(c))}
 const fg = (c, s) => paint(c, s);
 // TYPOGRAPHY, and it all carries meaning — none of it is ornament:
 //   faint   labels ("session", "week", "advise") recede so the numbers own the line
-//   under   the advised marks. The advised number IS a line; drawing one under it says so.
 //   bold    a reading that has crossed its advised mark — escalation without spending a word
 //   curly   the hard wall. A red squiggle is the one piece of terminal typography every reader
 //           already knows means "this is wrong", borrowed straight from a spell-checker.
 const bold  = (c, s) => paint(c, s, "1");
 const faint = (c, s) => paint(c, s, "2");
-const under = (c, s) => paint(c, s, "4");
 function ital(fgHex, s) { return paint(fgHex, s, "3"); }
 // Curly underline (SGR 4:3) and underline COLOUR (SGR 58) are colon/extended params that older
 // terminals render as garbage rather than ignoring, so they are opt-in by terminal, not by guess.
@@ -290,6 +288,58 @@ function sessionBrief(st) {
   return out.join("\n");
 }
 
+
+// TURN COUNT — how many times you have spoken in this chat, counted INCREMENTALLY. The transcript
+// is append-only and runs to megabytes; re-reading it every two seconds to count lines would make
+// the statusline the most expensive thing on the box. So the byte offset and the running total are
+// persisted per session and each render reads only what was appended since.
+//
+// A turn is a row of type "user" whose content is a string, or blocks with no tool_result in them.
+// Tool results arrive as "user" rows too — on a real session they outnumber real turns twenty to
+// one (202 vs 11 on the transcript this was written against), so counting them would be nonsense.
+function turnCount(tp, sid, ctxNow) {
+  const p = path.join(HOME, ".maxx", "turns.json");
+  const db = readJSON(p, {});
+  const key = sid || "unknown";
+  let cur = db[key] || { off: 0, n: 0, ctx: 0 };
+  if (!tp) return cur.n || 0;
+  let size; try { size = statSync(tp).size; } catch { return cur.n || 0; }
+  if (size < cur.off) cur = { off: 0, n: 0, ctx: 0 };            // replaced or truncated — recount
+  // /clear and /compact collapse the context, and this number sits beside the context reading, so
+  // it restarts with it: "72 turns" next to a freshly emptied window would be a lie about both.
+  // The tell is the context itself halving — Claude Code keeps the session id across a compact.
+  if (ctxNow > 0 && cur.ctx > 0 && ctxNow < cur.ctx * 0.5) cur = { off: size, n: 0, ctx: 0 };
+  if (ctxNow > 0) cur.ctx = ctxNow;
+  if (size > cur.off) {
+    let text = "";
+    try {
+      const fd = openSync(tp, "r");
+      const buf = Buffer.alloc(size - cur.off);
+      readSync(fd, buf, 0, size - cur.off, cur.off);
+      closeSync(fd);
+      text = buf.toString("utf8");
+    } catch { text = ""; }
+    // whole lines only: a render can land mid-append, so stop at the last newline and leave the
+    // fragment for next time rather than dropping the row or counting it twice.
+    const cut = text.lastIndexOf("\n");
+    if (cut >= 0) {
+      for (const line of text.slice(0, cut).split("\n")) {
+        if (!line || line[0] !== "{") continue;
+        let r; try { r = JSON.parse(line); } catch { continue; }
+        if (r.type !== "user") continue;
+        const c = r.message && r.message.content;
+        if (typeof c === "string") cur.n++;
+        else if (Array.isArray(c) && !c.some((b) => b && b.type === "tool_result")) cur.n++;
+      }
+      cur.off += Buffer.byteLength(text.slice(0, cut + 1), "utf8");
+    }
+  }
+  db[key] = cur;
+  const keys = Object.keys(db);                                   // don't grow forever
+  if (keys.length > 12) for (const k of keys.slice(0, keys.length - 12)) delete db[k];
+  try { writeFileSync(p, JSON.stringify(db)); } catch {}
+  return cur.n;
+}
 
 // ─── sidecar state ─────────────────────────────────────────────────────────────
 const HOME = homedir();
@@ -821,87 +871,107 @@ function main() {
   const G = []; // [{ rank, group, s }]
   const put = (group, rank, s) => { if (s) G.push({ group, rank, s }); };
 
-  // ── who ──
-  if (who) put(0, 4, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
-  put(0, 5, faint(DIM, fam.toLowerCase()));
+  // ── the wall pair: "used/line%" ──
+  // The word "advise" is gone. It cost eight cells three times over, and it was never what made
+  // the pair legible — the RULE under the second number was. Written as one token, used over the
+  // line you are being told not to pass, the relationship is in the slash and the verdict is in
+  // the colour. Nobody has to be told which number is which twice.
+  //
+  //   ctx 26/35%     under the line — plain ink
+  //   session 34/22% past it        — amber (bold, on the session only)
+  //   week 96/17%    at the wall    — red, and a squiggle under it
+  //
+  // The second half stays dim with its rule: a qualifier must never outweigh what it qualifies.
+  const pair = (label, used, line, opts) => {
+    const o = opts || {};
+    const n = used + (line == null ? "%" : "");
+    const head = o.wall ? boldCurly(RED, n) : o.over ? (o.loud ? bold(AMBER, n) : fg(AMBER, n)) : fg(INK, n);
+    // The two halves have different JOBS, so they are lit differently. y is the STANDARD: fixed,
+    // solid ink, never changing. x is the READING, and it is the only thing in the pair that ever
+    // changes colour. Glance at it and the standard is always the same in the same place, so the
+    // colour you notice is always the answer to "where am I against it".
+    //
+    // No rule under y. The underline was left over from when y was labelled "advise" and needed
+    // marking as a line; in a pair the slash already says which number is which, and a decoration
+    // that carries no information is just noise on the one thing meant to hold still.
+    //
+    // Ink, not green: green beside a red reading would say "you're fine" and "you're done" in the
+    // same breath. The standard is a reference, not a verdict — the verdict is x's job alone.
+    return faint(DIM, label + " ") + head
+      + (line == null ? "" : faint(DIM, "/") + fg(INK, line + "%"));
+  };
 
-  // ── session: where I am, where we advise stopping, when the window resets ──
+  // ── who ── short, and the thing you check when two panes look alike
+  if (who) put(0, 6, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
+  put(0, 7, faint(DIM, fam.toLowerCase()));
+
+  // ── ctx — the first wall, and the only one whose reset you own ──
+  // The hard wall is auto-compact: it fires mid-task, costs a full re-read, and picks its own cut.
+  // The line is where to hand off deliberately instead (/fenix, or /compact at a clean stop), and
+  // it is whichever of two arrives first — the same pair of thresholds this codebase already used:
+  //   75% of the window, and 350k tokens (on a 1M window 75% is 750k, long past the point where
+  //   starting fresh beats carrying it). A 200k window binds on the percentage, a 1M on the tokens.
+  const ctxSize = cw_.context_window_size || 0;
+  const ctxUsed = Math.round(ctxPct);
+  const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
+  if (ctxUsed > 0) {
+    put(1, 0, pair("ctx", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
+    // every wall ends with the thing it is measured against: the chat has turns, the session has
+    // a clock, the week has days. Same slot, same voice, so the three read as one grammar.
+    const turns = turnCount(p.transcript_path, sid, total);
+    if (turns > 0) put(1, 3, faint(DIM, turns + " turn" + (turns === 1 ? "" : "s")));
+  }
+
+  // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──
   // The central reading (server-side, account-wide) when it is fresh; this machine's own view of
-  // the 5h window otherwise — so the number is never blank, only occasionally local.
+  // the 5h window otherwise, so the number is never blank, only occasionally local.
   const usedP = gcFresh && gc.b.session_used_pct != null ? Math.round(gc.b.session_used_pct)
               : haveQuota ? Math.round(q5 * 100) : null;
   const advP = gcFresh && gc.b.session_advised_pct != null ? Math.round(gc.b.session_advised_pct) : null;
   if (usedP != null) {
-    // three states, three weights. Under the advised mark: plain ink, nothing to see. Past it:
-    // amber AND bold, because a colour shift alone is easy to miss in peripheral vision while a
-    // weight shift is not. At the hard wall: red with a curly underline — the squiggle reads as
-    // "this is wrong" before you have finished reading the number.
-    const over = advP != null && usedP > advP;
-    const walled_ = usedP >= 90;
-    const n = usedP + "%";
-    // BOLD lives here and nowhere else. Two bold alerts on one line is no hierarchy at all — the
-    // eye lands on neither. The session is the wall you can act on in the next ten minutes, so it
-    // gets the weight; the week says its piece in colour alone.
-    put(1, 0, faint(DIM, "session ") + (walled_ ? boldCurly(RED, n) : over ? bold(AMBER, n) : fg(INK, n)));
-    // ranks below the week's advise (3): the session wall is the one you can act on in the next
-    // ten minutes, so a narrow pane sheds the week's guidance first.
-    // NOT green. Green means go, and the advised mark is a wall — the one number on this line you
-    // are being told not to pass. It reads as a value in the text's own ink, and the rule under it
-    // is the whole message. Dropping it also takes the line from four hues down to three.
-    // DIM, not INK: rendered at the reading's own weight the advisory looked LOUDER than the
-    // reading — the underline adds visual mass — and a qualifier must never outweigh what it
-    // qualifies. Muted text with a rule under it is exactly the right amount of voice.
-    if (advP != null) put(1, 2, faint(DIM, "advise ") + under(DIM, advP + "%"));
-    if (sStat.resetIn) put(1, 6, faint(DIM, sStat.resetIn));
+    put(2, 0, pair("session", usedP, advP, {
+      over: advP != null && usedP > advP, wall: usedP >= 90, loud: true }));
+    if (sStat.resetIn) put(2, 4, faint(DIM, sStat.resetIn));
   }
 
-  // ── week: the only wall that can actually stop you ──
+  // ── week — the only wall that can actually stop you, but never the loudest ──
+  // Its line is simply how far into the week you are: burn evenly and used tracks elapsed. Without
+  // it "week 15%" is unreadable — 15% is excellent on Tuesday and alarming an hour in. elapsedOf
+  // shares spanOf with the reset clock beside it, so the line and "6d" can never disagree.
+  // 5-point dead band (weekPaceToken's, kept) so a wobble either side stays quiet; never amber for
+  // merely being ahead, and red only at 95%, because below the wall the week has not stopped you.
   const weekLive = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
   const weekP = weekLive != null ? Math.round(weekLive * 100) : haveWeek ? Math.round(w7 * 100) : null;
   if (weekP != null) {
-    // The week gets an advised mark too, read the same way as the session's: where you SHOULD be
-    // by now. Here it is simply how far into the week you are — burn the week evenly and used
-    // tracks elapsed. Under it you are banking, over it you are borrowing from Sunday. Without
-    // this number "week 15%" is unreadable: 15% is excellent on Tuesday and alarming an hour in.
-    // elapsedOf shares spanOf with the reset clock beside it, so the mark and "6d" can never
-    // disagree — both are (now − start) / span against the same epoch-clamped window.
-    const weekAdv = weekResetOk && haveWeek ? Math.round(e7 * 100) : null;
-    // Colour is the comparison the eye is already making: used against advised. It used to be the
-    // coin-based pace verdict, which judged one denominator while the row showed another — the
-    // exact mismatch the three-marks model exists to kill. 5-point dead band (weekPaceToken's, kept)
-    // so a wobble either side of the line stays quiet. Never AMBER for merely being ahead, and RED
-    // only at 95%: below the wall, red is a lie — the week has not stopped you.
-    const over = weekAdv != null && weekP - weekAdv > 5;
-    const n = weekP + "%";
-    // amber, never bold — see the session block. Past the weekly pace is worth knowing, not worth
-    // shouting over the wall that can stop you inside the hour.
-    put(2, 0, faint(DIM, "week ") + (weekP >= 95 ? boldCurly(RED, n) : over ? fg(AMBER, n) : fg(INK, n)));
-    if (weekAdv != null) put(2, 3, faint(DIM, "advise ") + under(DIM, weekAdv + "%"));
-    if (wStat.resetIn) put(2, 7, faint(DIM, wStat.resetIn));
+    const weekLine = weekResetOk && haveWeek ? Math.round(e7 * 100) : null;
+    put(3, 0, pair("week", weekP, weekLine, {
+      over: weekLine != null && weekP - weekLine > 5, wall: weekP >= 95 }));
+    if (wStat.resetIn) put(3, 5, faint(DIM, wStat.resetIn));
   }
 
-  // ── where: repo, branch, and the session tag ──
-  // The tag is the first 4 chars of the id — the same slice the owner-dashboard feed tags a row
-  // with, so two agents in one directory can be told apart across both surfaces.
+  // ── who and where, TRAILING ──
+  // The numbers lead now. Identity and location are what you look up when you already know the
+  // numbers are fine, so they sit where the eye arrives last and shed first on a narrow pane.
+  // The session tag is the first 4 chars of the id — the same slice the owner-dashboard feed tags
+  // a row with, so two agents in one directory can be told apart across both surfaces.
   const repo = path.basename((p.workspace || {}).project_dir || p.cwd || "");
-  if (repo) put(3, 9, faint(DIM, trunc(repo, 20)));
-  if (branch) put(3, 8, faint(DIM, trunc(branch, 28)));
-  if (sid) put(3, 10, faint(DIM, String(sid).slice(0, 4)));
+  if (repo) put(4, 9, faint(DIM, trunc(repo, 20)));
+  if (branch) put(4, 8, faint(DIM, trunc(branch, 28)));
+  if (sid) put(4, 10, faint(DIM, String(sid).slice(0, 4)));
 
-  // the 5h wall: Claude has stopped you anyway. It replaces everything downstream of the session
-  // group — nothing else on this line matters while you are locked out.
+  // the 5h wall: Claude has stopped you anyway. It replaces the money walls and the trailing
+  // context — nothing else matters while you are locked out — but never ctx (you can still act on
+  // it) and never the mark.
   if (haveQuota && quota >= 0.99) {
-    // groups 2 and 3 only — the mark (group 4) is rank 0 and never drops, walled or not.
-    for (let i = G.length - 1; i >= 0; i--) if (G[i].group === 2 || G[i].group === 3) G.splice(i, 1);
-    put(2, 1, fg(RED, "walled → ")
+    for (let i = G.length - 1; i >= 0; i--) if (G[i].group >= 2 && G[i].group <= 4) G.splice(i, 1);
+    put(2, 0, fg(RED, "walled → ")
       + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
       + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : ""));
   }
 
   // ── the mark. NEVER drops (rank 0) — it is five cells, it is the product's name, and a bar that
   // sheds its own signature to fit a narrow pane is a bar nobody remembers came from anywhere.
-  // BRAND, same ink as the handle at the far left, so the line is book-ended by maxx.
-  put(4, 0, bold(BRAND, "/maxx")); // a wordmark, set like one
+  put(5, 0, bold(BRAND, "/maxx")); // a wordmark, set like one
 
 
   // assemble: pieces joined by a middot inside a group, groups joined by the hairline.
