@@ -14,7 +14,7 @@ are Anthropic's 5-hour and weekly windows, and those enforce themselves — they
 
 ```bash
 maxx setup       # walk every account, link the ones that aren't reporting, print the week
-maxx session     # what this 5h block may spend, as a % of your week
+maxx session     # used / advised wall / hard wall — three marks, one denominator
 maxx switch      # the account with the most room left, as a CLAUDE_CONFIG_DIR export
 maxx report      # where the week went, per account, and what to do about it
 ```
@@ -40,24 +40,38 @@ The probe token is what lets the server pull Anthropic's real `/usage` when your
 asleep. It is stored server-side per account, never rotated by maxx, and separate from the
 credential your CLI logs in with.
 
-### `maxx session` — the share, not the limit
+### `maxx session` — three marks, one denominator
 
-The number to steer by is **what share of your WEEK this 5-hour block may spend**:
+A session shows where you are, where we suggest stopping, and where Anthropic stops you —
+all as percentages of **this 5-hour window**, so they compare without arithmetic:
 
 ```
-  this block 0.7%   of the week is yours to spend now · 23 blocks left before it resets
-  used       6.1%   past this block's share — it borrows from later blocks, it breaches nothing
-  5h         38% used    resets in 1h11m · Anthropic's own window
-  week       84% used    resets in 4d · the only wall that can stop you
+  used       48%     of this 5h window · resets in 14m
+  advise     2.4%    your weekly share, in this window's terms — the wall we recommend
+  wall       100%    Anthropic's hard 5h limit — hitting it locks you out mid-task
+  this block 0.6%    of the WEEK is yours now · 23 blocks left before it resets
+  week       86% used    resets in 4d · the only wall that can stop you
 ```
 
-The obvious alternative — *used ÷ your 5h limit* — is wrong in a way that takes a week to
-notice. It reads fine at 100% every block, because the 5h window refills. Spend to it six
-blocks running and the week is gone by Wednesday, and every individual session was "within
-limits" the whole time.
+Expressing the share as a percentage of the WEEK next to usage as a percentage of the WINDOW
+is what made the old pacing unreadable: `0.6%` and `48%` look like an enormous margin and are
+in fact the same side of the same line. `advise` is that share converted into the window's own
+terms.
 
-So: what remains of the week, divided by the 5h blocks left in it. Going past your share is
-**amber, never red** — it borrows from later blocks and breaches nothing.
+**The advised wall is never the whole window** — capped below the hard limit for two reasons.
+The 5h wall is a *lockout*: planning to it means discovering it mid-task, with the work half
+done and nothing to do but wait. And 5-hour windows are not spent evenly — you sleep through
+some and burst through others — so a plan that takes every window to the wall assumes the
+flattest possible week, which is the one week nobody has.
+
+The number underneath is `block_share_pct`: what remains of your week, divided by the 5-hour
+blocks left in it. The obvious alternative — *used ÷ your 5h limit* — is wrong in a way that
+takes a week to notice. It reads fine at 100% every block, because the window refills. Spend
+to it six blocks running and the week is gone by Wednesday, and every individual session was
+"within limits" the whole time.
+
+Going past your share is **amber, never red** — it borrows from later blocks and breaches
+nothing.
 
 ### `maxx switch` — round-robin by what's left
 
@@ -96,6 +110,30 @@ without evidence — a report that always says something says nothing.
   • 55% of @reif's week went to one surface: laptop:6fc4c2bc · nonprofit-atlas
     → Worth a look — that share is usually one loop or one automation, not steady work.
 ```
+
+### For agents: `GET /api/model`
+
+A page a human opens cannot reach an agent mid-run, so the rules live in the API too:
+
+```bash
+curl https://api.meetmaxx.co/api/model     # plain markdown, no auth
+```
+
+It states the rule, what to pace against, what the hard stops are, and that the coin fields
+are counters. The `maxx_budget` MCP tool description points at it, so an agent that has only
+ever seen the payload can still find the reasoning.
+
+The payload carries the numbers already computed, so no client re-derives them — three clients
+had written three versions of this arithmetic and two were wrong the same way:
+
+```
+block_share_pct · block_used_pct · blocks_left_week · on_pace
+session_used_pct · session_advised_pct · session_wall_pct
+```
+
+One caution learned the hard way: compute these **server-side**. The server sees every surface
+on an account; one machine sees one. A local derivation of the advised wall gave 20.5% where
+the server said 2.4% for the same window — not rounding, a different denominator.
 
 ---
 

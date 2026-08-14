@@ -36,6 +36,9 @@ Reads only token/usage metadata — never prompt or message content.
    - Turn:      `node ~/.claude/skills/maxx/tracker.mjs turn`   (when the user says `turn` / "what did that cost"; `--json` for machine form. Print the two lines verbatim in your reply so the receipt lands in the transcript.)
    - Fenix:     when the user says `fenix`, follow `~/.claude/skills/fenix/SKILL.md` (write `.fenix/handoff.md`, then the human /clears — or `node ~/.claude/skills/maxx/fenix.mjs --rise` for an unattended headless continuation). fenix is a maxx subroute; /fenix is the same flow.
    - Session:   `node ~/.claude/skills/maxx/tracker.mjs session`   (when the user says `session`)
+   - Setup:     `node ~/.claude/skills/maxx/tracker.mjs setup`   (walks every account, links the ones not reporting, prints the week)
+   - Switch:    `node ~/.claude/skills/maxx/tracker.mjs switch`   (the account with the most room left; prints only `export CLAUDE_CONFIG_DIR=…` when piped, so `eval "$(maxx switch)"` works)
+   - Report:    `node ~/.claude/skills/maxx/tracker.mjs report`   (where the week went, per account, with the move each finding implies)
    - JSON:      `node ~/.claude/skills/maxx/tracker.mjs --json`
    - Nazi:      `node ~/.claude/skills/maxx/limit.mjs --nazi`   (when the user says `nazi`; add `--json` for the machine form)
    - Agents:    `node ~/.claude/skills/maxx/agents.mjs`   (when the user says `agents`; `--children` to expand live descendants, `--mins N` window, `--json` machine form)
@@ -55,17 +58,36 @@ Reads only token/usage metadata — never prompt or message content.
    gives the full per-root breakdown (own / subagents / workflow split, live
    children). Show the human the card verbatim.
 
-   **Token budget — read before interpreting `session`.** "Session safe" = weekly
-   tokens-LEFT ÷ the 5h windows left this week, capped at the raw 5h wall — the number
-   to PLAN work against. NOT the raw 5h cap (`burst`), which you can physically reach but
-   which burns the week out days early. Future windows keep giving fair shares, so an
-   overspend now is recovered later — you don't claw it back this window. `net` = the
-   sustainable weekly pace (weekly-left ÷ time-to-reset) minus recent burn: + under pace,
-   − over. `maxx session` delegates to `render.mjs --session`
-   (the only place with the weekly rate-limit data). Its fields: `toSpend` (= tokens good
-   to burn) / `over` / `spendPerMin` = the actionable numbers; `capKind` = `weekly-paced`
-   or `5h-cap`; `RAW_5H_*` = Anthropic's actual fixed 5h wall, exposed separately so
-   nobody mistakes it for the budget. Do NOT pace off `RAW_5H_*` — that's the hard wall.
+   **Token budget — read before interpreting `session`.** THE RULE: **maxx counts,
+   Anthropic limits.** Nothing maxx reports can deny work. The only things that stop a
+   call are Anthropic's own 5h and weekly windows, and they enforce themselves by
+   rejecting it. If a reading fails, PROCEED — an unreadable meter is not an exhausted
+   account, and treating those as the same thing switched a fleet off for 26 hours.
+
+   `session` shows THREE MARKS, all percentages of the SAME thing (this 5h window), so
+   they can be compared without arithmetic:
+
+   | mark | meaning |
+   |---|---|
+   | `used` | where you are now, against Anthropic's 5h window |
+   | `advise` | the wall we recommend — your weekly share, in this window's terms |
+   | `wall` | Anthropic's hard 5h limit. Always 100%. Hitting it is a lockout mid-task |
+
+   The advised wall is never the whole window: 5h windows are not spent evenly (you
+   sleep through some and burst through others), so planning every one to the wall
+   assumes the flattest possible week. Past `advise` is fine — it borrows from later
+   blocks and breaches nothing. `this block` is the same share expressed against the
+   WEEK, with `blocks_left_week` blocks to go before the weekly reset.
+
+   Do NOT pace off "% of my 5h limit" (`RAW_5H_*`, `burst`): that reads 100%-is-fine
+   every window because the window refills, and six of those in a row ends the week on
+   Wednesday with every session "within limits". Do NOT treat the coin fields (`toSpend`,
+   `session_to_spend`, `week`, `quota`) as proof of emptiness — they are maxx's own tally
+   against a configured tank, they pace, and they are the fallback when there is no live
+   /usage anchor. On 2026-08-13 they read empty for two accounts holding 100% and 82% of
+   their real Anthropic weeks.
+
+   Full model, agent-readable, no auth: `GET https://api.meetmaxx.co/api/model`.
 
    Pass `--dir PATH` to point at a non-default projects directory.
 
