@@ -868,6 +868,7 @@ function main() {
   // Every piece carries a RANK. When the line is too wide for the pane, the highest rank goes
   // first and we measure again — so a narrow terminal loses the sign-off, then the repo name, then
   // the id, long before it loses a percentage. Rank 0 never drops.
+  const MARK_GROUP = 5;
   const G = []; // [{ rank, group, s }]
   const put = (group, rank, s) => { if (s) G.push({ group, rank, s }); };
 
@@ -901,9 +902,12 @@ function main() {
       + (line == null ? "" : faint(DIM, "/") + fg(INK, line + "%"));
   };
 
-  // ── who ── short, and the thing you check when two panes look alike
-  if (who) put(0, 6, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
-  put(0, 7, faint(DIM, fam.toLowerCase()));
+  // ── who ── RANK 0, never drops. Ten cells, and without them a narrow pane cannot tell you
+  // WHOSE quota it is showing — which is the one question a second login on the same box makes
+  // urgent, and the one thing you cannot infer from anything else on the line. The model beside
+  // it is inferable from what you typed, so that still sheds.
+  if (who) put(0, 0, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
+  put(0, 6, faint(DIM, fam.toLowerCase()));
 
   // ── ctx — the first wall, and the only one whose reset you own ──
   // The hard wall is auto-compact: it fires mid-task, costs a full re-read, and picks its own cut.
@@ -971,7 +975,7 @@ function main() {
 
   // ── the mark. NEVER drops (rank 0) — it is five cells, it is the product's name, and a bar that
   // sheds its own signature to fit a narrow pane is a bar nobody remembers came from anywhere.
-  put(5, 0, bold(BRAND, "/maxx")); // a wordmark, set like one
+  put(MARK_GROUP, 0, bold(BRAND, "/maxx")); // a wordmark, set like one
 
 
   // assemble: pieces joined by a middot inside a group, groups joined by the hairline.
@@ -994,8 +998,19 @@ function main() {
     parts = parts.filter((x) => x !== worst);
     line = draw(parts);
   }
-  // floor: if even the never-drop pieces overflow (a 30-cell split pane), cut rather than wrap —
-  // trunc is ANSI-blind, so do it only when there is no other way to stay on one line.
+  // Still over once everything droppable is gone? Shed whole GROUPS from the right rather than
+  // cutting: "week 20/…" is not a smaller truth, it is a wrong number, and a half-printed reading
+  // is the one failure mode a status line must never have. Sacrifice order falls out of the group
+  // numbers — where, then week, then session — leaving whoever you are, the chat wall you hit
+  // most, and the mark. Only if THAT still does not fit do we cut, which needs a ~30-cell pane.
+  const KEEP = new Set([0, MARK_GROUP]);
+  while (dispWidth(line) > W) {
+    const droppable = parts.map((x) => x.group).filter((g) => !KEEP.has(g));
+    if (!droppable.length) break;
+    const worstGroup = Math.max(...droppable);
+    parts = parts.filter((x) => x.group !== worstGroup);
+    line = draw(parts);
+  }
   if (dispWidth(line) > W) line = trunc(stripAnsi(line), W);
 
   const out = [blank(PAD) + line];
