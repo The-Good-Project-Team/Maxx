@@ -61,12 +61,9 @@ let INK    = T(hsl(266, 0.46, 0.26), hsl(266, 0.55, 0.88)); // primary text
 let DIM    = T(hsl(266, 0.24, 0.52), hsl(266, 0.20, 0.63)); // muted secondary text
 let BRAND  = T(hsl(264, 0.66, 0.54), hsl(264, 0.75, 0.70)); // vivid periwinkle accent
 let BORDER = T(hsl(266, 0.36, 0.66), hsl(266, 0.26, 0.42)); // meter caps / soft frame
-let TRACK  = T(hsl(266, 0.42, 0.82), hsl(266, 0.32, 0.23)); // the meter's unlit groove — a shade off the panel bg
 let GREEN  = T(hsl(150, 0.48, 0.37), hsl(150, 0.45, 0.48)); // sage = safe (dark spent fill; glint + cushion read off it)
 let AMBER  = T(hsl(38, 0.66, 0.53),  hsl(38, 0.72, 0.58));  // amber = elevated
 let RED    = T(hsl(354, 0.50, 0.58), hsl(354, 0.62, 0.64)); // rose = danger
-let START  = T(hsl(266, 0.40, 0.44), hsl(266, 0.38, 0.62)); // the start post (0)
-let WALL   = T(hsl(352, 0.62, 0.30), hsl(352, 0.68, 0.56)); // the finish post = the limit (reads past the overshoot)
 
 // ─── terminal-match (the `auto` default): adopt the ghostty theme's own colors ─
 // Panel = the theme's background tinted toward its blue accent; text = its foreground;
@@ -110,12 +107,9 @@ let WALL   = T(hsl(352, 0.62, 0.30), hsl(352, 0.68, 0.56)); // the finish post =
   INK    = fg;
   DIM    = blend(fg, bg, 0.38);
   BORDER = blend(fg, bg, 0.58);
-  TRACK  = blend(BG, fg, 0.13);
   GREEN  = pal[t(2, 10)] || GREEN;
   AMBER  = pal[t(3, 11)] || AMBER;
   RED    = pal[t(1, 9)]  || RED;
-  START  = blend(BRAND, t("#000000", "#ffffff"), 0.25);
-  WALL   = blend(RED,   t("#000000", "#ffffff"), t(0.4, 0.12));
 })();
 
 // ─── ANSI: every glyph carries the panel bg so the band stays unbroken ─────────
@@ -128,10 +122,6 @@ function mix(hex, t, target = "#ffffff") {
 }
 // intensity shade along a fill: frac 0 = lightest (near white), 0.5 = the base color, 1 = darkest (near
 // black). Lets a bar deepen from its base toward its leading edge, so more fill reads as more intense.
-function shade(hex, frac) {
-  frac = Math.max(0, Math.min(1, frac));
-  return frac < 0.5 ? mix(hex, (0.5 - frac) * 0.7, "#ffffff") : mix(hex, (frac - 0.5) * 0.2, "#000000");
-}
 // Apple's Terminal.app has no 24-bit color (verified on Sequoia: 38;2 renders as black/garbage,
 // even though shells there often export COLORTERM=truecolor). Downconvert to the xterm-256 cube
 // for it; every other mainstream terminal (iTerm2/Ghostty/Warp/Alacritty/kitty/VS Code) gets 24-bit.
@@ -148,10 +138,6 @@ function to256([r, g, b]) {
   return 16 + 36 * q(r) + 6 * q(g) + q(b);
 }
 const sgrFg = (c) => (USE_256 ? `38;5;${to256(c)}` : `38;2;${c[0]};${c[1]};${c[2]}`);
-const sgrBg = (c) => (USE_256 ? `48;5;${to256(c)}` : `48;2;${c[0]};${c[1]};${c[2]}`);
-function esc(fgHex, bgHex, s) {
-  return `\x1b[${sgrFg(rgb(fgHex))};${sgrBg(rgb(bgHex))}m${s}\x1b[0m`;
-}
 // NO BAND: the bar paints foreground only and lets the terminal's own background show through.
 // A filled panel across the full width read as a coloured stripe under the prompt — loud, and
 // wrong in any theme it wasn't tuned for. Colour now lives in the glyphs, not behind them.
@@ -209,9 +195,6 @@ function paceOf(rl, winSec, usedFrac) {
 
 // fine token count for the live deltas (cushion/over, momentum): always in thousands with comma
 // grouping, so you watch usage tick by the thousand at every scale — 56k, 112k, 4,112k, 129,148k.
-function tkf(n) {
-  return Math.round(Math.abs(n) / 1000).toLocaleString("en-US") + "k";
-}
 // full token count, comma-grouped — ticks by the single token: 77,732,145
 function tkfull(n) {
   return Math.round(Math.abs(n)).toLocaleString("en-US");
@@ -282,60 +265,6 @@ function sessionBrief(st) {
   return out.join("\n");
 }
 
-// zone = a function of time left: project your burn to reset (used ÷ elapsed). Under the pace
-// line → safe, on it → elevated, headed past the wall → danger. Colors the meter + the number.
-function zoneCol(u, e) {
-  const proj = u / Math.max(e, 0.02); // projected fullness at reset if you hold this pace
-  return u >= 0.9 || proj >= 1.25 ? RED : proj >= 0.9 ? AMBER : GREEN;
-}
-
-// FUEL gauge — the bar is what's LEFT, not what's spent. Full budget = full tank; spending drains it
-// (green shrinks from the right), and for the roll-session the rolling window REFILLS it as old usage
-// ages out — so banking visibly GAINS fuel. A pace tick marks the fuel you'd have at even burn: tank
-// past the tick = ahead/banked (green), short of it = burning too fast (amber → red near empty).
-function fuelMeter(fuelFrac, e, w) {
-  fuelFrac = Math.max(0, Math.min(1, fuelFrac));
-  const fuelN = Math.round(fuelFrac * w);
-  const paceFuel = Math.max(0, Math.min(1, 1 - e));            // fuel remaining if spending at even burn
-  const paceN = Math.min(w - 1, Math.round(paceFuel * w));
-  const ratio = paceFuel > 0.02 ? fuelFrac / paceFuel : 1;    // >1 = more fuel than pace (banked)
-  const col = (fuelFrac < 0.1 || ratio < 0.5) ? RED : ratio < 0.85 ? AMBER : GREEN;
-  let s = fg(START, "▐"); // full-tank end
-  for (let i = 0; i < w; i++) {
-    const cell = i < fuelN ? shade(col, fuelN > 1 ? i / (fuelN - 1) : 0.5) : null;
-    if (i === paceN) s += cell ? esc("#ffffff", cell, "╎")           // in the fill: thin white line on the fuel color
-                              : fg(BORDER, "╎");                     // in the drained zone: the thin marker
-    else s += cell ? fg(cell, "█") : fg(TRACK, "█");
-  }
-  return s + fg(WALL, "▌"); // empty end
-}
-
-// NET bar — one directional fill for your STANDING (signed fuel = realMax − rolling usage). NEGATIVE
-// (over your paced share) grows RED in from the RIGHT edge, right→left, longer the more over. As the
-// rolling window ages out (or you ease off) the deficit shrinks and the red RECEDES — live, per second.
-// Cross into POSITIVE (banked fuel) and GREEN grows from the LEFT, left→right. Scale = realMax (the
-// session budget), so a full tank's worth of over/under = a full bar; smaller = a proportional sliver.
-function netBar(standing, greenScale, redScale, w) {
-  // green (banking) scales to your PACED share; red (over) scales to the HARD 5h wall — so full red means
-  // lockout is imminent, not merely "past your soft pace". Just over pace → a light-red sliver creeping in.
-  const frac = standing >= 0
-    ? Math.min(1, standing / Math.max(greenScale, 1))
-    : Math.min(1, -standing / Math.max(redScale, 1));
-  const n = Math.round(frac * w);
-  let out = fg(START, "▐"); // same framing as the week fuel tank
-  // gradient gauged to the FULL width (not the fill length), so the light→dark spread runs across the
-  // whole span: a short fill stays light, only a fill reaching the far edge hits full dark. Both fills
-  // are lightest at their anchor edge and deepen toward the leading edge (green→right, red→left/wall).
-  const W1 = Math.max(1, w - 1);
-  for (let i = 0; i < w; i++) {
-    const red = standing < 0 && i >= w - n;  // red deficit anchored at the RIGHT
-    const green = standing > 0 && i < n;      // green banked fuel anchored at the LEFT
-    out += red ? fg(shade(RED, (w - 1 - i) / W1), "█")
-      : green ? fg(shade(GREEN, i / W1), "█")
-      : fg(TRACK, "█"); // solid track = same weight as the week tank
-  }
-  return out + fg(WALL, "▌");
-}
 
 // ─── sidecar state ─────────────────────────────────────────────────────────────
 const HOME = homedir();
@@ -375,64 +304,12 @@ function sprintTimer(sp) {
 // account-wide and lags; per-turn cost is the number that moves first when a session
 // starts going bad, because a turn re-bills the whole context. Reads only the tail of
 // the transcript (256KB), so it stays cheap on a render tick.
-function lastTurns(tp, n) {
-  if (!tp) return [];
-  let size; try { size = statSync(tp).size; } catch { return []; }
-  if (!size) return [];
-  const len = Math.min(size, 256 * 1024);
-  let text = "";
-  try {
-    const fd = openSync(tp, "r");
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    closeSync(fd);
-    text = buf.toString("utf8");
-  } catch { return []; }
-  const lines = text.split("\n");
-  if (size > len) lines.shift();            // first line is probably a fragment
-  const costs = [];
-  const seen = new Set();                   // one request can appear several times in the
-  for (const line of lines) {               // transcript; count it once, same as limit.mjs
-    if (!line || line[0] !== "{") continue;
-    let r; try { r = JSON.parse(line); } catch { continue; }
-    const u = r?.message?.usage; if (!u) continue;
-    const id = r.requestId || r.uuid;
-    if (id) { if (seen.has(id)) continue; seen.add(id); }
-    const t = weighUsage(u, r?.message?.model || "");
-    if (t > 0) costs.push({ id: id || `t${costs.length}-${Math.round(t)}`, cost: t });
-  }
-  return costs.slice(-n);
-}
 
 // Keep a short history of per-turn costs per session in ~/.maxx/turns.json. A 256KB
 // transcript tail only reaches ~3 turns on a heavy session, which is enough to show
 // the current cost but never enough to show a TREND. Rather than read further back on
 // every tick (slow), we remember: each render appends whatever turns it has not seen
 // before, keyed by request id, and keeps the last 12.
-function turnHistory(sid, fresh, ctxNow) {
-  const p = path.join(HOME, ".maxx", "turns.json");
-  let db = {};
-  try { db = JSON.parse(readFileSync(p, "utf8")) || {}; } catch {}
-  const key = sid || "unknown";
-  let cur = db[key] || { ids: [], costs: [], ctx: 0 };
-  // /clear and /compact start the turn cost over from nothing, so carrying the old
-  // ring across makes the first cheap turns of a fresh context look like a saving and
-  // hides the real climb. Claude Code keeps the session id, so the tell is the context
-  // itself collapsing: a drop to under half of what it was is a reset, not a turn.
-  if (ctxNow > 0 && cur.ctx > 0 && ctxNow < cur.ctx * 0.5) cur = { ids: [], costs: [], ctx: 0 };
-  if (ctxNow > 0) cur.ctx = ctxNow;
-  for (const t of fresh) {
-    if (cur.ids.includes(t.id)) continue;
-    cur.ids.push(t.id); cur.costs.push(Math.round(t.cost));
-  }
-  cur.ids = cur.ids.slice(-12); cur.costs = cur.costs.slice(-12);
-  db[key] = cur;
-  // don't let the file grow forever: keep the 12 most recently touched sessions
-  const keys = Object.keys(db);
-  if (keys.length > 12) for (const k of keys.slice(0, keys.length - 12)) delete db[k];
-  try { writeFileSync(p, JSON.stringify(db)); } catch {}
-  return cur.costs;
-}
 
 // YOUR concurrent sessions: transcripts across ~/.claude/projects touched in the last
 // 5 min. Throttled (~20s cache) so we don't walk the whole history every render tick.
@@ -753,7 +630,6 @@ function main() {
   const q5 = realMax ? Math.min(1, used5 / realMax) : (haveQuota ? quota : 0);
   // week FILL is the coin fraction of the tank — our meter reads our burn, not Anthropic's %.
   const w7 = haveWeek ? week : (cap7s ? Math.min(1, used7 / cap7s) : 0);
-  const qcol = col(q5), wcol = col(w7);
   // how far into each window you are (the pace line): elapsed = time-in / window-span. The span
   // start clamps to the account epoch — a just-switched account did NOT start its window resets−7d
   // ago, and the unclamped math read "51% elapsed, 50pts behind" on an account 90 minutes old.
@@ -773,8 +649,6 @@ function main() {
   if (q5 >= 0.9 || w7 >= 0.9) hcol = RED;
   else if (q5 >= 0.75 || w7 >= 0.75 || cache < 0.6) hcol = AMBER;
 
-  const qv = haveQuota ? `${Math.min(99, Math.floor(q5 * 100))}%` : "—";
-  const wv = haveWeek ? `${Math.min(99, Math.floor(w7 * 100))}%` : "—";
   const qr = resetIn(haveQuota ? rl.five_hour.resets_at : 0);
   const wr = resetIn(haveWeek ? rl.seven_day.resets_at : 0);
 
@@ -814,15 +688,6 @@ function main() {
   const wMinLeft = wStat.secLeft > 0 ? wStat.secLeft / 60 : 0;
   const localPace = wMinLeft > 0 ? wStat.headroom / wMinLeft : 0;
   const netPerMin = gcFresh ? gc.b.net_per_min : Math.round(localPace - (burn5 || 0) / 5);
-  // This block's share of the WEEK — the number the bar now leads with. See session.mjs for why
-  // "% of your 5h limit" is the wrong one (it reads 100%-is-fine every window, and six of those
-  // in a row ends the week on Wednesday).
-  const blockShare = sessionShare({
-    weekPct: gcFresh && gc.b.usage_week_pct != null ? gc.b.usage_week_pct : null,
-    weekResetInSec: gcFresh ? gc.b.week_reset_in_sec : null,
-    weekBilled: gcFresh ? gc.b.week_billed : null,
-    fiveBilled: gcFresh ? gc.b.five_billed : null,
-  });
   // is the weekly the binding wall (realMax below the raw 5h cap)? = the session allowance is being
   // held down to protect the week. Kept for agents; no longer a separate tag on the bar.
   sStat.weeklyPaced = !!(haveWeek && cap5s && realMax < cap5s);
@@ -892,10 +757,6 @@ function main() {
     const heat = col === RED ? "running hot" : "running a little hot";
     return { text: `${label} — ${lever}`, phrase: `${label} ${heat} — ${lever}`, col };
   }
-  // Context colour fires on whichever wall arrives first: a share of the window (small windows) or
-  // a hard coin count (1M windows, where 65% is already 650k — long past the point of restarting).
-  // Red at 500k = the driver's own line for "/fenix instead of carrying this context further".
-  const ctxCol = (total >= 500_000 || ctxPct >= 85) ? RED : (total >= 350_000 || ctxPct >= 65) ? AMBER : DIM;
   // WHOSE numbers these are (the session login's handle via the accounts map), so a multi-login box
   // is legible at a glance. Lives at the LEFT edge of the meta row, not the right: the right side is
   // the first thing a half-width pane cuts, and the handle is the one field you can't infer from the
@@ -908,215 +769,107 @@ function main() {
     } catch { return ""; }
   })();
 
-  // Narrow terminal: no rails — one line that PACKS in priority order and stops when the width runs
-  // out, instead of cliffing to the same two numbers on every small pane. Order is decision-value:
-  // the two walls first, then the context number (the /fenix trigger), then which pane this even is.
-  // The rails themselves survive down to ~70 cols (the meter floor is 20 cells + a 46-cell label and
-  // badge budget, and the optional badges already drop themselves via fits()), so hand off there.
-  if (cols < 70) {
-    const cand = [
-      fg(DIM, "sess ") + fg(qcol, qv),
-      fg(DIM, "week ") + fg(wcol, wv),
-      total > 0 ? fg(ctxCol, tkf(total)) : null,
-      sid ? fg(DIM, String(sid).slice(0, 4)) : null,
-      branch ? fg(DIM, trunc(branch, 18)) : null,
-      who ? fg(BRAND, who) : null,
-    ].filter(Boolean);
-    let l = "";
-    for (const seg of cand) {
-      const add = (l ? fg(DIM, " · ") : "") + seg;
-      if (dispWidth(l) + dispWidth(add) > cols - 2) break; // priority order — once one won't fit, stop
-      l += add;
-    }
-    process.stdout.write(padLine(l, cols) + "\n");
-    return;
+
+  // ── ONE LINE. No meters.
+  //
+  // A bar drawn out of block glyphs is a picture of a number you are already printing next to it,
+  // and it costs thirty cells to say what "34%" says in three. With both walls, identity, repo and
+  // id on a single row, every cell has to earn its place — so the rail is now typography: groups
+  // separated by a hairline, readings separated by a middot, colour carrying the judgement.
+  //
+  //   @reif_tgp · opus │ session 34% · advise 28% · 2h11m │ week 15% · 6d │ Maxx · main · 119f │ /maxx
+  //
+  // BOTH walls read in the SAME direction — percent USED, never "left". Sitting side by side, one
+  // number counting up next to one counting down is a trap the eye falls into every time.
+  const PAD = 1;
+  const W = Math.max(20, cols - PAD - 2); // -2 = a right safety margin so nothing gets clipped
+  // the old floor was 40 — a leftover from when a meter needed room. One line of text does not.
+  const SEP = fg(BORDER, "  │  ");        // between groups
+  const dot = fg(DIM, " · ");             // within a group
+
+  // Every piece carries a RANK. When the line is too wide for the pane, the highest rank goes
+  // first and we measure again — so a narrow terminal loses the sign-off, then the repo name, then
+  // the id, long before it loses a percentage. Rank 0 never drops.
+  const G = []; // [{ rank, group, s }]
+  const put = (group, rank, s) => { if (s) G.push({ group, rank, s }); };
+
+  // ── who ──
+  if (who) put(0, 4, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
+  put(0, 5, fg(DIM, fam.toLowerCase()));
+
+  // ── session: where I am, where we advise stopping, when the window resets ──
+  // The central reading (server-side, account-wide) when it is fresh; this machine's own view of
+  // the 5h window otherwise — so the number is never blank, only occasionally local.
+  const usedP = gcFresh && gc.b.session_used_pct != null ? Math.round(gc.b.session_used_pct)
+              : haveQuota ? Math.round(q5 * 100) : null;
+  const advP = gcFresh && gc.b.session_advised_pct != null ? Math.round(gc.b.session_advised_pct) : null;
+  if (usedP != null) {
+    const col = usedP >= 90 ? RED : (advP != null && usedP > advP) ? AMBER : INK;
+    put(1, 0, fg(DIM, "session ") + fg(col, usedP + "%"));
+    if (advP != null) put(1, 3, fg(DIM, "advise ") + fg(GREEN, advP + "%"));
+    if (sStat.resetIn) put(1, 6, fg(DIM, sStat.resetIn));
   }
 
-  // ── quiet rail: borderless, airy, lowercase, calm. no frame — every line is just the dark
-  //    panel bg, indented, so it reads as one soft band, not a box.
-  const PAD = 2; // margin pulled left so the bars run wide and the movement is easy to feel
-  const W = Math.max(40, cols - PAD * 2 - 2); // -2 = a right safety margin so nothing gets clipped
-  // meter width: wide, but CAPPED so it can't swallow the whole line — always leave room for the
-  // label before it and the (comma'd, up to ~16-char) cushion/over after it, plus a badge.
-  // widen with the terminal: no fixed 90-cell cap (that left half a wide screen empty). Scale to
-  // ~0.68 of the rail, leaving ~46 cells for the label + cushion/over + time-left + need/min badges.
-  // BOTH rails share row one, so each meter gets half a rail, not a whole one — and the optional
-  // trailers (the net rate, the pace token, the reset clock) fall off against a HALF budget instead
-  // of the full width. Row two is metadata alone.
-  // Split by NEED, not down the middle: the week rail's text ("85% left · −7% pace · 6d") is a third
-  // shorter than the session's three marks, so an even split starved the session and it shed all
-  // three marks while the week rail sat in white space.
-  const GAP = 4;                                   // the air between the two rails
-  const mw = Math.max(10, Math.min(Math.floor((W - 92) / 2), 26));
-  const weekWant = 5 + (mw + 2) + 30;              // "week " + bar + "  85% left  ·  −7% pace  ·  6d"
-  const sessNeed = 8 + (mw + 2) + 12;              // "session " + bar + "  100% used" — never shed THIS
-  // on a narrow pane the session's first mark outranks the week's trailers: "how much of this window
-  // have I burned" is the number you act on, "6d" is not.
-  const sessBudget = Math.max(sessNeed, W - GAP - weekWant);
-  const weekBudget = Math.max(18, W - GAP - sessBudget);
-  const row = (s) => padLine(blank(PAD) + s, cols); // one line, left-indented
-  const fits = (s, add, budget = W) => dispWidth(s) + dispWidth(add) <= budget; // append only if it holds
+  // ── week: the only wall that can actually stop you ──
+  const weekLive = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
+  const weekP = weekLive != null ? Math.round(weekLive * 100) : haveWeek ? Math.round(w7 * 100) : null;
+  if (weekP != null) {
+    // colour is the PACE verdict, not the level: 61% of the week is fine on day five and alarming
+    // on day one. weekPaceToken is dead-banded so a sub-5%-of-cap wobble stays quiet. Never RED
+    // below the wall — RED here is reserved for the reading that means you are actually done.
+    const pace = weekResetOk ? weekPaceToken(cap7s * e7 - used7, cap7s) : null;
+    const col = weekP >= 95 ? RED : pace && pace.role !== "good" ? AMBER : INK;
+    put(2, 0, fg(DIM, "week ") + fg(col, weekP + "%"));
+    if (wStat.resetIn) put(2, 7, fg(DIM, wStat.resetIn));
+  }
 
-  // ODOMETER — every shown number counts toward its target by AT MOST ±1 (in display units, k) per
-  // render: the ones digit rolls before the tens, values NEVER jump. Slow to calibrate after a big move,
-  // by design. First sight snaps (no count-up from 0). State persists per-key in odo.json across renders.
-  const odoPath = path.join(HOME, ".maxx", "odo.json");
-  const odo = readJSON(odoPath, {});
-  const step1 = (key, targetK) => {
-    const k = (sid || "s") + ":" + key; // per-session → concurrent panes each step on their OWN repaints
-    const t = Math.round(targetK);
-    const p = Number.isFinite(odo[k]) ? odo[k] : t;
-    const gap = t - p;
-    // ±1 per frame for the odometer roll on normal moves; FAST catch-up on a big swing so a huge jump
-    // doesn't take minutes (which made the number lie vs the instant bar). >40k gap → close ~1/3 per frame.
-    const d = Math.abs(gap) <= 1 ? gap : Math.abs(gap) > 40 ? Math.round(gap * 0.34) : Math.sign(gap);
-    const nxt = p + d;
-    odo[k] = nxt;
-    return nxt;
-  };
-  const kstr = (kv) => Math.round(Math.abs(kv)).toLocaleString("en-US") + "k"; // signed value already in k
+  // ── where: repo, branch, and the session tag ──
+  // The tag is the first 4 chars of the id — the same slice the owner-dashboard feed tags a row
+  // with, so two agents in one directory can be told apart across both surfaces.
+  const repo = path.basename((p.workspace || {}).project_dir || p.cwd || "");
+  if (repo) put(3, 9, fg(DIM, trunc(repo, 20)));
+  if (branch) put(3, 8, fg(DIM, trunc(branch, 28)));
+  if (sid) put(3, 10, fg(DIM, String(sid).slice(0, 4)));
 
-  // a wall's row, plain-language. SESSION: "X to spend" — your sustainable allowance for THIS window
-  // (realMax − used); counts down as you burn, climbs back after a break. Negative → "over — ease
-  // off" (you're starting to eat future weeks). WEEKLY: "X left" — the reserve. + time left.
-  const meterContent = (label, u, e, uv, isSession, stat, budget = W) => {
-    // SESSION bar IS the directional standing fill (one bar: green-from-left when banked, red-from-right
-    // when over). WEEK keeps the fuel tank (bar = weekly reserve LEFT, draining as you spend).
-    const standing = isSession && stat && stat.cap ? Math.round(stat.cap - stat.used) : 0;
-    // red scales to the hard 5h wall: over-room = rawCap − realMax (paced share → lockout). Falls back to
-    // the paced share when there's no soft buffer (realMax already == the raw wall).
-    const overRoom = isSession && stat ? Math.max(1, (stat.rawCap || stat.cap || 0) - (stat.cap || 0)) : 1;
-    let s = fg(DIM, label) + (isSession && stat && stat.cap
-      ? netBar(standing, stat.cap, overRoom, mw)
-      : fuelMeter(1 - u, e, mw));
-    // a trailer never leads: if the primary reading did not fit, the "  ·  " trailers are dropped
-    // too, or the rail ends in a dangling separator.
-    let marked = false;
-    if (stat && stat.cap) {
-      if (isSession) {
-        // signed standing: banked → "+Xk" (ink), over → "−Xk" (red). The sign IS the meaning — no "over"
-        // word. Odometer-counted (fast-jump on big swings, else ±1k) — bar snaps, number rolls to catch up.
-        // Percentages of the WEEK, not coins: what this 5h block may spend, and what it has.
-        // Falls back to the coin standing only when there is no live /usage reading to divide.
-        // Three marks on ONE denominator (this 5h window): where you are, the wall we advise,
-        // and Anthropic's hard wall. Comparing a share-of-week against a percent-of-window is
-        // what made the old pacing unreadable — 0.6% and 46% look like a wide margin and are
-        // the same side of the same line.
-        const usedP = gcFresh ? gc.b.session_used_pct : null;
-        const advP = gcFresh ? gc.b.session_advised_pct : null;
-        // Sharing a row with the week rail means the budget can run out mid-thought. The marks are
-        // appended one at a time, in order of what a driver needs first (where I am → where to stop
-        // → the hard wall), so a narrow pane sheds "wall 100%" (a constant) rather than all three.
-        if (usedP != null && advP != null) {
-          const over_ = usedP > advP;
-          // whole percent: a tenth of a 5h window is ~30 seconds of typing, and the decimal cost
-          // two cells on a row that has to hold both walls.
-          const d1 = fg(DIM, "  ") + fg(over_ ? AMBER : INK, Math.round(usedP) + "%") + fg(DIM, " used");
-          const d2 = fg(DIM, "  ·  ") + fg(DIM, "advise ") + fg(GREEN, Math.round(advP) + "%");
-          const d3 = fg(DIM, "  ·  ") + fg(DIM, "wall 100%");
-          if (fits(s, d1, budget)) {
-            s += d1; marked = true;
-            if (fits(s, d2, budget)) s += d2;
-            if (fits(s, d3, budget)) s += d3;
-          }
-        } else if (blockShare) {
-          const pctS = (x) => (x * 100).toFixed(1) + "%";
-          const d = fg(DIM, "  ") + fg(INK, pctS(blockShare.allowancePct)) + fg(DIM, " share")
-                  + fg(DIM, "  ·  ") + fg(blockShare.onPace ? INK : AMBER, pctS(blockShare.usedPct)) + fg(DIM, " used");
-          if (fits(s, d, budget)) { s += d; marked = true; }
-        } else {
-          const standK = step1("sess", standing / 1000);
-          const over_ = standK < 0;
-          const d = fg(DIM, "  ") + fg(over_ ? zoneCol(u, e) : INK, (over_ ? "−" : "+") + kstr(standK));
-          if (fits(s, d, budget)) { s += d; marked = true; }
-        }
-        // trailing rate = refill − recent (5-MIN) burn, SIGN and COLOR follow the NET itself.
-        // This is the one net every surface shows (dash, card, agent budget all use
-        // five/300 − burn_5m/5). NOT burn60/standing-signed: a 60-second window flips to
-        // "+banking" on a single quiet second while the 5-min trend is still burning, and
-        // signing by standing hid a real burn behind a positive cushion. Honest > cushioned.
-        // only ever a TRAILER — without a mark in front of it, its "  ·  " separator dangles off
-        // the bar and reads as a broken row.
-        const prog = marked ? netPerMin : 0;
-        if (Math.abs(prog) >= 500) {
-          const pos = prog >= 0;
-          const pr = fg(DIM, "  ·  ") + fg(pos ? GREEN : RED, (pos ? "+" : "−") + tkf(prog) + "/min");
-          if (fits(s, pr, budget)) s += pr;
-        }
-      } else {
-        // WEEK line answers ONE question: am I over? LEFT = tokens remaining against the
-        // weekly cap — that IS the over/under answer (LEFT > 0 → not over). The second token
-        // is a PACE signal, not the budget: bank = cap7×elapsed − used7 = ahead of / behind a
-        // straight-line burn through the week. It used the word "over" in RED — the same word
-        // and colour the fleet-killing cap verdict uses — so a −3.6M pace wobble against a 289M
-        // week (1.3%, noise) read as "you breached your weekly cap" while 91% of the tank
-        // remained. Fixed: "ahead pace"/"behind pace" (never "over"), AMBER not RED (RED belongs
-        // only to the real verdict), and dead-banded so a sub-5%-of-cap wobble prints nothing.
-        // ANTHROPIC's week when we have it — the only number that can actually stop you. The
-        // coin reserve ("X left") is the fallback, and it is the number that read 0 for two
-        // accounts on 2026-08-13 while the real weeks were 100% and 82%.
-        const realWeekPct = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
-        if (realWeekPct != null) {
-          const leftPct = Math.max(0, Math.round((1 - realWeekPct) * 100));
-          // just " left" — the rail's own label already says which window this is
-          const d = fg(DIM, "  ") + fg(INK, leftPct + "%") + fg(DIM, " left"); if (fits(s, d, budget)) { s += d; marked = true; }
-        } else {
-          const leftK = step1("wkleft", stat.headroom / 1000);
-          const d = fg(DIM, "  ") + fg(INK, kstr(leftK)) + fg(DIM, " left"); if (fits(s, d, budget)) { s += d; marked = true; }
-        }
-        // pace token (weekPaceToken): decided on the RAW bank so it's deterministic; the
-        // odometer only rolls the shown digits. See pace.mjs for why it's never "over"/red.
-        const pace = marked && weekResetOk ? weekPaceToken(cap7s * e7 - used7, cap7s) : null;
-        if (pace) {
-          const b = fg(DIM, "  ·  ") + fg(pace.role === "good" ? GREEN : AMBER, (pace.ahead ? "+" : "−") + pace.pct + "% pace");
-          if (fits(s, b, budget)) s += b;
-        }
-        if (marked && stat.resetIn) { const d = fg(DIM, "  ·  ") + fg(DIM, stat.resetIn); if (fits(s, d, budget)) s += d; }
-      }
-    } else if (uv) { const d = fg(DIM, "  ") + fg(wcol, uv) + fg(DIM, " used"); if (fits(s, d, budget)) s += d; } // no cap → raw %
-    return s;
-  };
+  // ── the mark. NEVER drops (rank 0) — it is five cells, it is the product's name, and a bar that
+  // sheds its own signature to fit a narrow pane is a bar nobody remembers came from anywhere.
+  // BRAND, same ink as the handle at the far left, so the line is book-ended by maxx.
+  put(4, 0, fg(BRAND, "/maxx"));
 
-  const dot = fg(DIM, "  ·  ");
-  // ROW ONE = both walls, side by side. They answer the same question at two horizons ("can I spend
-  // now" / "can I spend this week"), and reading them takes one glance when they sit on one line
-  // instead of two. "session" — the rolling-5h fuel tank (weekly-left ÷ windows-left, capped at the
-  // raw 5h wall; banks when you go light). "week" — the weekly reserve.
-  const sessRail = meterContent("session ", q5, e5, qv, true, sStat, sessBudget);
-  const weekRail = meterContent("week ", w7, e7, wv, false, wStat, weekBudget);
-  // week rail flush RIGHT, same edge /maxx signs off on below — the air between the two rails is
-  // whatever the session rail did not use, instead of a fixed column with a hole in front of it.
-  const rails = sessRail + blank(Math.max(GAP, W - dispWidth(sessRail) - dispWidth(weekRail))) + weekRail;
-
-  // ROW TWO = metadata, and nothing that has to be steered by. Coins stay out on purpose: the rails
-  // answer in percentages, and a token count beside them invites the comparison that made the old
-  // bar unreadable. Handle · model · branch · session tag, dim; /maxx signs off at the right edge.
-  // The session tag is the first 4 chars of the id — the same slice the owner-dashboard feed tags a
-  // row with, so two agents in one directory can be told apart across both surfaces.
-  const segs = [];
-  if (who) segs.push(link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
-  segs.push(fg(DIM, fam.toLowerCase()));
-  if (branch) segs.push(fg(DIM, trunc(branch, 34)));
-  if (sid) segs.push(fg(DIM, "id " + String(sid).slice(0, 4)));
-  // the 5h wall: Claude has stopped you anyway — same contemplation link as the dash. With no row
-  // to spare it takes over the metadata row, which is the one row here that can afford to lose.
+  // the 5h wall: Claude has stopped you anyway. It replaces everything downstream of the session
+  // group — nothing else on this line matters while you are locked out.
   if (haveQuota && quota >= 0.99) {
-    segs.length = 0;
-    segs.push(fg(RED, "you hit the session wall — time for some contemplation → ")
+    for (let i = G.length - 1; i >= 0; i--) if (G[i].group >= 2) G.splice(i, 1);
+    put(2, 1, fg(RED, "walled → ")
       + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
       + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : ""));
   }
-  // padLine never truncates — an over-wide row WRAPS and makes the two-line bar three. Drop
-  // segments off the tail until it fits.
-  const footStr = fg(DIM, "/maxx");
-  while (segs.length > 1 && dispWidth(segs.join(dot)) + 3 + dispWidth(footStr) > W) segs.pop();
-  const metaRow = segs.join(dot);
-  const metaFull = dispWidth(metaRow) + 3 + dispWidth(footStr) <= W
-    ? metaRow + blank(W - dispWidth(metaRow) - dispWidth(footStr)) + footStr
-    : metaRow;
 
-  const out = [row(rails), row(metaFull)];
-  try { writeFileSync(odoPath, JSON.stringify(odo)); } catch {} // persist the odometer counters for next render
+  // assemble: pieces joined by a middot inside a group, groups joined by the hairline.
+  const draw = (parts) => {
+    const out = [];
+    for (const p_ of parts) {
+      const last = out[out.length - 1];
+      if (last && last.group === p_.group) last.items.push(p_.s);
+      else out.push({ group: p_.group, items: [p_.s] });
+    }
+    return out.map((g) => g.items.join(dot)).join(SEP);
+  };
+  let parts = G.slice();
+  let line = draw(parts);
+  // shed by rank until it fits. padLine never truncates, so an over-wide line WRAPS — and a
+  // one-line statusline that wraps is a two-line statusline.
+  while (dispWidth(line) > W) {
+    const worst = parts.reduce((a, b) => (b.rank > a.rank ? b : a), parts[0]);
+    if (!worst || worst.rank === 0) break;
+    parts = parts.filter((x) => x !== worst);
+    line = draw(parts);
+  }
+  // floor: if even the never-drop pieces overflow (a 30-cell split pane), cut rather than wrap —
+  // trunc is ANSI-blind, so do it only when there is no other way to stay on one line.
+  if (dispWidth(line) > W) line = trunc(stripAnsi(line), W);
+
+  const out = [blank(PAD) + line];
   process.stdout.write(out.join("\n") + "\n");
 }
 // The statusline is the product's face, and it is rendered by a hook: if this process throws,
