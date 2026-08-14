@@ -19,8 +19,19 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
 
 ## What to do
 
-1. **Write `.fenix/handoff.md` — FIRST, in ONE Write call.** The Write tool creates
-   the directory itself: no separate mkdir, no preamble commands, nothing before the
+0. **Run `node ~/.claude/skills/maxx/fenix.mjs --state` and paste its output into the
+   handoff verbatim.** It prints branch, HEAD, uncommitted files, UNPUSHED commits, what
+   landed in the last 6h, and open PRs — read from git and gh, not from your memory. It
+   also resurfaces the LAST handoff's "In motion" so you must say what happened to it.
+
+   Why this is step zero: you are writing at 70-90% context, which is the worst moment
+   for recall, about facts a command knows exactly. Measured over 98 real handoffs, only
+   ~35% carried the sections below and 13% pasted any command output — the rest was
+   remembered prose, and a misremembered SHA is worse than no SHA. Spend your words on
+   the part no tool can produce: WHY, what is next, and which traps cost you time.
+
+1. **Write `.fenix/handoff.md` — in ONE Write call.** The Write tool creates
+   the directory itself: no separate mkdir, no preamble commands, nothing else before the
    save. A fenix run can die mid-turn (token wall, /clear arriving early) — observed
    in the wild: an empty `.fenix/` dir and a lost thread. The handoff IS the mission;
    land it before anything else. (Then, if a repo: add `.fenix/` to `.gitignore`.)
@@ -28,7 +39,14 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
 
    ```markdown
    # fenix handoff — <one-line mission>
-   Written: <ISO time> · branch: <git branch> · by session: <what this session was doing>
+   Written: <ISO time> · by session: <what this session was doing>
+
+   <PASTE THE `--state` BLOCK HERE — branch, HEAD, dirty files, unpushed commits, open PRs>
+
+   ## Carried forward
+   - <what the LAST handoff asked for: done / still in motion / dropped because X>
+     (--state prints it; an item that silently disappears between generations is the
+      exact failure this mechanism exists to stop)
 
    ## In motion (do this first)
    - <the exact next action, with file:line / command / URL — resumable in one step>
@@ -74,8 +92,18 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
    unit of work, not for the lifetime of the directory: the counter resets whenever `HEAD` moved
    since the last rise, so the cap only trips after 5 consecutive rises that landed no commit
    and the budget wall — at the 5h wall the rise self-schedules for right after
-   the window refills (detached sleeper, no crontab). Child permission flags
-   default to `--permission-mode acceptEdits`; `MAXX_RISE_FLAGS` overrides.
+   the window refills (detached sleeper, no crontab).
+
+   **A risen session can finish and LAND work** (Reif, 2026-08-14): git read/commit/push,
+   `gh pr create`/`merge`, and the test runners. It is refused exactly three things, because
+   the next generation cannot undo them — `git push --force`, `git push origin main` (main is
+   protected and deploys on merge; the PR path is what makes autonomy safe), and `git stash`
+   (one shared stack across every worktree of a repo). `MAXX_RISE_FLAGS` overrides the whole set.
+
+   This is not a tuning detail: before it, EVERY rise this machine ever ran died asking for
+   permission, and `.fenix/generation` never passed 1. The child had `acceptEdits` and no
+   `--allowedTools`, so it hit its first `git status` and stopped, with nobody to answer the
+   prompt. The standing order said "be a phoenix" and the flags made it impossible.
 
 4. Do NOT delete or edit the handoff after writing it — `fenix.mjs --wake` consumes
    it on next session start. `node ~/.claude/skills/maxx/fenix.mjs --status` shows

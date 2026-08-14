@@ -161,11 +161,12 @@
   .sl .lbl{color:var(--dim);opacity:.85}
   .sl .sep{color:var(--dim);opacity:.7}
   .sl .dot{color:var(--dim);opacity:.45}
-  .sl .val{color:var(--ink)} /* no transition: a state change is not an animation, and a half-finished blend reads as a colour nobody chose */
+  .sl .val{color:var(--ink)}
+  .sl .val.good{color:var(--green)} /* no transition: a state change is not an animation, and a half-finished blend reads as a colour nobody chose */
   .sl .val.over{color:var(--amber);font-weight:700}
   .sl .val.wk.over,.sl .val.ctx.over{font-weight:400}
   .sl .val.wall{color:var(--red);font-weight:700;text-decoration:underline wavy;text-underline-offset:3px}
-  .sl .std{color:var(--ink)}
+  .sl .std{color:var(--dim)}
   .sl .sl-of{color:var(--dim);opacity:.45}
   .sl .brand{color:var(--brand);text-decoration:underline;text-underline-offset:3px}
   .sl .mark{color:var(--brand);font-weight:700}
@@ -267,7 +268,7 @@
 
 <div class="wrap" style="max-width:1180px;margin-bottom:22px">
   <h2 style="margin-bottom:6px">How to read the bar</h2>
-  <p class="lead" style="margin-bottom:16px">One line: who you are, then your three walls — chat, session, week — then where you're working. Each wall reads <b>x/y</b>. <b>y</b> is the standard and never moves. <b>x</b> is where you actually are, and it is the only thing that changes colour.</p>
+  <p class="lead" style="margin-bottom:16px">One line: who you are, then your three walls — chat, session, week — then where you're working. Each wall reads <b>x/y</b>. <b>y</b> is the standard — muted, fixed, never moving. <b>x</b> is where you actually are, and it is the only thing that carries colour.</p>
     <div class="rail sl"><span class="brand">@you</span><span class="dot"> · </span><span class="lbl">opus</span><span class="sep">  │  </span><span class="lbl">ctx </span><span class="val ctx" id="sl-c">26</span><span class="sl-of">/</span><span class="std" id="sl-ca">35%</span><span class="dot"> · </span><span class="lbl">11 turns</span><span class="sep">  │  </span><span class="lbl">session </span><span class="val" id="sl-s">34</span><span class="sl-of">/</span><span class="std" id="sl-sa">22%</span><span class="dot"> · </span><span class="lbl">1h57m</span><span class="sep">  │  </span><span class="lbl">week </span><span class="val wk" id="sl-w">16</span><span class="sl-of">/</span><span class="std" id="sl-wa">8%</span><span class="dot"> · </span><span class="lbl">6d</span><span class="sep">  │  </span><span class="lbl">Maxx</span><span class="dot"> · </span><span class="lbl">main</span><span class="dot"> · </span><span class="lbl">590e</span><span class="sep">  │  </span><span class="mark">/maxx</span></div>
     <p class="demo-note" id="sl-note">&nbsp;</p>
 </div>
@@ -279,8 +280,8 @@
 
 
     <ul class="readlist">
-      <li><b>x/y</b> — <code>session 34/22%</code> reads "34% spent, against a standard of 22%". <b>y</b> is solid, fixed, and says nothing: it is the reference. <b>x</b> carries the whole verdict in its colour, so a glance at three pairs tells you where you stand three times without reading a word.</li>
-      <li><b>the three states</b> — plain ink under the standard. <b>Amber</b> past it. Red with a squiggle at the hard wall, the way a spell-checker tells you something is wrong. Only the session is ever <b>bold</b>: two shouts on one line is no hierarchy at all.</li>
+      <li><b>x/y</b> — <code>session 34/22%</code> reads "34% spent, against a standard of 22%". <b>y</b> is muted, fixed, and says nothing: it is the reference, and it stays quieter than the reading so it never steals the glance. <b>x</b> carries the whole verdict in its colour, so a glance at three pairs tells you where you stand three times without reading a word.</li>
+      <li><b>the four states</b> — <b style="color:var(--green)">green</b> while you have real room (under three quarters of the standard), plain ink as you close on it, <b style="color:var(--amber)">amber</b> once you're past, and <b style="color:var(--red)">red with a squiggle</b> at the hard wall — the way a spell-checker tells you something is wrong. Only the session is ever <b>bold</b> below the wall: two shouts on one line is no hierarchy at all.</li>
       <li><b>the trailing fact</b> — each wall ends with what it is measured against: the chat has <b>turns</b>, the session has a <b>clock</b>, the week has <b>days</b>.</li>
       <li><b>ctx</b> — how full this conversation is, and how many turns filled it. Its line is whichever arrives first: 75% of the window, or 350k tokens — on a 1M window that's 35%. Past it, hand off deliberately with <code>/fenix</code> rather than letting auto-compact pick the cut for you.</li>
       <li><b>session</b> — your 5-hour window. Its line is your weekly share expressed in this window's terms. Pass it and nothing is denied; the rest of the week just gets less.</li>
@@ -407,10 +408,11 @@
           note=document.getElementById('sl-note');
     if(!s) return;
     const S=[
-      {c:'12',cc:'',    s:'20',sc:'',    w:'16',wc:'',     note:'Every reading under its standard. Nothing to do but work.'},
-      {c:'12',cc:'',    s:'34',sc:'over',w:'16',wc:'',     note:'Past the session standard. Nothing is denied — later windows in this week just get less.'},
-      {c:'52',cc:'over',s:'34',sc:'over',w:'46',wc:'over', note:'Chat and week running hot too. They say so in colour; only the session gets weight.'},
-      {c:'52',cc:'over',s:'94',sc:'wall',w:'46',wc:'over', note:"Anthropic's own 5-hour wall. This is the one that stops you mid-task."},
+      {c:'10',cc:'good',s:'8', sc:'good',w:'6', wc:'good', note:'Green everywhere: room to work on all three.'},
+      {c:'33',cc:'',    s:'36',sc:'',    w:'20',wc:'',     note:'Closing on the standards. Nothing wrong — just worth knowing.'},
+      {c:'33',cc:'',    s:'62',sc:'over',w:'20',wc:'',     note:'Past the session standard. Nothing is denied — later windows in this week just get less.'},
+      {c:'55',cc:'over',s:'62',sc:'over',w:'62',wc:'over', note:'Chat and week past theirs too. They say so in colour; only the session gets weight.'},
+      {c:'93',cc:'wall',s:'94',sc:'wall',w:'97',wc:'wall', note:"The hard walls. This is where Claude stops you mid-task."},
     ];
     let i=0;
     function apply(){

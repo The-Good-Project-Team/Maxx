@@ -886,11 +886,29 @@ function main() {
   const pair = (label, used, line, opts) => {
     const o = opts || {};
     const n = used + (line == null ? "%" : "");
-    const head = o.wall ? boldCurly(RED, n) : o.over ? (o.loud ? bold(AMBER, n) : fg(AMBER, n)) : fg(INK, n);
+    // FOUR steps, so the reading says how much room is left and not merely whether you have run
+    // out. Green is the state you are in for most of a window and it should look like it; ink is
+    // the quiet warning that the standard is close; amber is past it; red is the wall.
+    //   x ≤ 0.75y  green — plenty of room
+    //   x ≤ y      ink   — closing on the standard
+    //   x > y      amber — past it
+    //   wall       red   — and a squiggle
+    // Green belongs on x and only on x. It was wrong on the standard, where it would have said
+    // "you're fine" about a number that cannot be fine or otherwise — but as a VERDICT on the
+    // reading it is exactly the word: room to work.
+    const easy = !o.over && !o.wall && line != null && line > 0 && used / line <= 0.75;
+    const head = o.wall ? boldCurly(RED, n)
+      : o.over ? (o.loud ? bold(AMBER, n) : fg(AMBER, n))
+      : easy ? fg(GREEN, n)
+      : fg(INK, n);
     // The two halves have different JOBS, so they are lit differently. y is the STANDARD: fixed,
-    // solid ink, never changing. x is the READING, and it is the only thing in the pair that ever
+    // muted, never changing. x is the READING, and it is the only thing in the pair that ever
     // changes colour. Glance at it and the standard is always the same in the same place, so the
     // colour you notice is always the answer to "where am I against it".
+    //
+    // y sits at DIM, not full ink. At ink it read as the heavier of the two — it is second, so it
+    // is where the eye lands last and stays — and a reference that outshouts the reading defeats
+    // the whole point of the pair. Quiet enough to consult, loud enough to read.
     //
     // No rule under y. The underline was left over from when y was labelled "advise" and needed
     // marking as a line; in a pair the slash already says which number is which, and a decoration
@@ -899,7 +917,7 @@ function main() {
     // Ink, not green: green beside a red reading would say "you're fine" and "you're done" in the
     // same breath. The standard is a reference, not a verdict — the verdict is x's job alone.
     return faint(DIM, label + " ") + head
-      + (line == null ? "" : faint(DIM, "/") + fg(INK, line + "%"));
+      + (line == null ? "" : faint(DIM, "/") + fg(DIM, line + "%"));
   };
 
   // ── who ── RANK 0, never drops. Ten cells, and without them a narrow pane cannot tell you
