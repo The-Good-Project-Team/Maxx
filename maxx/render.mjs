@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { weekPaceToken, plausibleReset } from "./pace.mjs";
+import { plausibleReset } from "./pace.mjs";
 import { sessionShare } from "./session.mjs";
 import { weighUsage, COINS_MAX, COINS_FIVE } from "./limit.mjs";
 
@@ -806,7 +806,9 @@ function main() {
   if (usedP != null) {
     const col = usedP >= 90 ? RED : (advP != null && usedP > advP) ? AMBER : INK;
     put(1, 0, fg(DIM, "session ") + fg(col, usedP + "%"));
-    if (advP != null) put(1, 3, fg(DIM, "advise ") + fg(GREEN, advP + "%"));
+    // ranks below the week's advise (3): the session wall is the one you can act on in the next
+    // ten minutes, so a narrow pane sheds the week's guidance first.
+    if (advP != null) put(1, 2, fg(DIM, "advise ") + fg(GREEN, advP + "%"));
     if (sStat.resetIn) put(1, 6, fg(DIM, sStat.resetIn));
   }
 
@@ -814,12 +816,21 @@ function main() {
   const weekLive = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
   const weekP = weekLive != null ? Math.round(weekLive * 100) : haveWeek ? Math.round(w7 * 100) : null;
   if (weekP != null) {
-    // colour is the PACE verdict, not the level: 61% of the week is fine on day five and alarming
-    // on day one. weekPaceToken is dead-banded so a sub-5%-of-cap wobble stays quiet. Never RED
-    // below the wall — RED here is reserved for the reading that means you are actually done.
-    const pace = weekResetOk ? weekPaceToken(cap7s * e7 - used7, cap7s) : null;
-    const col = weekP >= 95 ? RED : pace && pace.role !== "good" ? AMBER : INK;
+    // The week gets an advised mark too, read the same way as the session's: where you SHOULD be
+    // by now. Here it is simply how far into the week you are — burn the week evenly and used
+    // tracks elapsed. Under it you are banking, over it you are borrowing from Sunday. Without
+    // this number "week 15%" is unreadable: 15% is excellent on Tuesday and alarming an hour in.
+    // elapsedOf shares spanOf with the reset clock beside it, so the mark and "6d" can never
+    // disagree — both are (now − start) / span against the same epoch-clamped window.
+    const weekAdv = weekResetOk && haveWeek ? Math.round(e7 * 100) : null;
+    // Colour is the comparison the eye is already making: used against advised. It used to be the
+    // coin-based pace verdict, which judged one denominator while the row showed another — the
+    // exact mismatch the three-marks model exists to kill. 5-point dead band (weekPaceToken's, kept)
+    // so a wobble either side of the line stays quiet. Never AMBER for merely being ahead, and RED
+    // only at 95%: below the wall, red is a lie — the week has not stopped you.
+    const col = weekP >= 95 ? RED : weekAdv != null && weekP - weekAdv > 5 ? AMBER : INK;
     put(2, 0, fg(DIM, "week ") + fg(col, weekP + "%"));
+    if (weekAdv != null) put(2, 3, fg(DIM, "advise ") + fg(GREEN, weekAdv + "%"));
     if (wStat.resetIn) put(2, 7, fg(DIM, wStat.resetIn));
   }
 
