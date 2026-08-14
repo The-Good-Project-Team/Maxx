@@ -969,8 +969,19 @@ function main() {
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──
   // The central reading (server-side, account-wide) when it is fresh; this machine's own view of
   // the 5h window otherwise, so the number is never blank, only occasionally local.
+  // ANTHROPIC's five_hour percentage — the same number /usage prints — never q5. q5 is used5
+  // divided by realMax, our own PACED SHARE of the week, and it is clamped to 1. That is a fine
+  // input to a budget verdict (limit.mjs still reads it that way through status.json) and a
+  // catastrophic thing to print here, because this reading sits beside a standard measured in
+  // percent-of-the-5h-window and gets compared against it.
+  //
+  // Seen live on 2026-08-14: /usage said 26% while the bar said "session 100%" in red — the coin
+  // ratio had run past our own paced share, clamped to 1, and painted a wall that did not exist.
+  // The same wire showed "session 0%" earlier for the mirror-image reason: with no local coin
+  // history used5/realMax is 0 while Anthropic is already several percent in.
+  // One denominator per question, and for this question the denominator is Anthropic's.
   const usedP = gcFresh && gc.b.session_used_pct != null ? Math.round(gc.b.session_used_pct)
-              : haveQuota ? Math.round(q5 * 100) : null;
+              : haveQuota ? Math.round(quota * 100) : null;
   const advP = gcFresh && gc.b.session_advised_pct != null ? Math.round(gc.b.session_advised_pct) : null;
   if (usedP != null) {
     put(2, 0, pair("session", usedP, advP, {
@@ -985,7 +996,10 @@ function main() {
   // 5-point dead band (weekPaceToken's, kept) so a wobble either side stays quiet; never amber for
   // merely being ahead, and red only at 95%, because below the wall the week has not stopped you.
   const weekLive = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
-  const weekP = weekLive != null ? Math.round(weekLive * 100) : haveWeek ? Math.round(w7 * 100) : null;
+  // `week`, not w7, for the same reason: w7 falls back to the coin fraction of the tank when
+  // Anthropic's number is missing. It equals `week` whenever haveWeek is true, so this is a no-op
+  // today — and it stops being one the moment anybody touches w7.
+  const weekP = weekLive != null ? Math.round(weekLive * 100) : haveWeek ? Math.round(week * 100) : null;
   if (weekP != null) {
     const weekLine = weekResetOk && haveWeek ? Math.round(e7 * 100) : null;
     put(3, 0, pair("week", weekP, weekLine, {

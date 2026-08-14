@@ -106,3 +106,33 @@ test("render stamps the signed-in account on rl.json/status.json (CLAUDE_CONFIG_
   assert.equal(JSON.parse(readFileSync(path.join(home, ".maxx", "rl.json"), "utf8")).account, "acct-default");
   assert.equal(run({ CLAUDE_CONFIG_DIR: alt }).account, "acct-alt", "a session in an alternate config dir is that dir's account");
 });
+
+// REGRESSION, seen live 2026-08-14: /usage said "26% used" while the bar said "session 100%" in
+// red. The displayed session reading had been taken from q5 — used5 ÷ realMax, our own paced share
+// of the week, clamped to 1 — so running past our SOFT line printed Anthropic's HARD wall. The
+// mirror image showed up on a fresh box as "session 0%": no local coin history, so the ratio is 0
+// while Anthropic is already several percent in. The reading beside a percent-of-window standard
+// must be the percent of that window, which is exactly what stdin's five_hour carries.
+test("render: the session reading is Anthropic's 5h %, not our paced-share ratio", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
+  mkdirSync(path.join(home, ".maxx"), { recursive: true });
+  const stdin = JSON.stringify({
+    session_id: "regress5h",
+    rate_limits: {
+      five_hour: { used_percentage: 26, resets_at: Math.floor(Date.now() / 1000) + 3600 },
+      seven_day: { used_percentage: 22, resets_at: in6d },
+    },
+    context_window: { used_percentage: 10, context_window_size: 1000000 },
+    model: { display_name: "Opus" },
+  });
+  const env = { ...process.env, HOME: home, COLUMNS: "200" };
+  const bar = execFileSync("node", [path.join(HERE, "render.mjs")], { input: stdin, env, encoding: "utf8" })
+    .replace(/\x1b\[[0-9;:]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+  const m = bar.match(/session (\d+)/);
+  assert.ok(m, `no session reading in the bar: ${JSON.stringify(bar)}`);
+  assert.equal(Number(m[1]), 26, "session reading must equal stdin's five_hour used_percentage");
+  // and the week beside it answers on the same denominator
+  const w = bar.match(/week (\d+)/);
+  assert.ok(w, "no week reading in the bar");
+  assert.equal(Number(w[1]), 22, "week reading must equal stdin's seven_day used_percentage");
+});
