@@ -107,6 +107,63 @@ if (arg === "--wake") {
   process.exit(0);
 }
 
+// WHY A RISEN SESSION GETS TOOLS, AND WHY THIS LIST (2026-08-14).
+//
+// The rise chain did not work. Measured across every --rise this machine has ever run — six
+// logs in nonprofit-atlas/.fenix/ — ZERO reached a second generation, and `.fenix/generation`
+// still read `{"gen":1}` after weeks. Four of the six ended by ASKING FOR PERMISSION:
+//
+//     "Approve those (or run /config → allow gh + git), and I'll do the salvage..."
+//     "Bash(git checkout:*) Bash(git reset:*) Bash(git branch:*)"        ← the child listing
+//                                                                          what it was denied
+//
+// The cause was one line: the child spawned with `--permission-mode acceptEdits` and NO
+// --allowedTools. acceptEdits covers file edits; every git/gh/test command still prompts, and
+// a detached headless process has nobody to answer the prompt. So each generation woke up,
+// read its handoff, reached for `git status`, and stopped. The prompt told it to be a phoenix
+// while the flags made that impossible — the standing order and the permissions disagreed, and
+// the permissions won every time.
+//
+// Reif, 2026-08-14, asked for the full loop including merge. So: everything needed to take a
+// unit of work from handoff to landed — read the tree, run the tests, commit, push, open a PR,
+// and merge it through the same gates a human PR passes.
+//
+// The three exclusions are NOT timidity, they are the failure modes that cannot be undone by
+// the next generation:
+//   · `git push --force` / `--force-with-lease` — rewrites history a sibling session may hold.
+//   · `git push origin main` — main is protected and deploys on merge; the PR path exists so
+//     CI gates every change. A direct push skips the gate that makes autonomy safe.
+//   · `git stash` — refs/stash is ONE stack shared across every worktree of a repo. A headless
+//     chain popping a sibling's stash has already cost real recovery work (see
+//     nonprofit-atlas docs/ops/worktree-safety.md).
+// Merge is allowed and force-push is not, because a bad merge is revertible and a rewritten
+// history is not.
+//
+// Override with MAXX_RISE_FLAGS for a narrower or wider chain; this default is what makes the
+// loop self-sustaining rather than a well-documented way to generate permission requests.
+const DEFAULT_RISE_FLAGS = [
+  "--permission-mode", "acceptEdits",
+  "--allowedTools",
+  // read the world
+  "Bash(git status:*)", "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)",
+  "Bash(git branch:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git rev-parse:*)",
+  "Bash(git rev-list:*)", "Bash(git worktree:*)",
+  // change the world
+  "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git checkout:*)",
+  "Bash(git switch:*)", "Bash(git merge:*)", "Bash(git rebase:*)", "Bash(git revert:*)",
+  // ship it
+  "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
+  "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh pr edit:*)", "Bash(gh pr merge:*)",
+  "Bash(gh run list:*)", "Bash(gh run view:*)", "Bash(gh api:*)", "Bash(gh issue:*)",
+  // prove it
+  "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)",
+  "Bash(npm test:*)", "Bash(node --test:*)", "Bash(curl:*)",
+  "Read", "Grep", "Glob", "Edit", "Write",
+  "--disallowedTools",
+  "Bash(git push --force:*)", "Bash(git push --force-with-lease:*)",
+  "Bash(git push origin main:*)", "Bash(git stash:*)",
+].join(" ");
+
 // --rise: the SELF-SUSTAINING rebirth. /clear is a human keystroke the model can't press —
 // but a new process is a fresh context by construction. Each risen generation carries the
 // standing order to fenix AGAIN when its context gets heavy or its turn would end with work
@@ -163,7 +220,7 @@ if (arg === "--rise") {
   writeFileSync(GEN_F, JSON.stringify({ gen: gen + 1, head }));
   const log = path.join(DIR, `rise-${ts}.log`);
   const fd = openSync(log, "a");
-  const flags = (process.env.MAXX_RISE_FLAGS || "--permission-mode acceptEdits").split(/\s+/).filter(Boolean);
+  const flags = (process.env.MAXX_RISE_FLAGS || DEFAULT_RISE_FLAGS).split(/\s+/).filter(Boolean);
   const prompt =
     `🔥 FENIX RISE — generation ${gen + 1}/${maxGen}. You are the continuation of a cleared session. ` +
     `Resume the handoff below; verify its claims against the working tree first.\n\n` +
@@ -178,6 +235,100 @@ if (arg === "--rise") {
   process.exit(0);
 }
 
+// --state: the facts, gathered by MACHINE, for the model to paste into its handoff.
+//
+// WHY. A handoff is written at the worst possible moment for recall — 70-90% context, right
+// after a long session. Measured across the 98 handoffs in nonprofit-atlas/.fenix/, only ~35%
+// carried the sections the skill asks for and 13% pasted any real command output; the rest is
+// remembered prose. But the session does not need to REMEMBER any of this: git already knows
+// the branch, the HEAD, what is uncommitted, and what is unpushed, and `gh` knows the open PRs.
+//
+// So stop asking the model for facts it can look up. This prints a block it pastes verbatim,
+// and it spends its remaining context on the part no tool can produce: WHY, what is next, and
+// which traps cost time. Deterministic, ~zero tokens, and it cannot misremember a SHA.
+if (arg === "--state") {
+  const sh = (cmd, args) => {
+    try {
+      return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch { return ""; }
+  };
+  const inRepo = sh("git", ["rev-parse", "--is-inside-work-tree"]) === "true";
+  if (!inRepo) { console.log("## State (machine-gathered)\n\n- not a git repository"); process.exit(0); }
+
+  const branch = sh("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const head = sh("git", ["rev-parse", "--short", "HEAD"]);
+  const subject = sh("git", ["log", "-1", "--format=%s"]);
+  const dirty = sh("git", ["status", "--porcelain"]).split("\n").filter(Boolean);
+  const upstream = sh("git", ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+  const ahead = upstream ? sh("git", ["rev-list", "--count", `${upstream}..HEAD`]) : "";
+  const unpushed = ahead && ahead !== "0"
+    ? sh("git", ["log", "--oneline", `${upstream}..HEAD`]).split("\n").filter(Boolean)
+    : [];
+  // Commits this session plausibly made: today, by anyone, on this branch. Cheap and honest —
+  // labelled as "today" rather than claimed as "mine", because git cannot tell the difference.
+  const today = sh("git", ["log", "--since", "6 hours ago", "--oneline"]).split("\n").filter(Boolean);
+  const prs = sh("gh", ["pr", "list", "--limit", "10", "--json", "number,title,headRefName",
+                        "--jq", '.[] | "#\\(.number) [\\(.headRefName)] \\(.title)"'])
+    .split("\n").filter(Boolean);
+
+  const L = [];
+  L.push("## State (machine-gathered — do not retype from memory)");
+  L.push("");
+  L.push(`- branch: \`${branch}\` @ \`${head}\` — ${subject || "(no commits)"}`);
+  L.push(`- working tree: ${dirty.length ? `**${dirty.length} uncommitted change(s)**` : "clean"}`);
+  if (dirty.length) {
+    for (const d of dirty.slice(0, 12)) L.push(`    ${d}`);
+    if (dirty.length > 12) L.push(`    …and ${dirty.length - 12} more`);
+  }
+  if (unpushed.length) {
+    L.push(`- **UNPUSHED: ${unpushed.length} commit(s) ahead of ${upstream}** — these exist only on this machine:`);
+    for (const c of unpushed.slice(0, 8)) L.push(`    ${c}`);
+  } else if (upstream) {
+    L.push(`- in sync with \`${upstream}\``);
+  } else {
+    L.push("- **no upstream** — this branch has never been pushed");
+  }
+  if (today.length) {
+    L.push(`- landed in the last 6h (${today.length}):`);
+    for (const c of today.slice(0, 10)) L.push(`    ${c}`);
+  }
+  if (prs.length) {
+    L.push("- open PRs:");
+    for (const p of prs) L.push(`    ${p}`);
+  }
+  // CARRY-FORWARD. The single most important line of the last handoff was its "In motion" —
+  // the one thing the next session was told to do first. Nothing has ever checked whether it
+  // got done. Observed 2026-08-14: a handoff correctly said "finish the multidimensional
+  // scoring model, it is HALF-WRITTEN and uncommitted"; the next session was redirected into
+  // a production outage within seconds and the item was still untouched eight hours later,
+  // with no trace that it had been dropped. A thread that silently evaporates is exactly the
+  // failure fenix exists to prevent, so surface the prior ask and make the new handoff answer
+  // for it — done, still in motion, or deliberately dropped.
+  try {
+    const prior = readdirSync(DIR).filter(f => f.startsWith("handoff.consumed-")).sort().pop();
+    if (prior) {
+      const text = readFileSync(path.join(DIR, prior), "utf8");
+      const m = text.match(/##\s*In motion[^\n]*\n([\s\S]*?)(?=\n##\s|$)/i);
+      const gist = (m ? m[1] : "").split("\n").map(s => s.trim())
+        .filter(s => s && !s.startsWith("<!--")).slice(0, 4);
+      if (gist.length) {
+        L.push("");
+        L.push(`### The LAST handoff asked the next session to do this first (${prior.replace("handoff.consumed-", "").replace(".md", "")}):`);
+        for (const g of gist) L.push(`> ${g}`);
+        L.push("");
+        L.push("**Say what happened to it — done / still in motion / dropped and why.** An item that");
+        L.push("silently disappears between generations is the failure this whole mechanism exists to stop.");
+      }
+    }
+  } catch {}
+
+  L.push("");
+  L.push("_Everything above is read from git/gh at handoff time. Spend your words on WHY,");
+  L.push("what is next, and the traps — not on restating these._");
+  console.log(L.join("\n"));
+  process.exit(0);
+}
+
 if (arg === "--status") {
   if (!existsSync(DIR)) { console.log("fenix: no .fenix/ here — nothing pending."); process.exit(0); }
   const pending = existsSync(HANDOFF) ? `PENDING (${Math.round((Date.now() - statSync(HANDOFF).mtimeMs) / 60000)}m old)` : "none";
@@ -186,5 +337,5 @@ if (arg === "--status") {
   process.exit(0);
 }
 
-console.error("fenix: unknown arg (use --wake | --rise | --status)");
+console.error("fenix: unknown arg (use --wake | --rise | --state | --status)");
 process.exit(1);
