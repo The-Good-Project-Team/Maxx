@@ -39,6 +39,28 @@ function hsl2hex(h, s, l) {
   return `#${to(r)}${to(g)}${to(b)}`;
 }
 const hsl = hsl2hex;
+// hex → [h, s, l], the inverse of the above. Needed to take a colour the terminal chose and move
+// it without discarding the character of the theme it came from.
+function hex2hsl(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+  if (!d) return [0, 0, l];
+  const sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, sat, l];
+}
+// GOLD. A theme's ANSI "yellow" is very often an orange — the one this was written against
+// resolves to #df631c — and amber is the single hue on this bar whose whole job is to read as
+// CAUTION in peripheral vision. Orange sits close enough to the wall's red that the two blur into
+// one warm smudge exactly when you are not looking straight at them. So the hue is pinned to true
+// amber-gold and only the saturation and lightness keep any of the theme's character, clamped to
+// where gold still has contrast against the background it is actually drawn on.
+function goldenize(hex, dark) {
+  let [, sat, l] = hex2hsl(hex);
+  sat = Math.max(sat, 0.78);
+  l = dark ? Math.min(Math.max(l, 0.55), 0.70) : Math.min(Math.max(l, 0.38), 0.47);
+  return hsl2hex(dark ? 48 : 45, sat, l);
+}
 // theme: `/maxx dark` / `/maxx light` writes cfg.theme — an explicit override that pins
 // maxx's own purple palette. With no override (`/maxx auto`) the bar matches the terminal
 // it lives in: the ghostty theme's actual colors when detectable (background/foreground/
@@ -62,7 +84,7 @@ let DIM    = T(hsl(266, 0.24, 0.52), hsl(266, 0.20, 0.63)); // muted secondary t
 let BRAND  = T(hsl(264, 0.66, 0.54), hsl(264, 0.75, 0.70)); // vivid periwinkle accent
 let BORDER = T(hsl(266, 0.36, 0.66), hsl(266, 0.26, 0.42)); // meter caps / soft frame
 let GREEN  = T(hsl(150, 0.48, 0.37), hsl(150, 0.45, 0.48)); // sage = safe (dark spent fill; glint + cushion read off it)
-let AMBER  = T(hsl(38, 0.66, 0.53),  hsl(38, 0.72, 0.58));  // amber = elevated
+let AMBER  = T(hsl(45, 0.82, 0.42),  hsl(48, 0.84, 0.62));  // gold = elevated (see goldenize)
 let RED    = T(hsl(354, 0.50, 0.58), hsl(354, 0.62, 0.64)); // rose = danger
 
 // ─── terminal-match (the `auto` default): adopt the ghostty theme's own colors ─
@@ -108,7 +130,7 @@ let RED    = T(hsl(354, 0.50, 0.58), hsl(354, 0.62, 0.64)); // rose = danger
   DIM    = blend(fg, bg, 0.38);
   BORDER = blend(fg, bg, 0.58);
   GREEN  = pal[t(2, 10)] || GREEN;
-  AMBER  = pal[t(3, 11)] || AMBER;
+  AMBER  = goldenize(pal[t(3, 11)] || AMBER, DARK);
   RED    = pal[t(1, 9)]  || RED;
 })();
 
