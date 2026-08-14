@@ -26,6 +26,36 @@ function repo() {
   return { dir, git };
 }
 
+test("the flag list survives the trip through argv", () => {
+  // THE BUG THIS EXISTS FOR (2026-08-14): DEFAULT_RISE_FLAGS was a .join(" ") string that the
+  // spawn re-split on whitespace. Every grant containing a space -- Bash(git status:*),
+  // Bash(gh pr merge:*), Bash(python -m pytest:*) -- shattered, and the child received `-m` as a
+  // bare CLI flag and died in under a second:
+  //     $ cat .fenix/rise-...log
+  //     error: unknown option '-m'
+  // The other tests passed the whole time because they only checked the list CONTAINED the right
+  // tools. Containing them is not the same as being able to spawn with them.
+  // Ignore comment lines: this file documents the bug in prose, and the prose contains the
+  // very pattern being banned.
+  const src = readFileSync(FENIX, "utf8")
+    .split("\n").filter(l => !l.trimStart().startsWith("//")).join("\n");
+  assert.ok(!/const DEFAULT_RISE_FLAGS = \[[\s\S]*?\]\.join\(/.test(src),
+    "DEFAULT_RISE_FLAGS is joined into a string again -- spawning will shatter every " +
+    "multi-word grant and the child will die on `unknown option`");
+  const m = src.match(/const DEFAULT_RISE_FLAGS = \[([\s\S]*?)\n\];/);
+  assert.ok(m, "could not find the flag array");
+  const arr = eval("[" + m[1] + "]");
+  // Each entry must be ONE argv token. If any entry with a space is later re-split, the tokens
+  // after the first stop being tool patterns and start being flags the CLI does not know.
+  for (const entry of arr) {
+    if (entry.startsWith("--") || !entry.includes(" ")) continue;
+    assert.ok(/^Bash\(.*\)$/.test(entry),
+      `entry ${JSON.stringify(entry)} contains a space but is not a complete Bash(...) pattern`);
+  }
+  assert.ok(arr.some(e => e === "Bash(python -m pytest:*)"),
+    "the exact entry that produced `unknown option '-m'` is missing from the regression list");
+});
+
 test("rise grants the tools a headless session needs to finish a unit of work", () => {
   const src = readFileSync(FENIX, "utf8");
   const flags = src.slice(src.indexOf("const DEFAULT_RISE_FLAGS"), src.indexOf("// --rise:"));

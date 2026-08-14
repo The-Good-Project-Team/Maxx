@@ -162,7 +162,25 @@ const DEFAULT_RISE_FLAGS = [
   "--disallowedTools",
   "Bash(git push --force:*)", "Bash(git push --force-with-lease:*)",
   "Bash(git push origin main:*)", "Bash(git stash:*)",
-].join(" ");
+];
+// AN ARRAY, NOT A JOINED STRING — and this cost a live generation to learn (2026-08-14).
+//
+// The first version of this list was `[...].join(" ")` and the spawn did `.split(/\s+/)`.
+// Almost every useful grant contains a space — `Bash(git status:*)`, `Bash(gh pr merge:*)`,
+// `Bash(python -m pytest:*)` — so the round trip shattered all of them into fragments, and the
+// child got `-m`, `--test:*)`, `--force:*)` as bare argv tokens. Observed, first real rise:
+//
+//     $ cat .fenix/rise-2026-08-14T17-41-55-419Z.log
+//     error: unknown option '-m'
+//
+// The child died in under a second, exactly like the six permission-blocked rises before it —
+// same symptom (no generation 2), completely different cause. The unit tests passed throughout
+// because they asserted the list CONTAINED the right tools; nothing asserted the list survives
+// the trip through argv. A flag list that cannot be spawned is not a flag list.
+//
+// MAXX_RISE_FLAGS (a string, from the environment) still splits on whitespace: a shell env var
+// has no other honest reading, and an override is a deliberate act. The DEFAULT never goes
+// through a string at all.
 
 // --rise: the SELF-SUSTAINING rebirth. /clear is a human keystroke the model can't press —
 // but a new process is a fresh context by construction. Each risen generation carries the
@@ -220,7 +238,9 @@ if (arg === "--rise") {
   writeFileSync(GEN_F, JSON.stringify({ gen: gen + 1, head }));
   const log = path.join(DIR, `rise-${ts}.log`);
   const fd = openSync(log, "a");
-  const flags = (process.env.MAXX_RISE_FLAGS || DEFAULT_RISE_FLAGS).split(/\s+/).filter(Boolean);
+  const flags = process.env.MAXX_RISE_FLAGS
+    ? process.env.MAXX_RISE_FLAGS.split(/\s+/).filter(Boolean)
+    : DEFAULT_RISE_FLAGS;
   const prompt =
     `🔥 FENIX RISE — generation ${gen + 1}/${maxGen}. You are the continuation of a cleared session. ` +
     `Resume the handoff below; verify its claims against the working tree first.\n\n` +
