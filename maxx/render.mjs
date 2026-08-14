@@ -152,10 +152,13 @@ const sgrBg = (c) => (USE_256 ? `48;5;${to256(c)}` : `48;2;${c[0]};${c[1]};${c[2
 function esc(fgHex, bgHex, s) {
   return `\x1b[${sgrFg(rgb(fgHex))};${sgrBg(rgb(bgHex))}m${s}\x1b[0m`;
 }
-const fg = (c, s) => esc(c, BG, s);
+// NO BAND: the bar paints foreground only and lets the terminal's own background show through.
+// A filled panel across the full width read as a coloured stripe under the prompt — loud, and
+// wrong in any theme it wasn't tuned for. Colour now lives in the glyphs, not behind them.
+const fg = (c, s) => `\x1b[${sgrFg(rgb(c))}m${s}\x1b[0m`;
 // italic variant (adds SGR 3) — for the calm coach line; degrades gracefully if unsupported
 function ital(fgHex, s) {
-  return `\x1b[3;${sgrFg(rgb(fgHex))};${sgrBg(rgb(BG))}m${s}\x1b[0m`;
+  return `\x1b[3;${sgrFg(rgb(fgHex))}m${s}\x1b[0m`;
 }
 
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
@@ -168,7 +171,7 @@ function trunc(s, w) {
   if (w < 1) return "…";
   return r.slice(0, w - 1).join("") + "…";
 }
-const blank = (w) => fg(BG, " ".repeat(Math.max(0, w)));
+const blank = (w) => " ".repeat(Math.max(0, w)); // unpainted — spacing only, no band
 function padLine(s, w, align = "left") {
   const extra = w - dispWidth(s);
   if (extra <= 0) return s;
@@ -937,7 +940,9 @@ function main() {
   // label before it and the (comma'd, up to ~16-char) cushion/over after it, plus a badge.
   // widen with the terminal: no fixed 90-cell cap (that left half a wide screen empty). Scale to
   // ~0.68 of the rail, leaving ~46 cells for the label + cushion/over + time-left + need/min badges.
-  const mw = Math.max(20, Math.min(Math.round(W * 0.4), 64, W - 46));
+  // narrower than the old four-line bar: each rail now shares its row with the identity tail,
+  // so the meter gives back the width the tail needs instead of pushing it off the edge.
+  const mw = Math.max(16, Math.min(Math.round(W * 0.3), 48, W - 58));
   const row = (s) => padLine(blank(PAD) + s, cols); // one banded line, left-indented
   const fits = (s, add) => dispWidth(s) + dispWidth(add) <= W; // only append if the row can hold it
 
@@ -1046,60 +1051,42 @@ function main() {
     return s;
   };
 
-  // one calm meta line, lowercase, airy dot separators. ctx + cache carry contextual color.
-  // The session tag is the FIRST 4 chars of this session's id — the exact same slice the
-  // owner-dashboard feed tags a row with when 2+ sessions share a project (handler.mjs
-  // `String(e.root).slice(0,4)`). Two agents in one directory now name themselves: read the
-  // tag here, match it to the burning row there. Only shown when we know the session id.
-  // Order: model · last-turn coins · context coins · branch · session-id. Signed with the login
-  // handle at the right (footStr). Colour rides the last-turn number (vs its own recent average)
-  // and the context size. Cache %, $ cost, and the ctx % are dropped — noise the driver can't act on.
-  // last-turn coins — colour compares it against the last 10 turns of THIS session (▲ dearer).
-  const hist = turnHistory(sid, lastTurns(p.transcript_path, 10), total);
-  let lastSeg = "";
-  if (hist.length >= 1) {
-    const win = hist.slice(-10);
-    const avg = win.reduce((x, y) => x + y, 0) / win.length;
-    const last = hist[hist.length - 1];
-    const r = avg > 0 ? last / avg : 1;
-    const lCol = r >= 1.35 ? RED : r >= 1.12 ? AMBER : r <= 0.88 ? GREEN : DIM;
-    // "65k/72 turns" — last turn's coins over how many turns this session has run. The pair is
-    // what makes the context number add up: turns × typical turn ≈ where the context sits.
-    lastSeg = fg(lCol, tkf(last)) + fg(DIM, "/" + hist.length + " turn" + (hist.length === 1 ? "" : "s"));
-  }
   const dot = fg(DIM, "  ·  ");
-  const segs = [];
-  if (who) segs.push(link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
-  segs.push(fg(DIM, fam.toLowerCase()));
-  if (lastSeg) segs.push(lastSeg);
-  if (total > 0) segs.push(fg(ctxCol, tkf(total)) + fg(DIM, " session"));
-  if (branch) segs.push(fg(DIM, trunc(branch, 34)));
-  if (sid) segs.push(fg(DIM, "id " + String(sid).slice(0, 4)));
-  // padLine never truncates — an over-wide row WRAPS and breaks the rail into five lines. A long
-  // branch name on a half-width pane is enough to do it, so drop segments off the tail until it fits.
-  while (segs.length > 1 && dispWidth(segs.join(dot)) > W) segs.pop();
-  let metaRow = segs.join(dot);
+  // TWO LINES, so identity rides the right edge of the rails instead of owning a row of its own.
+  // Coins are gone from here on purpose: the rails already answer in percentages, and a coin count
+  // next to them invites the comparison that made the old bar unreadable. Who / which model / which
+  // branch is context, not a number to steer by — dim, right-aligned, first to go when it won't fit.
+  const idSegs = [];
+  if (who) idSegs.push(link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
+  idSegs.push(fg(DIM, fam.toLowerCase()));
+  const ctxSegs = [];
+  if (branch) ctxSegs.push(fg(DIM, trunc(branch, 28)));
+  ctxSegs.push(fg(DIM, "/maxx"));
 
-  // coach pulled for now — the meters + cushion/over carry it. keep /maxx as a quiet sign-off at
-  // the right of the stats line; it's the one thing here that's fine to lose on a narrow pane.
-  const footStr = fg(DIM, "/maxx");
-  const metaFull = dispWidth(metaRow) + 3 + dispWidth(footStr) <= W
-    ? metaRow + blank(W - dispWidth(metaRow) - dispWidth(footStr)) + footStr
-    : metaRow;
+  // right-align a tail against a rail, dropping segments off the FRONT until it fits (padLine never
+  // truncates, so an over-wide row wraps and the two-line bar becomes three).
+  const withTail = (rail, segs, gap = 3) => {
+    const s = segs.slice();
+    while (s.length && dispWidth(rail) + gap + dispWidth(s.join(dot)) > W) s.shift();
+    if (!s.length) return rail;
+    const tail = s.join(dot);
+    return rail + blank(W - dispWidth(rail) - dispWidth(tail)) + tail;
+  };
+
+  // "session" — the rolling-5h fuel tank (weekly-left ÷ windows-left, capped at the raw 5h wall; banks
+  // when you go light). "week" — the weekly reserve. Labels padded to equal width so the bars align.
+  const sessRail = meterContent("session  ", q5, e5, qv, true, sStat);
+  const weekRail = meterContent("week     ", w7, e7, wv, false, wStat);
+  // the 5h wall: Claude has stopped you anyway — same contemplation link as the dash. With no row to
+  // spare it replaces the identity tail on the session rail, which is where the eye already is.
+  const walled = haveQuota && quota >= 0.99;
+  const wallTail = [fg(RED, "session wall → ")
+    + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
+    + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : "")];
 
   const out = [
-    // "session" — the rolling-5h fuel tank (weekly-left ÷ windows-left, capped at the raw 5h wall; banks
-    // when you go light). "week" — the weekly reserve. Labels padded to equal width so the bars align.
-    row(meterContent("session  ", q5, e5, qv, true, sStat)),
-    row(""), // one air line so the two rails don't fuse into one blob
-    row(meterContent("week     ", w7, e7, wv, false, wStat)),
-    // the 5h wall: Claude has stopped you anyway — same contemplation link as the dash
-    ...(haveQuota && quota >= 0.99 ? [row(
-      fg(RED, "you hit the session wall — time for some contemplation → ")
-      + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
-      + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : ""),
-    )] : []),
-    row(metaFull),
+    row(withTail(sessRail, walled ? wallTail : idSegs)),
+    row(withTail(weekRail, ctxSegs)),
   ];
   try { writeFileSync(odoPath, JSON.stringify(odo)); } catch {} // persist the odometer counters for next render
   process.stdout.write(out.join("\n") + "\n");
