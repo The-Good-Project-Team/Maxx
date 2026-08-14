@@ -940,11 +940,22 @@ function main() {
   // label before it and the (comma'd, up to ~16-char) cushion/over after it, plus a badge.
   // widen with the terminal: no fixed 90-cell cap (that left half a wide screen empty). Scale to
   // ~0.68 of the rail, leaving ~46 cells for the label + cushion/over + time-left + need/min badges.
-  // narrower than the old four-line bar: each rail now shares its row with the identity tail,
-  // so the meter gives back the width the tail needs instead of pushing it off the edge.
-  const mw = Math.max(16, Math.min(Math.round(W * 0.3), 48, W - 58));
-  const row = (s) => padLine(blank(PAD) + s, cols); // one banded line, left-indented
-  const fits = (s, add) => dispWidth(s) + dispWidth(add) <= W; // only append if the row can hold it
+  // BOTH rails share row one, so each meter gets half a rail, not a whole one — and the optional
+  // trailers (the net rate, the pace token, the reset clock) fall off against a HALF budget instead
+  // of the full width. Row two is metadata alone.
+  // Split by NEED, not down the middle: the week rail's text ("85% left · −7% pace · 6d") is a third
+  // shorter than the session's three marks, so an even split starved the session and it shed all
+  // three marks while the week rail sat in white space.
+  const GAP = 4;                                   // the air between the two rails
+  const mw = Math.max(10, Math.min(Math.floor((W - 92) / 2), 26));
+  const weekWant = 5 + (mw + 2) + 30;              // "week " + bar + "  85% left  ·  −7% pace  ·  6d"
+  const sessNeed = 8 + (mw + 2) + 12;              // "session " + bar + "  100% used" — never shed THIS
+  // on a narrow pane the session's first mark outranks the week's trailers: "how much of this window
+  // have I burned" is the number you act on, "6d" is not.
+  const sessBudget = Math.max(sessNeed, W - GAP - weekWant);
+  const weekBudget = Math.max(18, W - GAP - sessBudget);
+  const row = (s) => padLine(blank(PAD) + s, cols); // one line, left-indented
+  const fits = (s, add, budget = W) => dispWidth(s) + dispWidth(add) <= budget; // append only if it holds
 
   // ODOMETER — every shown number counts toward its target by AT MOST ±1 (in display units, k) per
   // render: the ones digit rolls before the tens, values NEVER jump. Slow to calibrate after a big move,
@@ -968,7 +979,7 @@ function main() {
   // a wall's row, plain-language. SESSION: "X to spend" — your sustainable allowance for THIS window
   // (realMax − used); counts down as you burn, climbs back after a break. Negative → "over — ease
   // off" (you're starting to eat future weeks). WEEKLY: "X left" — the reserve. + time left.
-  const meterContent = (label, u, e, uv, isSession, stat) => {
+  const meterContent = (label, u, e, uv, isSession, stat, budget = W) => {
     // SESSION bar IS the directional standing fill (one bar: green-from-left when banked, red-from-right
     // when over). WEEK keeps the fuel tank (bar = weekly reserve LEFT, draining as you spend).
     const standing = isSession && stat && stat.cap ? Math.round(stat.cap - stat.used) : 0;
@@ -978,6 +989,9 @@ function main() {
     let s = fg(DIM, label) + (isSession && stat && stat.cap
       ? netBar(standing, stat.cap, overRoom, mw)
       : fuelMeter(1 - u, e, mw));
+    // a trailer never leads: if the primary reading did not fit, the "  ·  " trailers are dropped
+    // too, or the rail ends in a dangling separator.
+    let marked = false;
     if (stat && stat.cap) {
       if (isSession) {
         // signed standing: banked → "+Xk" (ink), over → "−Xk" (red). The sign IS the meaning — no "over"
@@ -990,33 +1004,44 @@ function main() {
         // the same side of the same line.
         const usedP = gcFresh ? gc.b.session_used_pct : null;
         const advP = gcFresh ? gc.b.session_advised_pct : null;
+        // Sharing a row with the week rail means the budget can run out mid-thought. The marks are
+        // appended one at a time, in order of what a driver needs first (where I am → where to stop
+        // → the hard wall), so a narrow pane sheds "wall 100%" (a constant) rather than all three.
         if (usedP != null && advP != null) {
           const over_ = usedP > advP;
-          const d = fg(DIM, "  ") + fg(over_ ? AMBER : INK, usedP + "%") + fg(DIM, " used")
-                  + fg(DIM, "  ·  ") + fg(DIM, "advise ") + fg(GREEN, advP + "%")
-                  + fg(DIM, "  ·  ") + fg(DIM, "wall 100%");
-          if (fits(s, d)) s += d;
+          // whole percent: a tenth of a 5h window is ~30 seconds of typing, and the decimal cost
+          // two cells on a row that has to hold both walls.
+          const d1 = fg(DIM, "  ") + fg(over_ ? AMBER : INK, Math.round(usedP) + "%") + fg(DIM, " used");
+          const d2 = fg(DIM, "  ·  ") + fg(DIM, "advise ") + fg(GREEN, Math.round(advP) + "%");
+          const d3 = fg(DIM, "  ·  ") + fg(DIM, "wall 100%");
+          if (fits(s, d1, budget)) {
+            s += d1; marked = true;
+            if (fits(s, d2, budget)) s += d2;
+            if (fits(s, d3, budget)) s += d3;
+          }
         } else if (blockShare) {
           const pctS = (x) => (x * 100).toFixed(1) + "%";
           const d = fg(DIM, "  ") + fg(INK, pctS(blockShare.allowancePct)) + fg(DIM, " share")
                   + fg(DIM, "  ·  ") + fg(blockShare.onPace ? INK : AMBER, pctS(blockShare.usedPct)) + fg(DIM, " used");
-          if (fits(s, d)) s += d;
+          if (fits(s, d, budget)) { s += d; marked = true; }
         } else {
           const standK = step1("sess", standing / 1000);
           const over_ = standK < 0;
           const d = fg(DIM, "  ") + fg(over_ ? zoneCol(u, e) : INK, (over_ ? "−" : "+") + kstr(standK));
-          if (fits(s, d)) s += d;
+          if (fits(s, d, budget)) { s += d; marked = true; }
         }
         // trailing rate = refill − recent (5-MIN) burn, SIGN and COLOR follow the NET itself.
         // This is the one net every surface shows (dash, card, agent budget all use
         // five/300 − burn_5m/5). NOT burn60/standing-signed: a 60-second window flips to
         // "+banking" on a single quiet second while the 5-min trend is still burning, and
         // signing by standing hid a real burn behind a positive cushion. Honest > cushioned.
-        const prog = netPerMin;
+        // only ever a TRAILER — without a mark in front of it, its "  ·  " separator dangles off
+        // the bar and reads as a broken row.
+        const prog = marked ? netPerMin : 0;
         if (Math.abs(prog) >= 500) {
           const pos = prog >= 0;
           const pr = fg(DIM, "  ·  ") + fg(pos ? GREEN : RED, (pos ? "+" : "−") + tkf(prog) + "/min");
-          if (fits(s, pr)) s += pr;
+          if (fits(s, pr, budget)) s += pr;
         }
       } else {
         // WEEK line answers ONE question: am I over? LEFT = tokens remaining against the
@@ -1033,61 +1058,64 @@ function main() {
         const realWeekPct = gcFresh && gc.b.usage_week_pct != null && gc.b.usage_week_live ? gc.b.usage_week_pct : null;
         if (realWeekPct != null) {
           const leftPct = Math.max(0, Math.round((1 - realWeekPct) * 100));
-          const d = fg(DIM, "  ") + fg(INK, leftPct + "%") + fg(DIM, " of week left"); if (fits(s, d)) s += d;
+          // just " left" — the rail's own label already says which window this is
+          const d = fg(DIM, "  ") + fg(INK, leftPct + "%") + fg(DIM, " left"); if (fits(s, d, budget)) { s += d; marked = true; }
         } else {
           const leftK = step1("wkleft", stat.headroom / 1000);
-          const d = fg(DIM, "  ") + fg(INK, kstr(leftK)) + fg(DIM, " left"); if (fits(s, d)) s += d;
+          const d = fg(DIM, "  ") + fg(INK, kstr(leftK)) + fg(DIM, " left"); if (fits(s, d, budget)) { s += d; marked = true; }
         }
         // pace token (weekPaceToken): decided on the RAW bank so it's deterministic; the
         // odometer only rolls the shown digits. See pace.mjs for why it's never "over"/red.
-        const pace = weekResetOk ? weekPaceToken(cap7s * e7 - used7, cap7s) : null;
+        const pace = marked && weekResetOk ? weekPaceToken(cap7s * e7 - used7, cap7s) : null;
         if (pace) {
           const b = fg(DIM, "  ·  ") + fg(pace.role === "good" ? GREEN : AMBER, (pace.ahead ? "+" : "−") + pace.pct + "% pace");
-          if (fits(s, b)) s += b;
+          if (fits(s, b, budget)) s += b;
         }
-        if (stat.resetIn) { const d = fg(DIM, "  ·  ") + fg(DIM, stat.resetIn); if (fits(s, d)) s += d; }
+        if (marked && stat.resetIn) { const d = fg(DIM, "  ·  ") + fg(DIM, stat.resetIn); if (fits(s, d, budget)) s += d; }
       }
-    } else if (uv) { const d = fg(DIM, "  ") + fg(wcol, uv) + fg(DIM, " used"); if (fits(s, d)) s += d; } // no cap → raw %
+    } else if (uv) { const d = fg(DIM, "  ") + fg(wcol, uv) + fg(DIM, " used"); if (fits(s, d, budget)) s += d; } // no cap → raw %
     return s;
   };
 
   const dot = fg(DIM, "  ·  ");
-  // TWO LINES, so identity rides the right edge of the rails instead of owning a row of its own.
-  // Coins are gone from here on purpose: the rails already answer in percentages, and a coin count
-  // next to them invites the comparison that made the old bar unreadable. Who / which model / which
-  // branch is context, not a number to steer by — dim, right-aligned, first to go when it won't fit.
-  const idSegs = [];
-  if (who) idSegs.push(link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
-  idSegs.push(fg(DIM, fam.toLowerCase()));
-  const ctxSegs = [];
-  if (branch) ctxSegs.push(fg(DIM, trunc(branch, 28)));
-  ctxSegs.push(fg(DIM, "/maxx"));
+  // ROW ONE = both walls, side by side. They answer the same question at two horizons ("can I spend
+  // now" / "can I spend this week"), and reading them takes one glance when they sit on one line
+  // instead of two. "session" — the rolling-5h fuel tank (weekly-left ÷ windows-left, capped at the
+  // raw 5h wall; banks when you go light). "week" — the weekly reserve.
+  const sessRail = meterContent("session ", q5, e5, qv, true, sStat, sessBudget);
+  const weekRail = meterContent("week ", w7, e7, wv, false, wStat, weekBudget);
+  // week rail flush RIGHT, same edge /maxx signs off on below — the air between the two rails is
+  // whatever the session rail did not use, instead of a fixed column with a hole in front of it.
+  const rails = sessRail + blank(Math.max(GAP, W - dispWidth(sessRail) - dispWidth(weekRail))) + weekRail;
 
-  // right-align a tail against a rail, dropping segments off the FRONT until it fits (padLine never
-  // truncates, so an over-wide row wraps and the two-line bar becomes three).
-  const withTail = (rail, segs, gap = 3) => {
-    const s = segs.slice();
-    while (s.length && dispWidth(rail) + gap + dispWidth(s.join(dot)) > W) s.shift();
-    if (!s.length) return rail;
-    const tail = s.join(dot);
-    return rail + blank(W - dispWidth(rail) - dispWidth(tail)) + tail;
-  };
+  // ROW TWO = metadata, and nothing that has to be steered by. Coins stay out on purpose: the rails
+  // answer in percentages, and a token count beside them invites the comparison that made the old
+  // bar unreadable. Handle · model · branch · session tag, dim; /maxx signs off at the right edge.
+  // The session tag is the first 4 chars of the id — the same slice the owner-dashboard feed tags a
+  // row with, so two agents in one directory can be told apart across both surfaces.
+  const segs = [];
+  if (who) segs.push(link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
+  segs.push(fg(DIM, fam.toLowerCase()));
+  if (branch) segs.push(fg(DIM, trunc(branch, 34)));
+  if (sid) segs.push(fg(DIM, "id " + String(sid).slice(0, 4)));
+  // the 5h wall: Claude has stopped you anyway — same contemplation link as the dash. With no row
+  // to spare it takes over the metadata row, which is the one row here that can afford to lose.
+  if (haveQuota && quota >= 0.99) {
+    segs.length = 0;
+    segs.push(fg(RED, "you hit the session wall — time for some contemplation → ")
+      + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
+      + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : ""));
+  }
+  // padLine never truncates — an over-wide row WRAPS and makes the two-line bar three. Drop
+  // segments off the tail until it fits.
+  const footStr = fg(DIM, "/maxx");
+  while (segs.length > 1 && dispWidth(segs.join(dot)) + 3 + dispWidth(footStr) > W) segs.pop();
+  const metaRow = segs.join(dot);
+  const metaFull = dispWidth(metaRow) + 3 + dispWidth(footStr) <= W
+    ? metaRow + blank(W - dispWidth(metaRow) - dispWidth(footStr)) + footStr
+    : metaRow;
 
-  // "session" — the rolling-5h fuel tank (weekly-left ÷ windows-left, capped at the raw 5h wall; banks
-  // when you go light). "week" — the weekly reserve. Labels padded to equal width so the bars align.
-  const sessRail = meterContent("session  ", q5, e5, qv, true, sStat);
-  const weekRail = meterContent("week     ", w7, e7, wv, false, wStat);
-  // the 5h wall: Claude has stopped you anyway — same contemplation link as the dash. With no row to
-  // spare it replaces the identity tail on the session rail, which is where the eye already is.
-  const walled = haveQuota && quota >= 0.99;
-  const wallTail = [fg(RED, "session wall → ")
-    + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
-    + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : "")];
-
-  const out = [
-    row(withTail(sessRail, walled ? wallTail : idSegs)),
-    row(withTail(weekRail, ctxSegs)),
-  ];
+  const out = [row(rails), row(metaFull)];
   try { writeFileSync(odoPath, JSON.stringify(odo)); } catch {} // persist the odometer counters for next render
   process.stdout.write(out.join("\n") + "\n");
 }
