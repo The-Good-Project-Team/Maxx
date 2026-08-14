@@ -141,13 +141,34 @@ const sgrFg = (c) => (USE_256 ? `38;5;${to256(c)}` : `38;2;${c[0]};${c[1]};${c[2
 // NO BAND: the bar paints foreground only and lets the terminal's own background show through.
 // A filled panel across the full width read as a coloured stripe under the prompt — loud, and
 // wrong in any theme it wasn't tuned for. Colour now lives in the glyphs, not behind them.
-const fg = (c, s) => `\x1b[${sgrFg(rgb(c))}m${s}\x1b[0m`;
-// italic variant (adds SGR 3) — for the calm coach line; degrades gracefully if unsupported
-function ital(fgHex, s) {
-  return `\x1b[3;${sgrFg(rgb(fgHex))}m${s}\x1b[0m`;
-}
+// attrs = extra SGR params prepended to the colour (e.g. "1" bold, "4" underline, "2" faint).
+const paint = (c, s, attrs) => `\x1b[${attrs ? attrs + ";" : ""}${sgrFg(rgb(c))}m${s}\x1b[0m`;
+const fg = (c, s) => paint(c, s);
+// TYPOGRAPHY, and it all carries meaning — none of it is ornament:
+//   faint   labels ("session", "week", "advise") recede so the numbers own the line
+//   under   the advised marks. The advised number IS a line; drawing one under it says so.
+//   bold    a reading that has crossed its advised mark — escalation without spending a word
+//   curly   the hard wall. A red squiggle is the one piece of terminal typography every reader
+//           already knows means "this is wrong", borrowed straight from a spell-checker.
+const bold  = (c, s) => paint(c, s, "1");
+const faint = (c, s) => paint(c, s, "2");
+const under = (c, s) => paint(c, s, "4");
+function ital(fgHex, s) { return paint(fgHex, s, "3"); }
+// Curly underline (SGR 4:3) and underline COLOUR (SGR 58) are colon/extended params that older
+// terminals render as garbage rather than ignoring, so they are opt-in by terminal, not by guess.
+// Everywhere else the same call degrades to a straight underline in the text's own colour.
+const CURLY_OK = /ghostty|iterm|wezterm|kitty|vscode/i.test(
+  (process.env.TERM_PROGRAM || "") + " " + (process.env.TERM || ""),
+) && !USE_256;
+const curly = (c, s, uc = c) => {
+  if (!CURLY_OK) return under(c, s);
+  const u = rgb(uc);
+  return `\x1b[4:3;58;2;${u[0]};${u[1]};${u[2]};${sgrFg(rgb(c))}m${s}\x1b[0m`;
+};
 
-const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+// NB the [0-9;:] class — the curly-underline params above use COLON sub-params, and a stripper
+// that only knows semicolons leaves "4:3" in the string and every width measurement is wrong.
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;:]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 // OSC 8 hyperlink — supported terminals make the text clickable, the rest render it as plain text
 const link = (url, s) => `\x1b]8;;${url}\x1b\\${s}\x1b]8;;\x1b\\`;
 const dispWidth = (s) => [...stripAnsi(s)].length;
@@ -784,8 +805,8 @@ function main() {
   const PAD = 1;
   const W = Math.max(20, cols - PAD - 2); // -2 = a right safety margin so nothing gets clipped
   // the old floor was 40 — a leftover from when a meter needed room. One line of text does not.
-  const SEP = fg(BORDER, "  │  ");        // between groups
-  const dot = fg(DIM, " · ");             // within a group
+  const SEP = faint(BORDER, "  │  ");     // between groups
+  const dot = faint(DIM, " · ");          // within a group
 
   // Every piece carries a RANK. When the line is too wide for the pane, the highest rank goes
   // first and we measure again — so a narrow terminal loses the sign-off, then the repo name, then
@@ -795,7 +816,7 @@ function main() {
 
   // ── who ──
   if (who) put(0, 4, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
-  put(0, 5, fg(DIM, fam.toLowerCase()));
+  put(0, 5, faint(DIM, fam.toLowerCase()));
 
   // ── session: where I am, where we advise stopping, when the window resets ──
   // The central reading (server-side, account-wide) when it is fresh; this machine's own view of
@@ -804,12 +825,18 @@ function main() {
               : haveQuota ? Math.round(q5 * 100) : null;
   const advP = gcFresh && gc.b.session_advised_pct != null ? Math.round(gc.b.session_advised_pct) : null;
   if (usedP != null) {
-    const col = usedP >= 90 ? RED : (advP != null && usedP > advP) ? AMBER : INK;
-    put(1, 0, fg(DIM, "session ") + fg(col, usedP + "%"));
+    // three states, three weights. Under the advised mark: plain ink, nothing to see. Past it:
+    // amber AND bold, because a colour shift alone is easy to miss in peripheral vision while a
+    // weight shift is not. At the hard wall: red with a curly underline — the squiggle reads as
+    // "this is wrong" before you have finished reading the number.
+    const over = advP != null && usedP > advP;
+    const walled_ = usedP >= 90;
+    const n = usedP + "%";
+    put(1, 0, faint(DIM, "session ") + (walled_ ? curly(RED, n) : over ? bold(AMBER, n) : fg(INK, n)));
     // ranks below the week's advise (3): the session wall is the one you can act on in the next
     // ten minutes, so a narrow pane sheds the week's guidance first.
-    if (advP != null) put(1, 2, fg(DIM, "advise ") + fg(GREEN, advP + "%"));
-    if (sStat.resetIn) put(1, 6, fg(DIM, sStat.resetIn));
+    if (advP != null) put(1, 2, faint(DIM, "advise ") + under(GREEN, advP + "%"));
+    if (sStat.resetIn) put(1, 6, faint(DIM, sStat.resetIn));
   }
 
   // ── week: the only wall that can actually stop you ──
@@ -828,33 +855,36 @@ function main() {
     // exact mismatch the three-marks model exists to kill. 5-point dead band (weekPaceToken's, kept)
     // so a wobble either side of the line stays quiet. Never AMBER for merely being ahead, and RED
     // only at 95%: below the wall, red is a lie — the week has not stopped you.
-    const col = weekP >= 95 ? RED : weekAdv != null && weekP - weekAdv > 5 ? AMBER : INK;
-    put(2, 0, fg(DIM, "week ") + fg(col, weekP + "%"));
-    if (weekAdv != null) put(2, 3, fg(DIM, "advise ") + fg(GREEN, weekAdv + "%"));
-    if (wStat.resetIn) put(2, 7, fg(DIM, wStat.resetIn));
+    const over = weekAdv != null && weekP - weekAdv > 5;
+    const n = weekP + "%";
+    put(2, 0, faint(DIM, "week ") + (weekP >= 95 ? curly(RED, n) : over ? bold(AMBER, n) : fg(INK, n)));
+    if (weekAdv != null) put(2, 3, faint(DIM, "advise ") + under(GREEN, weekAdv + "%"));
+    if (wStat.resetIn) put(2, 7, faint(DIM, wStat.resetIn));
   }
 
   // ── where: repo, branch, and the session tag ──
   // The tag is the first 4 chars of the id — the same slice the owner-dashboard feed tags a row
   // with, so two agents in one directory can be told apart across both surfaces.
   const repo = path.basename((p.workspace || {}).project_dir || p.cwd || "");
-  if (repo) put(3, 9, fg(DIM, trunc(repo, 20)));
-  if (branch) put(3, 8, fg(DIM, trunc(branch, 28)));
-  if (sid) put(3, 10, fg(DIM, String(sid).slice(0, 4)));
-
-  // ── the mark. NEVER drops (rank 0) — it is five cells, it is the product's name, and a bar that
-  // sheds its own signature to fit a narrow pane is a bar nobody remembers came from anywhere.
-  // BRAND, same ink as the handle at the far left, so the line is book-ended by maxx.
-  put(4, 0, fg(BRAND, "/maxx"));
+  if (repo) put(3, 9, faint(DIM, trunc(repo, 20)));
+  if (branch) put(3, 8, faint(DIM, trunc(branch, 28)));
+  if (sid) put(3, 10, faint(DIM, String(sid).slice(0, 4)));
 
   // the 5h wall: Claude has stopped you anyway. It replaces everything downstream of the session
   // group — nothing else on this line matters while you are locked out.
   if (haveQuota && quota >= 0.99) {
-    for (let i = G.length - 1; i >= 0; i--) if (G[i].group >= 2) G.splice(i, 1);
+    // groups 2 and 3 only — the mark (group 4) is rank 0 and never drops, walled or not.
+    for (let i = G.length - 1; i >= 0; i--) if (G[i].group === 2 || G[i].group === 3) G.splice(i, 1);
     put(2, 1, fg(RED, "walled → ")
       + link("https://www.youtube.com/watch?v=linlz7-Pnvw", fg(BRAND, "Swiss Alps in 8K"))
       + (sStat.resetIn ? fg(DIM, " · back in " + sStat.resetIn) : ""));
   }
+
+  // ── the mark. NEVER drops (rank 0) — it is five cells, it is the product's name, and a bar that
+  // sheds its own signature to fit a narrow pane is a bar nobody remembers came from anywhere.
+  // BRAND, same ink as the handle at the far left, so the line is book-ended by maxx.
+  put(4, 0, bold(BRAND, "/maxx")); // a wordmark, set like one
+
 
   // assemble: pieces joined by a middot inside a group, groups joined by the hairline.
   const draw = (parts) => {
