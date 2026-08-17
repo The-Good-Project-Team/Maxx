@@ -20,6 +20,8 @@
  *   latest fresh anchor wins; between anchors we hold the cap and extrapolate.
  */
 
+import { resolveSettings, perDiem } from "./settings.mjs";
+
 const FIVE_H = 5 * 3600;
 const WEEK = 7 * 24 * 3600;
 // There is no tank. We used to set our own (COINS_MAX = 1e9 "coins") and pace against it;
@@ -327,6 +329,10 @@ export function computeBudget(store, now) {
   // A lease holds a slice OF THE WEEK — same denominator as block_share_pct, so a dispatcher
   // subtracts it from its allowance without converting anything.
   const reservedPct = Math.round(activeLeases.reduce((acc, l) => acc + (l.pct || 0), 0) * 10) / 10;
+  // The operator's knobs. Invalid stored values fall back to defaults rather than to
+  // "unlimited" — see resolveSettings. Published in the payload so every surface shows the
+  // SAME limits the server used, instead of each client holding its own copy that drifts.
+  const { settings } = resolveSettings(store.config || {});
 
   // "degraded" = no fresh /usage anchor, but the weekly standing is still computable
   // from our own ledger against the last known caps. Callers may proceed on it (weekly
@@ -461,6 +467,17 @@ export function computeBudget(store, now) {
     sustainable_pct_per_hour: sustainablePctPerHour,
     projected_wall_at: projectedWallAt,
     reserved_pct: reservedPct, leases: activeLeases.length,
+    // ---- the per-diem: can I afford this TODAY -------------------------------------------
+    // The weekly figures cannot answer that on their own, which is why three consumers had
+    // each invented their own daily arithmetic. Computed once, here, on the same percent-of-
+    // week denominator as everything above it. Anchored to week_reset rather than a calendar
+    // midnight so a day never drifts against the window that actually matters.
+    //
+    // ADVICE, not a gate: per_diem_pct goes negative when the self-imposed weekly cap is
+    // already overspent, and `verdict` does NOT change because of it. Nothing maxx computes
+    // can deny a caller work — that rule is what this whole file was rewritten to restore.
+    ...perDiem({ weekPct: a && a.week_pct != null ? a.week_pct : null, weekReset: wr, now, settings }),
+    settings,
     top_burners: topBurners,
     verdict, fresh,
     // what is queued FOR each channel, so the dash can show a channel and the orders
