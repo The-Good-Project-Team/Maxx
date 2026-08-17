@@ -7,6 +7,9 @@
  *     GET  /api/u/:handle/budget    → read the budget
  *     GET  /api/u/:handle/settings  → read the operator's knobs (owner only)
  *     PUT  /api/u/:handle/settings  → update them (owner only; merges over stored)
+ *     GET  /api/u/:handle/pool      → which handle the next job should use, across the account
+ *     POST /api/u/:handle/pool/used → record a dispatch, so round-robin has a turn order
+ *     GET/PUT /api/u/:handle/account → read / link the account a handle belongs to
  *   MCP   (account-wide cloud connector, Streamable HTTP / JSON-RPC 2.0):
  *     POST /mcp[?handle=]           → initialize | tools/list | tools/call
  *       tools: maxx_emit(envelope)  → same as POST logs
@@ -18,6 +21,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDirectives, logOp, autoAdvise, anchorAgeSec, ANCHOR_TRUST_SEC } from "./tally.mjs";
 import { resolveSettings, DEFAULTS } from "./settings.mjs";
+import { ACCOUNTS_KEY, accountId, accountOf, handlesFor, linkHandle, pick } from "./account.mjs";
 import { probeAnchor } from "./probe.mjs";
 
 const TOOLS = [
@@ -2561,6 +2565,83 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       const res = await ingest(h, env);
       return json(200, { ok: true, ...res });
     }
+    // ---- account pool: which handle should the next job use --------------------------------
+    // ONE call that answers what a fleet dispatcher actually needs. Before this, every consumer
+    // reimplemented it: nonprofit-atlas walked a hardcoded ACCOUNT_POOL_ORDER that could not
+    // react to how much of each week was left, so it drained one account while another sat at
+    // 40%. The ranking now happens where the readings live.
+    //
+    // NOT A GATE. It always names a handle when the account has any member at all, even when
+    // every one is over its ceiling — "nobody" would be a stop, and nothing maxx computes may
+    // deny work. `over_ceiling` says so honestly and the caller decides.
+    m = p.match(/^\/api\/u\/([^/]+)\/pool$/);
+    if (m && method === "GET") {
+      const h = decodeURIComponent(m[1]);
+      if (!(await authed(h, readTokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      const ix = (await store.load(ACCOUNTS_KEY))?.index || {};
+      const acct = accountOf(ix, h);
+      // An unlinked handle is a pool of one — never an error. A machine that has not run
+      // signup yet must still get a usable answer instead of a 404 it has to special-case.
+      const members = acct ? handlesFor(ix, acct) : [h];
+      const rows = [];
+      for (const mh of members) {
+        const ms = await store.load(mh);
+        const mb = computeBudget(ms, now());
+        const { settings: mset } = resolveSettings(ms.config || {});
+        rows.push({
+          handle: mh,
+          usage_week_pct: mb.usage_week_pct, usage_week_live: mb.usage_week_live,
+          weekly_max: mset.weekly_max, last_used: ms.last_used || 0,
+          per_diem_pct: mb.per_diem_pct, over_per_diem: mb.over_per_diem,
+        });
+      }
+      const { settings } = resolveSettings((await store.load(h)).config || {});
+      const chosen = pick(rows, { strategy: settings.account_strategy, weeklyMax: settings.weekly_max });
+      return json(200, {
+        account: acct, strategy: settings.account_strategy,
+        use: chosen?.handle || null, why: chosen?.why || null,
+        over_ceiling: !!(chosen && rows.every((r) => r.usage_week_pct != null && r.usage_week_live !== false && r.usage_week_pct >= (r.weekly_max ?? settings.weekly_max))),
+        members: chosen?.ranked || rows,
+      });
+    }
+
+    // Record that a handle was dispatched to, so round_robin has a turn order to sort on.
+    // Separate from the read because the read must stay cacheable and side-effect free.
+    m = p.match(/^\/api\/u\/([^/]+)\/pool\/used$/);
+    if (m && method === "POST") {
+      const h = decodeURIComponent(m[1]);
+      if (!(await authed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      const s0 = await store.load(h);
+      s0.last_used = Math.round(now());
+      await store.save(h, s0);
+      return json(200, { ok: true, handle: h, last_used: s0.last_used });
+    }
+
+    // Link a handle into an account so the pool above can see it. Idempotent.
+    m = p.match(/^\/api\/u\/([^/]+)\/account$/);
+    if (m && (method === "GET" || method === "PUT")) {
+      const h = decodeURIComponent(m[1]);
+      if (!(await authed(h, method === "GET" ? readTokenOf(headers, url) : tokenOf(headers, url))))
+        return json(401, { error: "unauthorized" });
+      const doc = (await store.load(ACCOUNTS_KEY)) || {};
+      if (method === "GET") {
+        const acct = accountOf(doc.index || {}, h);
+        return json(200, { handle: h, account: acct, members: acct ? handlesFor(doc.index || {}, acct) : [h] });
+      }
+      let b; try { b = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
+      const id = accountId(b.account || b.email);
+      if (!id) return json(400, { error: "account (or email) required" });
+      doc.index = linkHandle(doc.index || {}, id, h);
+      await store.save(ACCOUNTS_KEY, doc);
+      // Mirror onto the handle's own doc so a per-handle read shows its owner without a
+      // second lookup -- signup already writes these two fields, this keeps them true.
+      const s0 = await store.load(h);
+      s0.account = id;
+      if (b.email) s0.account_email = String(b.email).slice(0, 128);
+      await store.save(h, s0);
+      return json(200, { ok: true, account: id, members: handlesFor(doc.index, id) });
+    }
+
     // ---- settings: the operator's knobs ---------------------------------------------------
     // GET is owner-only, unlike /budget's public read. The budget payload is a magnitude an
     // anonymized public dash can show; the settings are the operator's own policy (their
