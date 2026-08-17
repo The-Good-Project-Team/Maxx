@@ -42,7 +42,7 @@ test("rollSession: no weekly data → falls back to the raw 5h cap", () => {
   assert.equal(r.sessionSafe, 30e6);
 });
 
-test("render --status: weekly bar is anchored to Anthropic's 7d %, scaled to the fixed tank", () => {
+test("render --status: the weekly bar IS Anthropic's 7d %, and the cap is inferred from it", () => {
   const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
   mkdirSync(path.join(home, ".maxx"), { recursive: true });
   const stdin = JSON.stringify({
@@ -56,13 +56,14 @@ test("render --status: weekly bar is anchored to Anthropic's 7d %, scaled to the
   const out = execFileSync("node", [path.join(HERE, "render.mjs"), "--status"],
     { input: stdin, env: { ...process.env, HOME: home }, encoding: "utf8" });
   const s = JSON.parse(out);
-  // The tank stays a fixed 1B, same for every account — never tok ÷ pct. What MOVES the bar is
-  // Anthropic's own 7d %: it rides in on stdin every render, so it can't collapse the way the local
-  // bucket sum does mid-rewrite, and the bar reads exactly what /usage says.
-  assert.equal(s.weekly.cap, 1e9, "weekly tank is the fixed 1B coin cap");
+  // What MOVES the bar is Anthropic's own 7d %: it rides in on stdin every render, so it can't
+  // collapse the way the local bucket sum does mid-rewrite, and the bar reads what /usage says.
   assert.equal(s.weekly.usedPct, 37, "week bar must track Anthropic's 7d %");
-  assert.equal(s.weekly.used, 0.37 * 1e9, "the % is scaled to the tank, not reported raw");
-  // Anthropic's real 5h wall is still surfaced as the safety reading, untouched by the coin model.
+  // The token CAP is inferred (ledger ÷ their %) — a fresh HOME has no ledger to divide, so
+  // there is no cap to state. 0 here means "not estimable yet", and the bar is unaffected: the
+  // fill comes from the %, not from the estimate. We used to publish a fixed 1e9 tank instead,
+  // which read full-of-fuel on an account Anthropic had at 96%.
+  assert.equal(s.weekly.cap, 0, "no local ledger ⇒ nothing to divide ⇒ no cap claimed");
   assert.equal(s.session.rawUsedPct, 6, "raw 5h wall still matches /usage five_hour %");
 });
 
@@ -79,8 +80,8 @@ test("render --status: no 7d % on stdin → week bar falls back to the local buc
   const out = execFileSync("node", [path.join(HERE, "render.mjs"), "--status"],
     { input: stdin, env: { ...process.env, HOME: home }, encoding: "utf8" });
   const s = JSON.parse(out);
-  assert.equal(s.weekly.cap, 1e9, "the tank does not move when the anchor is missing");
-  assert.equal(s.weekly.usedPct, 0, "no live % and no staged burn → 0% of tank");
+  assert.equal(s.weekly.cap, 0, "no % to divide by and no ledger ⇒ no cap invented");
+  assert.equal(s.weekly.usedPct, 0, "no live % and no staged burn → nothing to draw");
 });
 
 test("render stamps the signed-in account on rl.json/status.json (CLAUDE_CONFIG_DIR-aware)", () => {
@@ -105,6 +106,27 @@ test("render stamps the signed-in account on rl.json/status.json (CLAUDE_CONFIG_
   assert.equal(run({ CLAUDE_CONFIG_DIR: "" }).account, "acct-default");
   assert.equal(JSON.parse(readFileSync(path.join(home, ".maxx", "rl.json"), "utf8")).account, "acct-default");
   assert.equal(run({ CLAUDE_CONFIG_DIR: alt }).account, "acct-alt", "a session in an alternate config dir is that dir's account");
+});
+
+// The first wall is named after the thing that runs out — the chat — not after the unit it is
+// measured in. "ctx" named the unit; every other wall on the line (session, week) names the thing.
+test("render: the first wall is labelled chat, not ctx", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
+  mkdirSync(path.join(home, ".maxx"), { recursive: true });
+  const stdin = JSON.stringify({
+    session_id: "labelchat",
+    rate_limits: {
+      five_hour: { used_percentage: 26, resets_at: Math.floor(Date.now() / 1000) + 3600 },
+      seven_day: { used_percentage: 22, resets_at: in6d },
+    },
+    context_window: { used_percentage: 10, context_window_size: 1000000 },
+    model: { display_name: "Opus" },
+  });
+  const env = { ...process.env, HOME: home, COLUMNS: "200" };
+  const bar = execFileSync("node", [path.join(HERE, "render.mjs")], { input: stdin, env, encoding: "utf8" })
+    .replace(/\x1b\[[0-9;:]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+  assert.match(bar, /chat 10\/35%/, `expected "chat 10/35%" in the bar: ${JSON.stringify(bar)}`);
+  assert.doesNotMatch(bar, /\bctx\b/, "the old jargon label must be gone");
 });
 
 // REGRESSION, seen live 2026-08-14: /usage said "26% used" while the bar said "session 100%" in

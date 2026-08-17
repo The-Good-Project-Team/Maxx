@@ -23,7 +23,7 @@
  *   --mode paced|spree     paced (default): hold to the per-window share.
  *                          spree: ignore pacing, spend until the weekly wall.
  *   --margin <pct>         paced only: allow spending <pct>% PAST the window share
- *                          (e.g. 25 → stop at 1.25× session_safe).
+ *                          (kept for config compatibility; pacing no longer denies).
  *   --weekly-stop <pct>    the hard reserve wall (default 99). Even spree stops at
  *                          this weekly %. Set 90 to always keep a 10% reserve.
  *   --fail open|closed     no fresh verdict: closed (default) denies, open allows.
@@ -125,7 +125,7 @@ if (args.includes("--status")) {
   console.log(JSON.stringify({
     gate: pol.enabled ? "ON" : "OFF", mode: pol.mode, margin_pct: pol.margin,
     weekly_stop_pct: pol.weeklyStop, fail_mode: pol.fail, overturn: gate.overturn || null,
-    verdict: b.verdict, week: b.week ?? null, session_safe: b.session_safe ?? null,
+    verdict: b.verdict, week: b.usage_week_pct ?? null, week_live: !!b.usage_week_live,
     session_to_spend: b.session_to_spend ?? null, five_billed: b.five_billed ?? null,
     tokens_again: b.tokens_again ?? null,
   }, null, 2));
@@ -304,40 +304,25 @@ if (b.verdict === "stale" || b.verdict === "unreachable") {
         `node ~/.claude/skills/maxx/gate.mjs --fail open`,
   );
 }
-// 2. the weekly wall — absolute, even in spree. ANTHROPIC's number when we have it
-// (usage_week_pct on a live window); `b.week` is coins against our own tank and is the
-// fallback only. Measured 2026-08-13: the tank read 100% for two accounts whose real weeks
-// were 100% and 82%, so gating on it denied work Anthropic was still serving.
+// 2. the weekly wall — absolute, even in spree, and ANTHROPIC's number or nothing. There is
+// no longer a fallback estimate to fall back TO: the tank that used to supply one read 100%
+// for two accounts whose real weeks were 100% and 82% (2026-08-13), denying work Anthropic
+// was still serving. No live reading = no wall to enforce = fall through.
 const realWeek = b.usage_week_live && b.usage_week_pct != null ? b.usage_week_pct : null;
-const weekFrac = realWeek ?? b.week;
-if (weekFrac != null && weekFrac * 100 >= pol.weeklyStop) {
+if (realWeek != null && realWeek * 100 >= pol.weeklyStop) {
   // a weekly wall only lifts at week_reset — the 5h refill doesn't lower week %
   const wh = b.week_reset_in_sec != null ? `${Math.round(b.week_reset_in_sec / 3600)}h` : "?";
-  deny(`weekly at ${Math.round(weekFrac * 100)}%${realWeek == null ? " (coin estimate — no live /usage anchor)" : ""} ` +
-       `≥ weekly_stop ${pol.weeklyStop}%. Tokens again: at week_reset (${wh})`);
+  deny(`weekly at ${Math.round(realWeek * 100)}% ≥ weekly_stop ${pol.weeklyStop}%. ` +
+       `Tokens again: at week_reset (${wh})`);
 }
 // 3. spree: pacing off, wall already checked
 if (pol.mode === "spree") allow("spree");
-// 4. paced (+ optional margin): the CLI roll-session governor is law — session_to_spend
-// rides the statusline anchor and is what the bar shows. Deny only when the standing is
-// gone (and past any margin slack). The session_safe × margin comparison against the
-// FIXED-window spend is the old-server fallback only: it disagrees with the rolling
-// standing (fixed spend never decays), which blocked agents while the bar said banked.
-const safe = b.session_safe;
-// A spent COIN standing no longer denies anything (Reif, 2026-08-13: "it's just a counter").
-// session_to_spend pins at 0 the moment an account passes our own configured weekly cap,
-// which was true of both fleet accounts while one still had 18% of its real week — and this
-// gate turned that into a refused tool call. Anthropic's walls above are the stop; below is
-// pacing advice, and pacing advice does not get to deny. With a live /usage anchor the coin
-// path is skipped entirely.
-if (realWeek != null) {
-  // real numbers available and under the wall — nothing here may block
-} else if (b.session_to_spend != null) {
-  // no live anchor: coins are the only signal there is, so they still pace (never deny)
-} else if (safe != null) {
-  const allowed = Math.round(safe * (1 + pol.margin / 100));
-  if ((b.five_billed || 0) >= allowed)
-    deny(`window spend ${b.five_billed} ≥ paced allowance ${allowed}` +
-         `${pol.margin ? ` (share ${safe} + ${pol.margin}% margin)` : ""}. Tokens again: ${b.tokens_again || "next 5h window"}`);
-}
-allow("under budget");
+// 4. pacing is ADVICE, and advice does not deny (Reif, 2026-08-13: "it's just a counter").
+// session_to_spend is now derived from Anthropic's own reading rather than a tank we set,
+// which makes it honest — but honest pacing still isn't a wall. Overspending a block borrows
+// from later blocks; only the checks above can stop a call, because only Anthropic can.
+allow(
+  b.session_to_spend != null && (b.five_billed || 0) > b.session_to_spend
+    ? `over paced share (${b.five_billed} spent vs ${b.session_to_spend} advised) — borrowing from later blocks`
+    : "under budget",
+);

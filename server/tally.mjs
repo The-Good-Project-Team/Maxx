@@ -22,13 +22,12 @@
 
 const FIVE_H = 5 * 3600;
 const WEEK = 7 * 24 * 3600;
-// Coin model: we set our OWN tank instead of reverse-engineering Anthropic's opaque
-// plan quota — an MPG meter, not a barrel count. One coin = one weighted (quota-pressure)
-// token from the ledger. Every account paces against the SAME tank, so standings are
-// directly comparable and the old `cap = ledger ÷ pct` low-% blow-up (which false-blocked
-// accounts at ~15% weekly) cannot happen. Anthropic's real % is kept only as a safety wall.
-export const COINS_MAX = 1e9;                               // the weekly tank, all accounts
-const FIVE_SUBCAP = Math.round((COINS_MAX * FIVE_H) / WEEK); // 5h even-pace share ≈ 29.76M
+// There is no tank. We used to set our own (COINS_MAX = 1e9 "coins") and pace against it;
+// every account outspent it and every field derived from it pinned dead — reif_tgp read
+// week=1.0 / session_to_spend=0 / coin_spree 0–0 on 2026-08-17 while Anthropic's real week
+// was at 96% and its 5h window at 1%. A counter that reads empty forever is worse than no
+// counter: fleets parse it as "no budget". So every limit here is now IMPLIED by Anthropic's
+// own reading — limit = our billed window ÷ their %, in our units, null when unanchored.
 export const ANCHOR_TRUST_SEC = 45 * 60; // matches the routines' staleness gate
 // Past ANCHOR_TRUST_SEC the anchor no longer describes the live 5h window, but the
 // weekly caps it calibrated move on a 7-day window — hours-old calibration still
@@ -286,26 +285,25 @@ export function computeBudget(store, now) {
   const wr = a?.week_reset || 0;
   let week = windowedBilled(store.events, now, WEEK, wr ? weekLoFor(wr, now) : undefined);
 
-  // ── Coin caps: fixed, not inferred ─────────────────────────────────────────
-  // The tank is a constant (COINS_MAX), same for every account. `five`/`week` are the
-  // ledger's own windowed coin sums (computed above) — the meter reading. pct = coins ÷
-  // tank. No `cap = ledger ÷ pct`, so a coarse low % can no longer blow the cap up or
-  // down. sl passthrough is gone: the server paces on coins, and limit.mjs computes the
-  // identical numbers from the same constant, so the CLI bars and the gate agree by
-  // construction (nothing to reconcile).
-  const fiveCap = FIVE_SUBCAP;
-  const weekCap = COINS_MAX;
-  const quota = Math.min(1, five / fiveCap);
-  const weekPct = Math.min(1, week / weekCap);
-  // Anthropic's real utilization is retained ONLY as a safety wall — the meter doesn't
-  // stop the car, the real gas tank does. Honored only while the anchor's window is still
-  // LIVE (fr/wr ahead of now); a stale anchor describing a dead, pre-reset window must
+  // ── Caps: implied by Anthropic, never configured ───────────────────────────
+  // limit = what WE billed in the window ÷ what THEY say that window is used. Their % is
+  // dimensionless, so the quotient lands back in our weighted units and the whole payload
+  // stays in one currency. Below 2% the divide is noise (a 1% reading off 40k tokens implies
+  // anything between 2M and 8M), so under 2% we decline to guess and ship null. Null = unknown, and
+  // unknown must never read as empty — that conflation is what the tank got wrong.
+  const impliedLimit = (billed, pct) => (pct != null && pct >= 0.02 && billed > 0 ? billed / pct : null);
+  const weekLimit = impliedLimit(week, a?.week_pct);
+  const fiveLimit = impliedLimit(five, a?.five_pct);
+  // Anthropic's real utilization is the only wall. Honored only while the anchor's window is
+  // still LIVE (fr/wr ahead of now); a stale anchor describing a dead, pre-reset window must
   // never re-block a fresh one (that was the 2026-07-23 reif_tgp false-over).
   const weekWallHit = a && a.week_pct >= 0.99 && wr > now;
   const fiveWallHit = a && a.five_pct >= 0.99 && fr > now;
-  const slOver = 0;
 
-  const weeklyLeft = weekCap != null ? Math.max(0, weekCap - week) : null;
+  const weeklyLeft = weekLimit != null ? Math.round(Math.max(0, weekLimit - week)) : null;
+  // room left in THIS 5h window before Anthropic's own wall — the hard ceiling you can
+  // physically spend to right now, as opposed to the paced share you SHOULD spend.
+  const fiveLeft = fiveLimit != null && fr > now ? Math.round(Math.max(0, fiveLimit - five)) : null;
   // The week bar's even-pace mark: bank = cap×elapsed − used, the same ruler the CLI prints
   // (maxx/pace.mjs). It went to a hardcoded null when the statusline passthrough was dropped,
   // which silently took the ╎ off the weekly bar while the legend went on promising it.
@@ -314,28 +312,24 @@ export function computeBudget(store, now) {
   const weekElapsed = wr > now && wr - now <= 8 * 24 * 3600
     ? Math.min(1, Math.max(0, 1 - (wr - now) / WEEK))
     : null;
-  const slBank = weekElapsed != null && weekCap != null ? Math.round(weekCap * weekElapsed - week) : null;
+  const slBank = weekElapsed != null && weekLimit != null ? Math.round(weekLimit * weekElapsed - week) : null;
   // The SESSION REMAINDER: the weekly coin headroom spread over the 5h windows left = a fair
   // share for this window. We SHOW it as-is and let routines pace against it — we do NOT clamp
   // it to our even-pace sub-cap or zero it out when a window front-loads. Over-pace is surfaced
   // by net_per_min (guidance); the only HARD stop is Anthropic's real wall. weeklyLeft already
   // nets cumulative spend, so this share naturally shrinks as the week fills — no separate 5h
   // subtraction, no self-inflicted zero while the tank still has coins.
-  const windowsLeft = wr ? Math.max(1, (wr - now) / FIVE_H) : 1;
-  // COIN-SPREE — how much you can safely blow THIS window. We set the weekly tank; the 5h window is
-  // Anthropic's and unknown to us, so we ESTIMATE its coin size from their own % (five ÷ five_pct)
-  // and quote a RANGE: 85–97% of that estimate, net of what's spent. Never 100% — leave headroom
-  // before the real wall. Trusted only above 2% (else the divide is noise → fall back to a band from
-  // the paced share up to the whole tank). Always clamped to the weekly tank; a hint, not a promise.
-  const estCap5h = a && a.five_pct > 0.02 && five > 0 ? five / a.five_pct : null;
+  const windowsLeft = wr && wr > now ? Math.max(1, (wr - now) / FIVE_H) : 1;
   const pacedShare = weeklyLeft != null ? Math.round(weeklyLeft / windowsLeft) : null;
-  const spreeAt = (frac, fallback) =>
-    weeklyLeft == null ? null : Math.max(0, Math.min(weeklyLeft, Math.round(estCap5h != null ? frac * estCap5h - five : fallback)));
-  const coinSpreeLow = spreeAt(0.85, pacedShare);   // fallback low = your paced share
-  const coinSpreeHigh = spreeAt(0.97, weeklyLeft);  // fallback high = the whole remaining tank
-  // the session remainder we pace against: the weekly share, never above the top of the spree band
-  const sessionSafe = weeklyLeft != null ? Math.min(pacedShare, coinSpreeHigh) : null;
+  // What you SHOULD spend this window: your paced share of what's left, but never more than
+  // the window physically holds (fiveLeft). Both terms are Anthropic-derived, so this stops
+  // being a promise about a tank and becomes a reading of the real remaining room. Null when
+  // there's no anchor to imply either — callers must treat null as unknown and proceed.
+  const sessionSafe = pacedShare == null ? null : fiveLeft == null ? pacedShare : Math.min(pacedShare, fiveLeft);
   const sessionToSpend = sessionSafe;
+  // over-pace: what this window has already spent past its fair share. Guidance, not a wall —
+  // borrowing from later blocks breaches nothing, it just shortens the week.
+  const slOver = pacedShare != null ? Math.max(0, Math.round(five - (weeklyLeft + five) / windowsLeft)) : 0;
 
   // #4 reservation leases: active leases subtract from the allowance other
   // callers see (the grantee tracks its own lease). Expired leases are ignored
@@ -347,7 +341,10 @@ export function computeBudget(store, now) {
   // "degraded" = no fresh /usage anchor, but the weekly standing is still computable
   // from our own ledger against the last known caps. Callers may proceed on it (weekly
   // wall and standing still apply); "stale" stays a hard stop — genuinely no signal.
-  const degradable = anchorAge <= ANCHOR_DEGRADE_SEC && weekCap != null && spendAfterReserve != null;
+  // Staleness is about the AGE of the reading, never about whether we could divide by it. An
+  // account 0.1% into its week has a perfectly live anchor and simply no implied limit yet;
+  // folding that into "stale" would fail closed on the healthiest possible account.
+  const degradable = anchorAge <= ANCHOR_DEGRADE_SEC;
   let verdict = "ok";
   // never-anchored ≠ stale: a fresh account has no caps YET (nobody opened a Claude
   // Code session), which is a setup state, not a dead signal. Callers still hard-stop
@@ -355,13 +352,11 @@ export function computeBudget(store, now) {
   if (!a) verdict = "calibrating";
   else if (!fresh && !degradable) verdict = "stale";
   // over = GENUINELY out, and ONLY Anthropic can say so: a real wall hit on a live window.
-  // The weekly coin tank (weekPct, our own configured cap) no longer votes. It is a counter,
-  // and a counter that can deny is a limit nobody agreed to — measured 2026-08-13, both fleet
-  // accounts read verdict=over from `weekPct >= 1` alone while Anthropic had them at 100% and
-  // 82% of the real week. The 82% account had 242M tokens it was not allowed to spend, and the
-  // fleet that reads this field opened zero PRs for 26 hours. Everything softer — a maxed 5h
-  // even-pace share (quota>=1), a spent tank, a held reserve — only THROTTLES session_to_spend
-  // so fan-outs back off; it must NOT hard-deny the account.
+  // Nothing we compute votes. That was the tank's sin — measured 2026-08-13, both fleet
+  // accounts read verdict=over from our own `week >= 1` alone while Anthropic had them at 100%
+  // and 82% of the real week. The 82% account had 242M tokens it was not allowed to spend, and
+  // the fleet reading this field opened zero PRs for 26 hours. Everything softer — an exhausted
+  // paced share, a held reserve — only THROTTLES session_to_spend so fan-outs back off.
   else if (weekWallHit || fiveWallHit) verdict = "over";
   else if (!fresh) verdict = "degraded";
 
@@ -395,8 +390,6 @@ export function computeBudget(store, now) {
   const netPerMinVal = sustainablePerMin != null
     ? Math.round(sustainablePerMin - burn5m / 5)
     : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : null);
-  // session_burst = the top of the coin-spree band (97% of the estimated 5h room).
-  const fiveHeadroom = coinSpreeHigh;
   // projected wall hit: trailing-6h burn extrapolated forward. 6h smooths the 5m spikes
   // a live session throws; a projection inside the current week window means "at this
   // pace you hit the wall EARLY" — the signal this week's postmortem never got.
@@ -433,15 +426,11 @@ export function computeBudget(store, now) {
   const resetIn = (t) => (t && t > now ? Math.round(t - now) : null);
 
   return {
-    quota, week: weekPct,
     // Anthropic's REAL /usage utilization, straight off the freshest anchor — the only
-    // numbers here that describe the actual subscription. `quota`/`week` above are coins
-    // ÷ our own fixed tank: a fleet that outspends the tank pins week at 1.0 and reads as
-    // "out" while the real weekly sits at 0% (lucky2, 2026-08-11: reif_tgp 1.377B coins on
-    // a 1e9 tank → gated:week all night with real quota untouched). Callers that hard-STOP
-    // an account must gate on these; the coin pcts pace, they do not prove emptiness.
-    // Null when never anchored; pair with anchor_age_sec (below) — an old anchor describes
-    // a possibly-dead window, so treat a stale reading as unknown, never as empty.
+    // numbers here that describe the actual subscription, and now the source every other
+    // number below is derived from. Null when never anchored; pair with anchor_age_sec
+    // (below) — an old anchor describes a possibly-dead window, so treat a stale reading
+    // as unknown, never as empty.
     usage_week_pct: a && a.week_pct != null ? a.week_pct : null,
     usage_five_pct: a && a.five_pct != null ? a.five_pct : null,
     // the anchor's own window ends — how to tell a live reading from one describing a
@@ -453,37 +442,34 @@ export function computeBudget(store, now) {
     // ---- the number an agent should actually pace against -------------------------------
     // Computed HERE, server-side, so every caller gets the same answer without re-deriving it
     // — three separate clients had already written three versions of this arithmetic, and two
-    // of them were wrong in the same direction (pacing off our own coin tank instead of
-    // Anthropic's window). block_share_pct is what THIS 5h block may spend as a percentage of
+    // of them were wrong in the same direction (pacing off our own tank instead of Anthropic's
+    // window). block_share_pct is what THIS 5h block may spend as a percentage of
     // the WEEK: what remains, divided by the 5h blocks left before the weekly reset.
     //
     // Why not "% of your 5h limit": that reads 100%-is-fine every block, because the 5h window
     // refills. Spend to it six blocks running and the week ends on Wednesday, with every
     // individual session inside its limits the whole way.
     ...blockShare(a, week, wr, five, now),
-    tokens_again:
-      (weekPct != null && weekPct >= 0.99)
-        ? `weekly cap — tokens at week_reset (${resetIn(wr) != null ? Math.round(resetIn(wr) / 3600) + "h" : "?"})`
-        : `next 5h window (${resetIn(fiveReset) != null ? Math.round(resetIn(fiveReset) / 60) + "m" : "?"}) refills session_to_spend`,
+    tokens_again: weekWallHit
+      ? `weekly cap — tokens at week_reset (${resetIn(wr) != null ? Math.round(resetIn(wr) / 3600) + "h" : "?"})`
+      : `next 5h window (${resetIn(fiveReset) != null ? Math.round(resetIn(fiveReset) / 60) + "m" : "?"}) refills session_to_spend`,
     weekly_left_tokens: weeklyLeft, session_to_spend: spendAfterReserve,
-    // absolute weekly ruler for charts: cap + used in the same units as weekly_left_tokens
-    week_cap_tokens: weekCap != null ? Math.round(weekCap) : null,
-    week_used_tokens: weekCap != null ? Math.round(week) : null,
+    // absolute weekly ruler for charts: the IMPLIED limit + used, same units as weekly_left_tokens
+    week_cap_tokens: weekLimit != null ? Math.round(weekLimit) : null,
+    week_used_tokens: Math.round(week),
     session_over: slOver,
     week_bank: slBank,
     // net_per_min = sustainable weekly pace − recent (5m) burn. + under pace / − over.
     // sustainable_per_min = weekly reserve ÷ minutes to week reset. session_burst = the
-    // hard 5h ceiling you can physically spend to now (≥ the paced session_to_spend).
+    // hard 5h ceiling Anthropic's own reading implies you can physically spend to now
+    // (≥ the paced session_to_spend, which is the share you should stop at).
     net_per_min: netPerMinVal,
     sustainable_per_min: sustainablePerMin != null ? Math.round(sustainablePerMin) : null,
     // trailing-6h burn per minute + where it lands: null = makes the week at this pace,
     // an epoch = projected wall hit BEFORE week_reset.
     burn_6h_per_min: Math.round(burn6h / 360),
     projected_wall_at: projectedWallAt,
-    session_burst: fiveHeadroom,
-    session_safe: sessionSafe,
-    // coin-spree: the safe spend band for THIS window — 85–97% of the estimated Anthropic 5h room.
-    coin_spree_low: coinSpreeLow, coin_spree_high: coinSpreeHigh,
+    session_burst: fiveLeft,
     reserved_tokens: reservedTokens, leases: activeLeases.length,
     burn_5m: burn5m, empties_at: emptiesAt,
     top_burners: topBurners,

@@ -23,13 +23,16 @@ function slowStore(inner, delayMs = 5) {
   };
 }
 
-// A healthy, freshly-anchored account: verdict ok, session_to_spend ≈ 59.5M
-// (weekly tank paced over the 16.8 five-hour windows left before the weekly reset).
+// A healthy, freshly-anchored account. The billed events matter: limits are IMPLIED from
+// Anthropic's % (50M billed at 10% ⇒ a 500M week), so an anchor with an empty ledger has
+// nothing to divide and yields a null allowance rather than a number. 50M at 5% ⇒ a 1B
+// week, ~950M left, paced over the 16.8 five-hour blocks to the reset ≈ 56.5M this block.
 async function seededStore() {
   const store = slowStore(createMemoryStore());
   await store.setSecret("acme", "k");
   const s = await store.load("acme");
-  s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 3.5 * 86400 });
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 50e6 });
+  s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.05, five_reset: T + 4 * H, week_reset: T + 3.5 * 86400 });
   await store.save("acme", s);
   return store;
 }
@@ -51,7 +54,7 @@ const httpReserve = (body) => ({
 test("concurrent reserves through the MCP body-handle path cannot double-grant", async () => {
   const store = await seededStore();
   const handler = createHandler({ store, now: () => T });
-  // Two dispatchers each want 40M of a ~59.5M allowance: only ONE grant can be honest.
+  // Two dispatchers each want 40M of a ~56.5M allowance: only ONE grant can be honest.
   // One arrives over MCP with the handle ONLY in the JSON-RPC body, the other over HTTP —
   // the body-handle transport used to lock on "_mcp" instead of the handle, so the two
   // requests held DIFFERENT locks, both read the pre-write doc, and both granted.
@@ -61,7 +64,7 @@ test("concurrent reserves through the MCP body-handle path cannot double-grant",
   ]);
   const grants = [mcpResult(res[0]), JSON.parse(res[1].body)].filter((r) => r.granted);
   assert.equal(grants.length, 1,
-    `a ~59.5M allowance granted ${grants.length} × 40M leases — concurrent dispatchers double-spent the same tokens`);
+    `a ~56.5M allowance granted ${grants.length} × 40M leases — concurrent dispatchers double-spent the same tokens`);
 });
 
 test("renew (reserve with your own lease_id) replaces the lease instead of stacking", async () => {

@@ -168,7 +168,7 @@ test("gate: a spent coin tank does not deny while Anthropic's week has room", as
     verdict: "ok", week: 1.0, quota: 1.0,                    // our tank: pinned, spent
     usage_week_live: true, usage_week_pct: 0.82,             // Anthropic: 18% of the week left
     usage_five_live: true, usage_five_pct: 0.26,
-    session_to_spend: 0, session_safe: 0, session_over: 5e6, five_billed: 95e6,
+    session_to_spend: 0, session_over: 5e6, five_billed: 95e6,
     fresh: true, anchor_age_sec: 30,
   });
   try {
@@ -182,7 +182,7 @@ test("gate: Anthropic's weekly wall still denies", async () => {
     verdict: "ok", week: 0.1,                                 // our tank: barely used
     usage_week_live: true, usage_week_pct: 0.97,              // Anthropic: at the wall
     usage_five_live: true, usage_five_pct: 0.2,
-    session_to_spend: 5e6, session_safe: 5e6, week_reset_in_sec: 7200,
+    session_to_spend: 5e6, week_reset_in_sec: 7200,
     fresh: true, anchor_age_sec: 30,
   });
   try {
@@ -193,15 +193,17 @@ test("gate: Anthropic's weekly wall still denies", async () => {
   } finally { srv.close(); }
 });
 
-test("gate: with no live anchor the coin number still walls, labelled as an estimate", async () => {
+test("gate: with no live Anthropic reading, nothing may wall the account", async () => {
+  // The old law let our own weekly standing deny when the real one was missing. It read 0.99
+  // for accounts whose real weeks were at 82%, so a blind pass became a refused tool call.
+  // Blind means UNKNOWN. Only a live /usage reading can close the gate.
   const srv = await budgetServer({
-    verdict: "ok", week: 0.99, usage_week_live: false,
-    session_to_spend: 1e6, session_safe: 1e6, week_reset_in_sec: 7200,
+    verdict: "ok", usage_week_pct: 0.99, usage_week_live: false,
+    session_to_spend: 1e6, week_reset_in_sec: 7200,
     fresh: true, anchor_age_sec: 30,
   });
   try {
     const reason = denial(await hook(makeHomeWithPolicy(), srv.url, { tool: "Task", session: "s-blind" }));
-    assert.ok(reason, "a blind pass must still respect the only number it has");
-    assert.match(reason, /coin estimate/);
+    assert.equal(reason, null, `a dead window must not wall a live account, got: ${reason}`);
   } finally { srv.close(); }
 });

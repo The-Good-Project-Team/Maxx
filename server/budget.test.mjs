@@ -3,10 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHandler } from "./handler.mjs";
-import { emptyStore, computeBudget, applyEnvelope, COINS_MAX, compact } from "./tally.mjs";
+import { emptyStore, computeBudget, applyEnvelope, compact } from "./tally.mjs";
 
 const T = 1_800_000_000, H = 3600;
-const FIVE_SUB = Math.round((COINS_MAX * 5 * H) / (7 * 24 * H)); // 5h even-pace share ≈ 29.76M
 
 test("five window is anchor-aligned: pre-reset burn does not carry over", () => {
   const s = emptyStore();
@@ -22,10 +21,10 @@ test("five window is anchor-aligned: pre-reset burn does not carry over", () => 
   assert.ok(Math.abs(b.five_billed / 0.1 - 80e6) < 1e5, `cap sane, got quota=${b.quota}`);
 });
 
-// Coin model: the counts ARE the ledger's own windowed sums, and the cap is the fixed
-// tank — an sl anchor's own numbers no longer override either (that inference was the
-// low-% blow-up). The CLI computes from the same constant, so they agree by construction.
-test("coin model: counts are the ledger's windowed sums, cap is the fixed tank", () => {
+// The counts ARE the ledger's own windowed sums, and the cap is IMPLIED by Anthropic's %
+// (ledger ÷ their pct) — an sl anchor's own cap numbers never override either. We tried a
+// fixed self-set tank in between; it pinned every account "empty" and is gone.
+test("counts are the ledger's windowed sums; the cap is implied by Anthropic's %", () => {
   const s = emptyStore();
   s.events.push(
     { surface: "laptop:a", root: "r1", ts: T - 2 * H, billed: 50e6 },   // in the week window, not the 5h one
@@ -38,21 +37,26 @@ test("coin model: counts are the ledger's windowed sums, cap is the fixed tank",
   const b = computeBudget(s, T);
   // five window began at five_reset − 5h = T−1h, so the T−2h event is out; only 2M is in it.
   assert.equal(b.five_billed, 2e6);
-  assert.equal(b.week_billed, 52e6);           // ledger sum, NOT the sl passthrough 122M
-  assert.equal(b.week_cap_tokens, COINS_MAX);  // fixed tank, NOT sl's 1300M
-  assert.equal(b.weekly_left_tokens, COINS_MAX - 52e6);
-  assert.ok(Math.abs(b.week - 52e6 / COINS_MAX) < 1e-9);
+  assert.equal(b.week_billed, 52e6);            // ledger sum, NOT the sl passthrough 122M
+  assert.equal(b.week_cap_tokens, 52e6 / 0.2);  // implied by THEIR 20%, NOT sl's 1300M
+  assert.equal(b.weekly_left_tokens, 52e6 / 0.2 - 52e6);
+  // the pcts we publish are Anthropic's own, not a ratio against something we invented
+  assert.equal(b.usage_week_pct, 0.2);
+  assert.equal(b.usage_five_pct, 0.1);
+  assert.equal(b.week, undefined, "no self-set weekly standing may ship — it read empty forever");
+  assert.equal(b.quota, undefined, "same for the 5h one");
 });
 
 // The week bar's ╎ mark is drawn from week_bank; a null bank silently erases it while the
 // legend keeps promising "╎ = even pace". Bank is the CLI's ruler: cap×elapsed − used.
 test("week_bank is the even-pace bank: cap×elapsed − used, + when under pace", () => {
   const s = emptyStore();
-  // 3 days into the week (resets in 4), so even pace would have spent 3/7 of the tank.
+  // 3 days into the week (resets in 4), so even pace would have spent 3/7 of the implied week.
   s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 100e6 });
   s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 4 * 86400 });
   const b = computeBudget(s, T);
-  const expected = COINS_MAX * (3 / 7) - 100e6;
+  const impliedCap = 100e6 / 0.1;                  // Anthropic says 10% used ⇒ a 1B-token week
+  const expected = impliedCap * (3 / 7) - 100e6;
   assert.ok(b.week_bank != null, "a live week reset must yield a bank — null erases the pace mark");
   assert.ok(Math.abs(b.week_bank - expected) < 1e6, `bank ${b.week_bank} ≉ ${expected}`);
   assert.ok(b.week_bank > 0, "spent 100M where even pace allows ~429M → banked, so positive");
@@ -62,7 +66,7 @@ test("week_bank goes negative once burn outruns the even-pace line", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 800e6 });
   s.anchors.push({ ts: T - 600, five_pct: 0.1, week_pct: 0.8, five_reset: T + 4 * H, week_reset: T + 4 * 86400 });
-  assert.ok(computeBudget(s, T).week_bank < 0, "800M spent against a ~429M even-pace line is over pace");
+  assert.ok(computeBudget(s, T).week_bank < 0, "800M at 80% ⇒ a 1B week; 3/7 of it is ~429M, so this is over pace");
 });
 
 // A sentinel reset (seen live: resets_at = 9999999999) collapses elapsed toward 0, which
@@ -97,7 +101,7 @@ test("net_per_min = sustainable weekly pace − recent burn (the pace model)", (
   assert.equal(b.net_per_min, Math.round(sustainable - b.burn_5m / 5));
 });
 
-test("coin-spree = 85–97% of the estimated Anthropic 5h room; burst is the top of the band", () => {
+test("session_burst is the real room left in Anthropic's 5h window", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r2", ts: T - 100, billed: 1.5e6 });
   s.anchors.push({
@@ -106,20 +110,22 @@ test("coin-spree = 85–97% of the estimated Anthropic 5h room; burst is the top
   });
   const b = computeBudget(s, T);
   assert.equal(b.five_billed, 1.5e6);
-  const estCap = 1.5e6 / 0.1;                                          // 15M implied 5h capacity
-  assert.equal(b.coin_spree_low, Math.round(0.85 * estCap - 1.5e6));   // 11.25M — floor of the band
-  assert.equal(b.coin_spree_high, Math.round(0.97 * estCap - 1.5e6));  // 13.05M — never 100%
-  assert.equal(b.session_burst, b.coin_spree_high, "burst is the top of the spree");
-  assert.ok(b.coin_spree_low < b.coin_spree_high, "it's a range");
-  assert.ok(b.session_to_spend <= b.session_burst, "the remainder is never above the spree top");
+  const fiveCap = 1.5e6 / 0.1;                    // 15M implied 5h capacity
+  assert.equal(b.session_burst, fiveCap - 1.5e6); // 13.5M physically left before their wall
+  assert.equal(b.coin_spree_low, undefined, "the 85–97% band was a hedge around a tank we invented");
+  assert.equal(b.coin_spree_high, undefined);
+  assert.ok(b.session_to_spend <= b.session_burst, "the paced share never exceeds the real room");
 });
 
-test("a low 5h % is too noisy to divide — burst falls back to the whole remaining tank", () => {
+test("a low 5h % is too noisy to divide — burst is null, which means UNKNOWN, not empty", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r1", ts: T - 100, billed: 5e6 });
   s.anchors.push({ ts: T - 60, five_pct: 0.01, week_pct: 0.1, five_reset: T + 4 * H, week_reset: T + 6 * 86400 });
   const b = computeBudget(s, T);
-  assert.equal(b.session_burst, COINS_MAX - 5e6, "≤2% 5h ⇒ no estimate; burst = remaining tank");
+  assert.equal(b.session_burst, null, "≤2% is noise; null says so. 0 would read as a wall.");
+  assert.notEqual(b.session_burst, 0);
+  // the weekly side still divides fine, so pacing survives a noisy 5h reading
+  assert.equal(b.weekly_left_tokens, 5e6 / 0.1 - 5e6);
 });
 
 // A sleeping laptop is the only thing that stops /usage anchors — it must not blind the
@@ -263,8 +269,10 @@ test("a 2.7h-old anchor with a tiny week_pct degrades, it does not go stale", ()
   s.anchors.push({ ts: T - 9613, five_pct: 0.001, week_pct: 0.001, five_reset: T + 2 * H, week_reset: T + 3 * 86400, sl: SL });
   const b = computeBudget(s, T);
   assert.equal(b.verdict, "degraded", `expected degraded, got ${b.verdict}`);
-  assert.ok(b.weekly_left_tokens > 0, `weekly standing must survive, got ${b.weekly_left_tokens}`);
-  assert.ok(b.session_to_spend != null, "session_to_spend must be computable from the weekly wall");
+  // 0.1% is far too small to divide by, so there is no implied limit — but that is UNKNOWN,
+  // and unknown must read as null. A 0 here is what stops a fleet on a barely-touched week.
+  assert.equal(b.session_to_spend, null, "no divisible reading ⇒ null");
+  assert.notEqual(b.session_to_spend, 0, "and never 0 — that is the number consumers gate on");
 });
 
 test("an anchor older than the 12h degrade window is still stale", () => {
@@ -286,11 +294,11 @@ test("a fresh anchor is unaffected and still reads ok", () => {
   assert.ok(b.session_to_spend > 0);
 });
 
-// THE FIX, on real numbers: reif_tgp on 2026-07-24 sat at 15% of its week per Anthropic,
-// having burned ~61.5M coins. The OLD code inferred cap = 61.5M ÷ 0.15 ≈ 408M, paced that
-// tiny cap to session_to_spend 0, and returned "over" — hard-blocking its 6 live cloud
-// routines at 15% weekly usage. A fixed tank makes 61.5M of 1B plainly fine.
-test("reif_tgp false-over dissolves under the coin tank (over → ok)", () => {
+// reif_tgp on 2026-07-24 sat at 15% of its week per Anthropic, having burned ~61.5M. It read
+// "over" and hard-blocked 6 live cloud routines. The cause was never the inference — 61.5M ÷
+// 0.15 ≈ 410M is a fine estimate — it was that a PACING number was allowed to deny. Only
+// Anthropic's own wall votes on the verdict now, so 15% reads ok whatever the estimate says.
+test("reif_tgp false-over stays dissolved: a paced number cannot deny (over → ok)", () => {
   const s = emptyStore();
   const wr = T + 147 * H, fr = T + 4 * H;      // ~147h to weekly reset, ~4h to 5h reset
   s.events.push(
@@ -305,7 +313,7 @@ test("reif_tgp false-over dissolves under the coin tank (over → ok)", () => {
   const b = computeBudget(s, T);
   assert.equal(b.verdict, "ok", `15%-used account must not read over, got ${b.verdict}`);
   assert.ok(b.session_to_spend > 0, `fleet has allowance, got ${b.session_to_spend}`);
-  assert.equal(b.week_cap_tokens, COINS_MAX);
+  assert.equal(b.week_cap_tokens, Math.round(61.5e6 / 0.15), "implied from their 15%");
   assert.equal(b.week_used_tokens, 61.5e6);
 });
 
@@ -336,7 +344,7 @@ test("a held reserve throttles to_spend but does not flip the verdict", () => {
 // Front-loading one 5h window past its even-pace coin share must not hard-block the account
 // when the WEEK is healthy and Anthropic's real wall is nowhere near. reif_tgp maxed its 29.76M
 // 5h share with 815M week left + real 5h at 2% and hard-skipped a QA run — that was the bug.
-test("maxing the 5h even-pace share throttles to_spend but does not flip the verdict", () => {
+test("front-loading one window throttles to_spend but does not flip the verdict", () => {
   const s = emptyStore();
   const wr = T + 2 * 86400, fr = T + 3 * H;
   s.events.push(
@@ -345,10 +353,23 @@ test("maxing the 5h even-pace share throttles to_spend but does not flip the ver
   );
   s.anchors.push({ ts: T - 60, five_pct: 0.02, week_pct: 0.18, five_reset: fr, week_reset: wr });
   const b = computeBudget(s, T);
-  assert.equal(b.quota, 1, "the 5h coin sub-cap is maxed");
   assert.equal(b.verdict, "ok", `healthy week + maxed 5h share must not read over, got ${b.verdict}`);
   // the remainder is SHOWN, not zeroed by a front-loaded window — routines pace against it, Anthropic limits
   assert.ok(b.session_to_spend > 0, `remainder must stay positive with 800M+ left, got ${b.session_to_spend}`);
+});
+
+// session_over is the over-pace mark: what this window spent past its fair share of what's
+// left. It is GUIDANCE — borrowing from later blocks shortens the week, it breaches nothing —
+// so it must be visible without ever touching the verdict.
+test("session_over reports spending past this block's fair share, and still reads ok", () => {
+  const s = emptyStore();
+  const wr = T + 4 * 86400;                                    // ~19.2 blocks left in the week
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 90e6 });
+  s.anchors.push({ ts: T - 60, five_pct: 0.3, week_pct: 0.5, five_reset: T + 4 * H, week_reset: wr });
+  const b = computeBudget(s, T);
+  // 90M at 50% ⇒ a 180M week, 90M left, spread over 19.2 blocks ≈ 9.4M each. This one spent 90M.
+  assert.ok(b.session_over > 70e6, `expected a large over-pace mark, got ${b.session_over}`);
+  assert.equal(b.verdict, "ok", "over-pace is advice; only Anthropic's wall can say over");
 });
 
 // A CAP is a capacity; a READING is not. The 5h path already refuses an anchor whose
@@ -375,10 +396,10 @@ test("week reset while anchor is stale: pre-reset week_used does not carry over"
   assert.ok(b.session_to_spend > 0, `expected headroom, got ${b.session_to_spend}`);
 });
 
-// The cap is the fixed coin tank — no anchor (sl or probe) resizes it, so there is nothing
-// for the CLI and server to disagree ON. This subsumes the whole class of "cap re-derived
-// to a different number" bugs: a low % simply can't move a constant.
-test("the cap is the fixed tank — sl and probe anchors never resize it", () => {
+// The cap is implied from Anthropic's %, so an anchor that repeats the SAME % must produce the
+// SAME cap — a probe (pct only, no sl block) cannot move it. That is what keeps the CLI and the
+// server on one ruler without a constant to agree on.
+test("the implied cap is stable across anchors carrying the same %", () => {
   const s = emptyStore();
   const wr = T + 3 * 86400;
   // 60M burned this week — the ledger the OLD code divided by a coarse 9% to get a tiny cap
@@ -388,27 +409,29 @@ test("the cap is the fixed tank — sl and probe anchors never resize it", () =>
     sl: { five_used: 5e6, five_cap: 130e6, to_spend: 20e6, over: 0, week_used: 60e6, week_cap: 670e6 },
   });
   const before = computeBudget(s, T);
-  assert.equal(before.week_cap_tokens, COINS_MAX, "cap is the tank, not sl's 670M");
+  // 60M ÷ 9% ≈ 667M — within a rounding of sl's own 670M, because both read the same wall
+  assert.equal(before.week_cap_tokens, Math.round(60e6 / 0.09));
   // a probe lands 20 min later — pct only, NO sl (server/probe.mjs shape)
   s.anchors.push({ ts: T + 1200, five_pct: 0.05, week_pct: 0.09, five_reset: T + 3 * H, week_reset: wr, sl: null, src: "probe" });
   const after = computeBudget(s, T + 1200);
-  assert.equal(after.week_cap_tokens, COINS_MAX, "still the tank — a probe cannot re-derive a cap");
-  assert.equal(after.weekly_left_tokens, COINS_MAX - 60e6, "left = tank − ledger, stable across anchors");
+  assert.equal(after.week_cap_tokens, before.week_cap_tokens, "same % ⇒ same cap; a probe cannot move it");
+  assert.equal(after.weekly_left_tokens, before.weekly_left_tokens, "so the standing is stable too");
 });
 
-// The coin pcts are OUR tank; the /usage pcts are Anthropic's. A fleet that outspends the
-// tank pins `week` at 1.0 while the real subscription is untouched — lucky2 2026-08-11:
-// reif_tgp held 1.377B coins against the 1e9 tank and every account_pool pass read
-// "gated:week" all night with the real weekly at 0%. A caller that hard-stops an account
-// needs the real reading, and until now the payload simply did not carry it.
-test("the payload carries Anthropic's real /usage pcts, distinct from the coin tank", () => {
+// lucky2, 2026-08-11: reif_tgp had billed 1.377B against a 1e9 tank, so `week` pinned at 1.0
+// and every account_pool pass read "gated:week" all night with the real weekly at 2%. Nothing
+// in the payload may impose a ceiling of its own — the ledger can be any size, and the only
+// reading that means anything is Anthropic's.
+test("a ledger far past any invented ceiling still reads healthy on the real numbers", () => {
   const s = emptyStore();
   const wr = T + 3 * 86400;
   s.events.push({ surface: "lucky2:m", root: "r1", ts: T - 3600, billed: 1_377_368_673 });
   s.anchors.push({ ts: T - 600, five_pct: 0.03, week_pct: 0.02, five_reset: T + 2 * H, week_reset: wr });
   const b = computeBudget(s, T);
-  assert.equal(b.week, 1, "coins ÷ tank pins at 1 — the fiction that gated the fleet");
+  assert.equal(b.week, undefined, "no self-set standing ships at all — that was the fiction");
   assert.equal(b.usage_week_pct, 0.02, "the real weekly is 2%, and must be readable");
+  assert.equal(b.verdict, "ok", "1.377B billed is not a wall; 2% of the real week is the truth");
+  assert.ok(b.session_to_spend > 0, `the fleet must have allowance, got ${b.session_to_spend}`);
   assert.equal(b.usage_five_pct, 0.03);
   assert.equal(b.usage_week_live, true, "week_reset is ahead of now → a live reading");
   assert.equal(b.usage_five_live, true);

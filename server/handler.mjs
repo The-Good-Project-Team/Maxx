@@ -48,7 +48,7 @@ const TOOLS = [
   },
   {
     name: "maxx_budget",
-    description: "Read this account's live token budget from the central maxx tally. THE RULE: maxx COUNTS, Anthropic LIMITS. Nothing in this payload can deny you work — the only things that stop a call are Anthropic's own 5h and weekly windows, and they enforce themselves by rejecting it. Pace against block_share_pct: the percentage of your WEEK that THIS 5h block may spend (what remains of the week ÷ the 5h blocks left in it), paired with block_used_pct, what it has spent, on the same denominator so the two compare. Going past your share is fine — it borrows from later blocks and breaches nothing; on_pace says which side you are on, blocks_left_week says how many blocks remain. Do NOT pace against '% of the 5h limit': that reads 100%-is-fine every block because the 5h window refills, and six of those in a row ends the week on Wednesday with every session 'within limits'. usage_week_pct / usage_five_pct are Anthropic's REAL /usage utilization (0..1, null when never anchored; usage_week_live / usage_five_live say the anchored window has not reset yet) — these are the ONLY hard stops. verdict is ok / degraded (no fresh /usage anchor, weekly ledger still governs, proceed) / over (a real Anthropic wall) / stale / calibrating (never anchored — set up first). The coin fields (week, quota, session_to_spend, session_burst, coin_spree_*) are maxx's own counters against a configured tank; they pace and they are a fallback when there is no live anchor, they do not prove emptiness — on 2026-08-13 they read empty for two accounts holding 100% and 82% of their real weeks. If a read fails, PROCEED: an unreadable meter is not an exhausted account, and treating those as the same thing cost a fleet 26 hours. Full model: GET /api/model.",
+    description: "Read this account's live token budget from the central maxx tally. THE RULE: maxx COUNTS, Anthropic LIMITS. Nothing in this payload can deny you work — the only things that stop a call are Anthropic's own 5h and weekly windows, and they enforce themselves by rejecting it. Pace against block_share_pct: the percentage of your WEEK that THIS 5h block may spend (what remains of the week ÷ the 5h blocks left in it), paired with block_used_pct, what it has spent, on the same denominator so the two compare. Going past your share is fine — it borrows from later blocks and breaches nothing; on_pace says which side you are on, blocks_left_week says how many blocks remain. Do NOT pace against '% of the 5h limit': that reads 100%-is-fine every block because the 5h window refills, and six of those in a row ends the week on Wednesday with every session 'within limits'. usage_week_pct / usage_five_pct are Anthropic's REAL /usage utilization (0..1, null when never anchored; usage_week_live / usage_five_live say the anchored window has not reset yet) — these are the ONLY hard stops. verdict is ok / degraded (no fresh /usage anchor, weekly ledger still governs, proceed) / over (a real Anthropic wall) / stale / calibrating (never anchored — set up first). Every token figure here (weekly_left_tokens, session_to_spend, session_burst, week_cap_tokens, week_bank) is DERIVED from those readings — limit = what we billed in the window ÷ their %, so the units are ours and the ceiling is theirs. maxx used to pace against a tank it set itself; every account outspent it and those fields pinned at 0 forever while the real weeks were untouched, so the tank is gone. They are null, never 0, when there is no reading to derive from: null means UNKNOWN, so proceed and re-check. If a read fails, PROCEED: an unreadable meter is not an exhausted account, and treating those as the same thing cost a fleet 26 hours. Full model: GET /api/model.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: { handle: { type: "string" } },
@@ -226,7 +226,8 @@ function renderCard(h, s, b, setup = null) {
   // bars data (initial paint; live.json tick keeps it current). Stale/calibrating
   // honesty markers ride in the bar text — same semantics the old rows carried.
   const bars0 = JSON.stringify({
-    five_billed: b.five_billed, available: b.session_to_spend, week: b.week, quota: b.quota,
+    five_billed: b.five_billed, available: b.session_to_spend,
+    week: b.usage_week_pct, quota: b.usage_five_pct,
     weekly_left: b.weekly_left_tokens, session_over: b.session_over, burn_5m: b.burn_5m,
     week_billed: b.week_billed, week_bank: b.week_bank, net_per_min: b.net_per_min,
     week_reset_in_sec: b.week_reset_in_sec, fresh: b.fresh, anchor_age_sec: b.anchor_age_sec,
@@ -440,7 +441,9 @@ ${CHART_JS}
     // numbers on this card are still real. Say which one it actually is.
     var vw=d.verdict==='degraded'?'degraded':'stale';
     var stale=!d.fresh?(d.anchor_age_sec!=null?' · '+vw+' · anchored '+ago(d.anchor_age_sec)+' ago':' · '+vw):'';
-    var calib=d.week!=null&&d.week<0.05?' · calibrating':'';
+    // calibrating = no /usage reading to derive from. A real 3% week is a LIVE 3%, not a
+    // warm-up — only a missing reading means the numbers aren't ready yet.
+    var calib=d.week==null?' · calibrating':'';
     // net = sustainable weekly pace − burn (server-computed, one ruler with dash/statusline)
     var prog=d.net_per_min!=null?d.net_per_min:0,up=prog>=0;
     var avail=d.available!=null?d.available:0,over=d.session_over||0,banked=avail>0;
@@ -1299,7 +1302,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
       (b.week_reset_in_sec!=null?' · '+ago(b.week_reset_in_sec):'');
     // session spec: standing vs realMax (green), over vs room-to-lockout (red)
     var realMax=(b.five_billed||0)+(b.session_to_spend||0)-(b.session_over||0);
-    var fiveCap=b.quota>0?(b.five_billed||0)/b.quota:null;
+    var fiveCap=b.usage_five_pct>0?(b.five_billed||0)/b.usage_five_pct:null;
     var overRoom=fiveCap&&fiveCap>realMax?fiveCap-realMax:Math.max(realMax,1);
     var sSpec={green:realMax>0?toSpend/realMax:0,red:over/overRoom,col:'green'};
     // week spec: fuel left, pace tick from the shipped bank ((left − bank) ÷ cap), CLI colors
@@ -1326,10 +1329,10 @@ if(location.search)history.replaceState(null,'',location.pathname);
     var runV=document.getElementById('runV'),runSub=document.getElementById('runSub');
     if(banked){
       runV.textContent='+'+hum(toSpend);runV.style.color='var(--ink)';
-      runSub.textContent='safe to spend'+(b.session_burst!=null?' · coin-spree '+hum(b.coin_spree_low)+'–'+hum(b.coin_spree_high):'');
+      runSub.textContent='safe to spend'+(b.session_burst!=null?' · burst to '+hum(b.session_burst):'');
     }else{
       runV.textContent=over>0?'−'+hum(over):'0';runV.style.color='var(--red)';
-      runSub.textContent='over pace'+(b.session_burst!=null?' · coin-spree '+hum(b.coin_spree_low)+'–'+hum(b.coin_spree_high):'');
+      runSub.textContent='over pace'+(b.session_burst!=null?' · burst to '+hum(b.session_burst):'');
     }
     // SURFACES: how many machines and cloud agents are pouring into this one tally — the
     // count IS the product claim, and it is the one number no per-machine /usage can show.
@@ -1754,13 +1757,17 @@ never anchored). Pair each with \`usage_week_live\` / \`usage_five_live\` — an
 has already reset describes a window that no longer exists. \`verdict\` is \`over\` only when one of
 those real walls is hit.
 
-## The coin fields are counters
+## Every token figure is derived, never configured
 
-\`week\`, \`quota\`, \`session_to_spend\`, \`session_burst\`, \`coin_spree_*\` are maxx's own tally
-against a configured tank. They pace, and they are the fallback when there is no live anchor.
-They do not prove emptiness. On 2026-08-13 they read empty for two accounts holding 100% and
-82% of their real Anthropic weeks, and every consumer stopped: a fleet opened zero PRs for 26
-hours over a number maxx invented.
+\`weekly_left_tokens\`, \`session_to_spend\`, \`session_burst\`, \`week_cap_tokens\` and \`week_bank\`
+come from ONE identity: \`limit = billed_in_window ÷ their_pct\`. Our ledger supplies the numerator,
+Anthropic's reading supplies the ceiling, and the quotient lands back in our weighted units.
+Below a 2% reading the divide is noise, so they ship \`null\`.
+
+\`null\` means UNKNOWN — proceed and re-check. It never means empty. maxx used to pace against a
+1e9 "coin" tank it set for itself; every account outspent it, and on 2026-08-17 reif_tgp read
+\`session_to_spend 0\` against a real 5h window at 1%. A counter that reads empty forever is worse
+than no counter, because fleets parse it as no budget. The tank is gone.
 
 ## If you cannot read the meter, PROCEED
 

@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { plausibleReset } from "./pace.mjs";
 import { sessionShare } from "./session.mjs";
-import { weighUsage, COINS_MAX, COINS_FIVE } from "./limit.mjs";
+import { weighUsage } from "./limit.mjs";
 
 // ─── color: one HSL→hex + an rgb→hsl round-trip for shading ────────────────────
 function hsl2hex(h, s, l) {
@@ -671,11 +671,12 @@ function main() {
     }
     return prevCap || brainCap || 0; // below the 2% floor (or no stdin) → keep the last good cap
   };
-  // Coin model (mirrors limit.mjs / server tally): the cap is a FIXED tank, not `tok ÷ pct`.
-  // No inference to smooth or cache — a coarse low % can't blow it up, and every surface reads
-  // the same ruler. The 5h bar paces an even share of the weekly tank.
-  const cap5s = COINS_FIVE;
-  const cap7s = COINS_MAX;
+  // The cap is INFERRED from Anthropic's own wall %: tok ÷ pct, EMA-smoothed and cached above.
+  // We tried a fixed self-set tank instead; every account outspent it, so the bars pinned full
+  // while /usage sat at 1%. An estimate that tracks the real wall beats an exact count of a
+  // quantity nobody enforces.
+  const cap5s = anchorCap(haveQuota, quota, tok5, caps.q5, caps.cap5, cap5);
+  const cap7s = anchorCap(haveWeek, week, tok7, caps.q7, caps.cap7, cap7);
   // did the cap just re-anchor (first anchor OR the wall % ticked ≥0.5pt)? If so we re-snapshot the
   // bucket sum as the new "anchor tok" — the live delta below is measured from there, so it resets to
   // ~0 at every tick and can never accumulate into the old 2× drift.
@@ -702,15 +703,8 @@ function main() {
   // you idle). Falls back to the fixed-block pinned value when buckets are missing. Weekly stays PINNED to
   // Anthropic's seven_day % (the weekly bar must match /usage). Both in the same (maxx) token units as the
   // caps, so the fuel fractions below are honest ratios even though the absolute magnitudes are estimates.
-  // Coin model: used = the LEDGER coin count (our own burn), NOT pct×cap. The gauge measures
-  // what we spent against the fixed tank, so the bars can diverge from Anthropic's % — the point.
-  const used5 = tok5roll != null ? Math.round(tok5roll) : Math.round(tok5 || 0);
-  // Week USED is anchored to Anthropic's own 7d % (robust — it arrives on stdin every render and
-  // never collapses), scaled to the coin tank. The local bucket sum (tok7) is a FALLBACK for when
-  // there's no live %: it can transiently read ~0 (account switch, first render, mid-rewrite of
-  // window.json), which used to snap the week bar to "just started" mid-week. Pinning to the % also
-  // makes the bar match /usage exactly.
-  const used7 = haveWeek ? Math.round(week * cap7s) : Math.round(tok7 || 0);
+  const used5 = tok5roll != null ? Math.round(tok5roll) : liveUsed(haveQuota, quota, cap5s, tok5, tok5a);
+  const used7 = liveUsed(haveWeek, week, cap7s, tok7, tok7a);
   // ROLL-SESSION — one sentence: weekly tokens LEFT ÷ the 5h windows left this week = tokens good to use
   // this session. Spend up to it and the week lasts; max Anthropic's raw 5h wall instead and you're out in
   // days. It BANKS: it's LIVE, so as you spend, weekly-left drops and it ticks down (~1:1); when you go
@@ -900,7 +894,7 @@ function main() {
   // line you are being told not to pass, the relationship is in the slash and the verdict is in
   // the colour. Nobody has to be told which number is which twice.
   //
-  //   ctx 26/35%     under the line — plain ink
+  //   chat 26/35%    under the line — plain ink
   //   session 34/22% past it        — amber (bold, on the session only)
   //   week 96/17%    at the wall    — red, and a squiggle under it
   //
@@ -949,7 +943,7 @@ function main() {
   if (who) put(0, 0, link(`https://meetmaxx.co/u/${who.slice(1)}/dash`, fg(BRAND, who)));
   put(0, 6, faint(DIM, fam.toLowerCase()));
 
-  // ── ctx — the first wall, and the only one whose reset you own ──
+  // ── chat — the first wall, and the only one whose reset you own ──
   // The hard wall is auto-compact: it fires mid-task, costs a full re-read, and picks its own cut.
   // The line is where to hand off deliberately instead (/fenix, or /compact at a clean stop), and
   // it is whichever of two arrives first — the same pair of thresholds this codebase already used:
@@ -959,7 +953,11 @@ function main() {
   const ctxUsed = Math.round(ctxPct);
   const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
   if (ctxUsed > 0) {
-    put(1, 0, pair("ctx", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
+    // "chat", not "ctx" — the other three walls are named after the THING being spent (session,
+    // week), and this one is the conversation you are in. "ctx" is jargon for the same noun; it
+    // told you the unit, not what runs out. Costs one cell, and the turn count beside it now reads
+    // as what it is: how many turns this chat has taken.
+    put(1, 0, pair("chat", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
     // every wall ends with the thing it is measured against: the chat has turns, the session has
     // a clock, the week has days. Same slot, same voice, so the three read as one grammar.
     const turns = turnCount(p.transcript_path, sid, total);
