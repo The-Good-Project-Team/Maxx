@@ -104,13 +104,26 @@ when the laptop sleeps.
 
 ```jsonc
 {
-  "quota": 0..1, "week": 0..1,           // 5h + weekly utilization (anchored)
+  // PERCENTAGES ONLY — no token count is published. Anthropic's reading is the one
+  // number that is not an estimate, so everything is expressed against it.
+  "usage_week_pct": 0..1, "usage_five_pct": 0..1,   // their real utilization, null unanchored
+  "usage_week_live": bool, "usage_five_live": bool, // is the anchored window still current
   "five_reset": <epoch>, "week_reset": <epoch>,
-  "weekly_left_tokens": int, "session_to_spend": int,
-  "verdict": "ok" | "over" | "stale",
+  "block_share_pct": float, "block_used_pct": float, "on_pace": bool,
+  "blocks_left_week": int,
+  "week_elapsed_pct": float, "week_bank_pct": float,        // clock vs spend, + = ahead
+  "burn_pct_per_hour": float, "sustainable_pct_per_hour": float,
+  "projected_wall_at": <epoch>|null,
+  "reserved_pct": float, "leases": int,
+  "verdict": "ok" | "degraded" | "over" | "stale" | "calibrating",
   "fresh": bool,                         // anchor within trust window
   "anchor_age_sec": int, "stored_at": "<ISO>",
-  "surfaces": [ { "surface": "...", "last_seen": "<ISO>", "billed_5h": int } ]
+  // the odometer — proof every surface is counted. NOT a budget reading.
+  "lifetime_billed": int, "burn_5m": int,
+  "surfaces":    [ { "surface": "...", "week_pct": float, "five_pct": float } ],
+  "top_burners": [ { "surface": "...", "session": "...", "project": "...", "name": "...",
+                     "week_pct": float, "five_pct": float,
+                     "cost_index": float } ]   // tokens/action vs this account's median
 }
 ```
 

@@ -81,11 +81,11 @@ Reads only token/usage metadata — never prompt or message content.
 
    Do NOT pace off "% of my 5h limit" (`RAW_5H_*`, `burst`): that reads 100%-is-fine
    every window because the window refills, and six of those in a row ends the week on
-   Wednesday with every session "within limits". Do NOT treat the coin fields (`toSpend`,
-   `session_to_spend`, `week`, `quota`) as proof of emptiness — they are maxx's own tally
-   against a configured tank, they pace, and they are the fallback when there is no live
-   /usage anchor. On 2026-08-13 they read empty for two accounts holding 100% and 82% of
-   their real Anthropic weeks.
+   Wednesday with every session "within limits". The payload carries NO token counts — every
+   figure is a percent of the week, because our ledger is cache-weighted and never agreed
+   with Anthropic's billing. maxx used to publish counts against a tank it set for itself;
+   on 2026-08-13 those read empty for two accounts holding 100% and 82% of their real
+   Anthropic weeks, and the fleet that believed them opened zero PRs for 26 hours.
 
    Full model, agent-readable, no auth: `GET https://api.meetmaxx.co/api/model`.
 

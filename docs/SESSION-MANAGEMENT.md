@@ -11,7 +11,10 @@ Every Claude surface — each laptop, each VM, each cloud routine — ships toke
 central tally. A **surface** is one machine or one cloud agent; a **session** is one
 conversation on it. The tally holds the whole account's ledger, so the question "can I afford
 to fan out right now" has a single answer for the fleet instead of one answer per machine.
-The budget is a fixed weekly tank of coins, paced across the 5h windows left in the week.
+The budget is Anthropic's own weekly reading, paced across the 5h blocks left in the week.
+Every figure the tally publishes is a PERCENT of that week — it holds token counts internally
+to apportion them, but never ships one, because our ledger is cache-weighted and does not
+match what Anthropic bills.
 
 The critical asymmetry: **a session's cost is not its output.** Every turn re-bills the entire
 context. A 600k-context session pays 600k before it does any work, so an idle-looking session
@@ -22,11 +25,14 @@ one fact.
 
 ### 1. Gate — before you spend
 
-Call `maxx_budget` before any fan-out. Plan against `session_to_spend` (the paced, safe
-envelope). `session_burst` is the hard 5h ceiling — using it eats future weeks.
+Call `maxx_budget` before any fan-out. Pace against `block_share_pct` — what THIS 5h block
+may spend as a percentage of your week — paired with `block_used_pct`, what it has spent, on
+the same denominator. `on_pace` says which side you are on. Going past your share borrows from
+later blocks and breaches nothing; only Anthropic's own wall stops a call.
 
-Watch `net_per_min`: sustainable pace minus recent burn. Negative means you are spending
-faster than the week can sustain, so re-check *between* expensive steps, not once at the top.
+Watch `burn_pct_per_hour` against `sustainable_pct_per_hour`. Burning above sustainable means
+the week ends early, and `projected_wall_at` says when — so re-check *between* expensive steps,
+not once at the top.
 
 The four verdicts (`ok` / `degraded` / `over` / `stale`) are the server's policy — read them,
 never re-derive your own staleness rule. See `server/CONNECTOR.md`.
@@ -63,7 +69,7 @@ The lease has a lifecycle, not just a grant:
   its own `lease_id`* — the old lease is replaced (resize/extend), and the old hold does
   not count against the new grant.
 - **Bounds.** 100 active leases per handle; total held tokens are capped by the allowance
-  itself. A lease throttles `session_to_spend` but never flips the verdict to `over`.
+  itself. A lease shows up as `reserved_pct` but never flips the verdict to `over`.
 
 ### 3. Steer — while they run
 
@@ -150,7 +156,7 @@ addressed, and the fleet looks smaller than it is.
 | a machine's burn never appears | no emitter, or its config was copied from another machine | install the watcher; `emit.mjs` re-stamps a copied config with a fresh install id |
 | directives queue but never deliver | no `gate.mjs` PreToolUse hook on that box | wire the hook; use an absolute node path — hooks run in a non-login shell |
 | the fleet overspends despite gating | concurrent spawns each read the full allowance | `maxx_reserve` before the fan-out |
-| `session_to_spend` stuck low after a fan-out ended | lease never released — still throttling until TTL | `maxx_release` when the fan-out lands |
+| `reserved_pct` stuck high after a fan-out ended | lease never released — still throttling until TTL | `maxx_release` when the fan-out lands |
 | verdict flips to `stale`, everything blocks | no machine has read `/usage` in over 12h | open an interactive session on any linked machine |
 | budget reads richer than reality | a run gated but never emitted | always `maxx_emit` at the end of a run |
 | a cheap recurring job is blocked while the real burn was the conversation | `spend-guard` gating a marginally-free spawn on cumulative spend | space it ≥ `recurringMinIntervalSec` (600s) and it is exempt; raising `overGraceTokens` will not help |

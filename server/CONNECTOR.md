@@ -44,8 +44,8 @@ should never hand-roll a fifth rule.
 
 | verdict | what it means | what an agent should do |
 |---|---|---|
-| `ok` | fresh /usage anchor, under every wall | proceed; plan against `session_to_spend` |
-| `degraded` | no machine has read /usage in the last 45m, but the weekly standing is still live from the server's own billed ledger | **proceed** on the WEEKLY numbers (`weekly_left_tokens`, `session_to_spend`); ignore the 5h-window fields; re-check more often |
+| `ok` | fresh /usage anchor, under every wall | proceed; pace against `block_share_pct` vs `block_used_pct` |
+| `degraded` | no machine has read /usage in the last 45m, but the weekly standing is still live from the server's own billed ledger | **proceed** on the weekly numbers (`usage_week_pct`, `block_share_pct`); ignore the 5h-window fields; re-check more often |
 | `over` | a wall is hit (weekly ≥99%, 5h ≥99%, or nothing left after reserves) | stop; `tokens_again` says when it lifts |
 | `stale` | genuinely blind — no anchor at all, or one over 12h old | stop |
 
@@ -71,7 +71,7 @@ re-anchor, open a Claude Code session on any linked machine.
 The connector's `instructions` are advisory. install.sh also wires the HARD gate:
 a PreToolUse hook (`gate.mjs`) that DENIES expensive spawns (Agent / Task /
 Workflow / ScheduleWakeup / CronCreate) when the tally says `over`/`stale`/
-`session_to_spend 0`. Fail-closed: no fresh verdict = deny. Cloud routines honor
+a spent block share. Fail-closed: no fresh verdict = deny. Cloud routines honor
 repo `.claude/settings.json` hooks, so to enforce in cloud add to the repo:
 
 ```json
@@ -185,7 +185,7 @@ It exposes four tools:
   only). Cloud routines leave `anchor` unset (they can't read /usage).
 - `maxx_budget()` — read the omni-surface budget to gate spend.
 - `maxx_reserve({ tokens, ttl_sec?, label?, lease_id? })` — hold part of
-  `session_to_spend` before a fan-out so concurrent dispatchers can't
+  a PERCENT of the week before a fan-out so concurrent dispatchers can't
   double-spend the same allowance. Pass your own `lease_id` to renew/resize
   (replaces the lease instead of stacking). Leases auto-expire at `ttl_sec`
   (default 1h, max 6h).
@@ -205,7 +205,7 @@ include **Maxx**, and update the routine prompt:
 - **Gate on the central budget** instead of the laptop-fed dashboard: replace the
   `curl …/api/pm/board … signals.budget` gate with a `maxx_budget()` call, and
   apply the same FAIL-CLOSED rule on `verdict` in `("over","stale")` /
-  `session_to_spend == 0`.
+  a spent block share.
 
 ## 4. Keep the laptop shipping (the anchor source)
 

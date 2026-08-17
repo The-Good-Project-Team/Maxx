@@ -119,7 +119,7 @@ A page a human opens cannot reach an agent mid-run, so the rules live in the API
 curl https://api.meetmaxx.co/api/model     # plain markdown, no auth
 ```
 
-It states the rule, what to pace against, what the hard stops are, and that the coin fields
+It states the rule, what to pace against, what the hard stops are, and that the derived fields
 are counters. The `maxx_budget` MCP tool description points at it, so an agent that has only
 ever seen the payload can still find the reasoning.
 
@@ -161,7 +161,7 @@ Every log said the meter was unreachable. The meter was reachable and being refu
 **Fixed:** the error label carries the status (`maxx_http_403` vs `maxx_unreachable`), and a WAF
 skip rule on `http.host eq "api.meetmaxx.co"` stopped the edge from doing it.
 
-### 2. The coin tank could deny
+### 2. Our own counter could deny
 
 `verdict` was `weekPct >= 1 || weekWallHit || fiveWallHit`, where `weekPct` is measured against
 **maxx's own configured 1B weekly cap** and the two `WallHit`s are Anthropic's real anchors.
@@ -175,7 +175,7 @@ Both read `over`. The second had 242M real tokens it was not permitted to spend.
 
 **Fixed:** only `weekWallHit || fiveWallHit`. A spent tank throttles pacing advice and denies
 nothing. The same fix landed in `gate.mjs`, which had been refusing `Agent`/`Task`/`Workflow`
-spawns on `session_to_spend <= 0` — a coin condition true for both accounts.
+spawns on `session_to_spend <= 0` — a condition our own counter made true for both accounts.
 
 ### 3. The store was re-read from the beginning of time
 
