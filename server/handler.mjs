@@ -582,6 +582,25 @@ document.getElementById('cmd').addEventListener('click',function(){
 function renderSettings(h, s, b) {
   const esc = (x) => String(x == null ? "" : x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const cfg = s.config || {};
+  const { settings: set } = resolveSettings(cfg);
+  // The live per-diem, read straight off the SAME payload every consumer gets — so the pane
+  // can never show a number the API disagrees with.
+  const pd = {
+    weekly_max_pct: b.weekly_max_pct ?? Math.round(set.weekly_max * 1000) / 10,
+    per_diem_pct: b.per_diem_pct, per_diem_usable_pct: b.per_diem_usable_pct,
+    per_diem_hourly_pct: b.per_diem_hourly_pct, per_diem_days_left: b.per_diem_days_left,
+    over: b.over_per_diem,
+  };
+  const num = (v, suffix = "%") => (v == null ? '<span class="unk">—</span>' : `${v}${suffix}`);
+  // Null reads "—", never 0: an unknown per-diem is unknown, and a 0 would read as
+  // "spend nothing" to anyone glancing at it.
+  const perDiemStrip = `
+   <div class="pdcell"><span class="pdk">used of week</span><span class="pdv">${num(b.usage_week_pct == null ? null : Math.round(b.usage_week_pct * 1000) / 10)}</span></div>
+   <div class="pdcell"><span class="pdk">days left</span><span class="pdv">${num(pd.per_diem_days_left, "")}</span></div>
+   <div class="pdcell${pd.over ? " over" : ""}"><span class="pdk">per-diem</span><span class="pdv">${num(pd.per_diem_pct)}<span class="pdu">/day</span></span></div>
+   <div class="pdcell${pd.over ? " over" : ""}"><span class="pdk">usable</span><span class="pdv">${num(pd.per_diem_usable_pct)}<span class="pdu">/day</span></span></div>
+   ${set.per_diem_granularity === "hour" ? `<div class="pdcell${pd.over ? " over" : ""}"><span class="pdk">hourly</span><span class="pdv">${num(pd.per_diem_hourly_pct)}<span class="pdu">/hr</span></span></div>` : ""}
+   ${pd.over ? '<div class="pdflag">over per-diem — advice only, no call is blocked</div>' : ""}`;
   const burners = (b.top_burners || []).filter((a) => a.tokens_1h > 0);
   const fleetRows = burners.map((a) => `
    <tr><td><b>${esc(a.name || a.project || (a.session || "").slice(0, 8))}</b> <span class="mono">${esc((a.session || "").slice(0, 8))}</span></td>
@@ -642,6 +661,25 @@ button{background:#171f30;border-color:#2c3652}
 button:hover{border-color:var(--accent)}
 td{border-bottom-color:#222b40}
 }
+.perdiem{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 16px}
+.pdcell{flex:1 1 108px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:3px}
+.pdcell.over{border-color:var(--red)}
+.pdk{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.pdv{font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink)}
+.pdcell.over .pdv{color:var(--red)}
+.pdu{font-size:11px;font-weight:400;color:var(--ink-3);margin-left:2px}
+.unk{color:var(--ink-3)}
+.pdflag{flex:1 1 100%;font-size:12px;color:var(--red);padding:2px 2px 0}
+/* Budget rows carry a two-line label (name + hint), so they align to the TOP rather than
+   inheriting .row's align-items:center — which pushed the control against the hint's
+   descender and read as one run-on sentence. Scoped to .row.br so the existing single-line
+   rows on this page are untouched. */
+.row.br{align-items:flex-start}
+.row.br label{min-width:250px;padding-top:5px}
+.hint2{display:block;font-weight:400;font-size:12px;color:var(--ink-3);margin-top:3px;line-height:1.45;max-width:340px}
+.unit{font-size:12px;color:var(--ink-3);margin-left:6px}
+.checks{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.ck{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:13px}
 </style></head><body>
 <div class="card">
  <div class="top">
@@ -657,8 +695,31 @@ td{border-bottom-color:#222b40}
   <td class="act"><button data-s="*" data-a="pause">pause all</button><button data-s="*" data-a="resume">resume all</button></td></tr></tbody></table>
  <span class="flash" id="fleetFlash"></span>
 
+ <h2>Budget <span class="sub">— what is left of the week, divided by the days left. Advice, never a gate: nothing here can stop a call, only Anthropic can</span></h2>
+ <div class="perdiem" id="perdiem">${perDiemStrip}</div>
+ <div class="row br"><label>Weekly max <span class="hint2">ceiling on Anthropic's real weekly window, all accounts</span></label><input id="wmax" value="${esc(pd.weekly_max_pct)}" size="6"> <span class="unit">% of week</span></div>
+ <div class="row br"><label>Per-diem to use <span class="hint2">the slice of each day's allowance to plan against</span></label><input id="pduse" value="${esc(Math.round(set.per_diem_use * 1000) / 10)}" size="6"> <span class="unit">% of per-diem</span></div>
+ <div class="row br"><label>Cadence <span class="hint2">publish an hourly rate (per-diem ÷ 24) or the daily figure only</span></label>
+  <select id="pdgran"><option value="hour"${set.per_diem_granularity === "hour" ? " selected" : ""}>hourly</option><option value="day"${set.per_diem_granularity === "day" ? " selected" : ""}>daily</option></select></div>
+ <div class="row br"><label>Account strategy <span class="hint2">how the pool picks between accounts that both have headroom</span></label>
+  <select id="astrat">
+   <option value="round_robin"${set.account_strategy === "round_robin" ? " selected" : ""}>round robin — spread evenly, both deplete together</option>
+   <option value="exhaustion"${set.account_strategy === "exhaustion" ? " selected" : ""}>by exhaustion — drain one, keep the next as reserve</option>
+   <option value="lowest_usage"${set.account_strategy === "lowest_usage" ? " selected" : ""}>lowest usage first — self-balancing</option>
+  </select></div>
+ <div class="row br"><label>Session may overburn <span class="hint2">reported to consumers; each decides whether to honour it</span></label>
+  <span class="checks">
+   <label class="ck"><input type="checkbox" id="ob1"${set.allow_session_overburn.one_h ? " checked" : ""}> 1h</label>
+   <label class="ck"><input type="checkbox" id="ob3"${set.allow_session_overburn.three_h ? " checked" : ""}> 3h</label>
+   <label class="ck"><input type="checkbox" id="ob5"${set.allow_session_overburn.five_h ? " checked" : ""}> 5h</label>
+  </span></div>
+ <div class="row br"><label>Session reserve <span class="hint2">a session may hold a slice of the week, visible to every surface</span></label>
+  <span class="checks"><label class="ck"><input type="checkbox" id="ares"${set.allow_session_reserve ? " checked" : ""}> allowed</label>
+  <span class="hint2">${b.leases || 0} active · ${esc(b.reserved_pct ?? 0)}% of week reserved</span></span></div>
+ <div class="row"><button class="primary" id="budSave">Save</button><span class="flash" id="budFlash"></span></div>
+
  <h2>Runaway detection <span class="sub">— sustained burn that trips the runaway webhook event</span></h2>
- <div class="row"><label>Rate threshold (coins / 5 min)</label><input id="rrate" value="${cfg.runaway_rate_5m ?? 500000}" size="12"></div>
+ <div class="row"><label>Rate threshold (billed / 5 min)</label><input id="rrate" value="${cfg.runaway_rate_5m ?? 500000}" size="12"></div>
  <div class="row"><label>Sustained for (minutes)</label><input id="rmin" value="${cfg.runaway_min ?? 10}" size="12"></div>
  <div class="row"><button class="primary" id="cfgSave">Save</button><span class="flash" id="cfgFlash"></span></div>
 
@@ -687,6 +748,27 @@ if(location.search)history.replaceState(null,'',location.pathname);
   document.getElementById('cfgSave').addEventListener('click',function(){
     post('/api/u/${h}/config',{runaway_rate_5m:Number(document.getElementById('rrate').value),runaway_min:Number(document.getElementById('rmin').value)})
       .then(function(r){flash('cfgFlash',r.ok,r.ok?'saved':'failed: '+(r.j.error||''))});
+  });
+  document.getElementById('budSave').addEventListener('click',function(){
+    var f=document.getElementById('budFlash');
+    // Percent in the pane, FRACTION on the wire: the API compares these against
+    // usage_week_pct, which is 0..1. Sending 92.5 where 0.925 is meant is a 100x looser
+    // ceiling that would look perfectly normal in the input box.
+    fetch('/api/u/${h}/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({
+      weekly_max:Number(document.getElementById('wmax').value)/100,
+      per_diem_use:Number(document.getElementById('pduse').value)/100,
+      per_diem_granularity:document.getElementById('pdgran').value,
+      account_strategy:document.getElementById('astrat').value,
+      allow_session_reserve:document.getElementById('ares').checked,
+      allow_session_overburn:{one_h:document.getElementById('ob1').checked,three_h:document.getElementById('ob3').checked,five_h:document.getElementById('ob5').checked}
+    })}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(r){
+      if(!r.ok){f.textContent='failed';return;}
+      // A rejected field fell back to its default server-side. Say so instead of letting the
+      // box keep showing a value that was never saved.
+      var rej=(r.j.rejected||[]).map(function(x){return x.key});
+      f.textContent=rej.length?('saved · ignored: '+rej.join(', ')):'saved';
+      setTimeout(function(){location.reload();},rej.length?2200:700);
+    }).catch(function(){f.textContent='failed';});
   });
   document.getElementById('hookAdd').addEventListener('click',function(){
     post('/api/u/${h}/webhooks',{url:document.getElementById('hookUrl').value.trim(),format:document.getElementById('hookFmt').value.trim()||null})
@@ -2501,7 +2583,14 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       // Resolve before saving: an invalid value is reported to the caller AND never persisted,
       // so the store can never hold a config that reads back as something else.
       const { settings, rejected } = resolveSettings(merged);
-      s0.config = settings;
+      // PRESERVE the keys this module does not own. store.config is SHARED: POST /config
+      // writes runaway_rate_5m / runaway_min into the same object, and resolveSettings returns
+      // ONLY the budget knobs -- so `s0.config = settings` silently wiped the operator's
+      // runaway thresholds every time they touched a budget setting. Caught by reading the
+      // other writer rather than by a test, which is why the test below now exists.
+      const preserved = { ...(s0.config || {}) };
+      for (const k of Object.keys(settings)) delete preserved[k];
+      s0.config = { ...preserved, ...settings };
       logOp(s0, "settings", Object.keys(patch).join(", ").slice(0, 80), now());
       await store.save(h, s0);
       // No explicit bump() here: the store wrapper above already does bump(h) +

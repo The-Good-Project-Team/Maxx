@@ -121,3 +121,23 @@ test("a bad body is a 400, not a 500 or a silent default-write", async () => {
   }
   assert.equal(docs.has("x"), false, "a rejected write must not create a config doc");
 });
+
+test("saving budget settings must not wipe the runaway thresholds beside them", async () => {
+  // store.config is SHARED. POST /api/u/:h/config writes runaway_rate_5m / runaway_min into
+  // the same object, and resolveSettings returns ONLY the budget knobs -- so assigning its
+  // result straight onto s.config deleted the operator's runaway config every time they
+  // changed a ceiling. Silent, and only visible the next time a runaway failed to trip.
+  const { h, docs } = harness();
+  await h({ method: "POST", url: "/api/u/x/config", headers: { ...auth, origin: "https://meetmaxx.co" },
+            body: JSON.stringify({ runaway_rate_5m: 50000, runaway_min: 3 }) });
+  await h({ method: "PUT", url: "/api/u/x/settings", headers: auth,
+            body: JSON.stringify({ weekly_max: 0.8 }) });
+
+  const cfg = docs.get("x").config;
+  assert.equal(cfg.weekly_max, 0.8, "the new setting lands");
+  assert.equal(cfg.runaway_rate_5m, 50000, "the neighbouring key must survive");
+  assert.equal(cfg.runaway_min, 3);
+  // ...and the foreign keys must not come back out as budget settings.
+  const b = parse(await h({ method: "GET", url: "/api/u/x/settings", headers: auth }));
+  assert.equal("runaway_rate_5m" in b.settings, false);
+});
