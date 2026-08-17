@@ -497,13 +497,38 @@ export function computeBudget(store, now) {
     lifetime_billed: lifetime, burn_5m: burn5m,
     // Which surface ate the account, on the week's own scale. This is the answer to "where did
     // it go" — a laptop project at 12.4% of your week is a sentence you can act on.
-    surfaces: Object.entries(surfacesWeek)
-      .sort((x, y) => y[1] - x[1])
-      .map(([surface, billed]) => ({
+    // CAPPED, WITH THE TAIL AGGREGATED RATHER THAN DROPPED (2026-08-17).
+    //
+    // This list was unbounded and it dominated the payload: measured live, 325 rows / 32,775
+    // bytes out of a 32,797-byte response -- 99.9% of it, ~8,200 tokens. Every agent is
+    // instructed to call maxx_budget before token-expensive work, so the act of ASKING how much
+    // of the week is left had become a measurable line item in the week. Worse, it grows
+    // monotonically: 281 of those rows were one-shot builder/prdoctor worktrees that ran once
+    // and will never exist again, and 85 reported 0.0%.
+    //
+    // The tail is SUMMED into one row, never truncated away. A reader must still be able to add
+    // the column up and get the account's real total -- dropping 320 rows carrying 39.4% of the
+    // week would have made "where did it go" unanswerable while looking tidier.
+    surfaces: (() => {
+      const rows = Object.entries(surfacesWeek).sort((x, y) => y[1] - x[1]);
+      const cap = Number(process.env.MAXX_SURFACES_CAP || 25);
+      const head = rows.slice(0, cap).map(([surface, billed]) => ({
         surface,
         week_pct: pctOfWeek(billed),
         five_pct: pctOfFive(surfacesFive[surface] || 0),
-      })),
+      }));
+      const tail = rows.slice(cap);
+      if (!tail.length) return head;
+      const tailWeek = tail.reduce((a, [, billed]) => a + billed, 0);
+      const tailFive = tail.reduce((a, [surface]) => a + (surfacesFive[surface] || 0), 0);
+      head.push({
+        surface: `(${tail.length} more surfaces)`,
+        week_pct: pctOfWeek(tailWeek),
+        five_pct: pctOfFive(tailFive),
+        aggregated: tail.length,
+      });
+      return head;
+    })(),
   };
 }
 

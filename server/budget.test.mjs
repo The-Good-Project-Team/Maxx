@@ -660,3 +660,48 @@ test("no live anchor yields nulls, not a fabricated recommendation", () => {
   assert.equal(b.session_advised_pct, null);
   assert.equal(b.block_share_pct, null);
 });
+
+// ---- surfaces[] is capped, and the tail is SUMMED, not dropped -------------------------------
+// Measured live 2026-08-17: 325 rows / 32,775 bytes of a 32,797-byte payload -- 99.9% of it,
+// ~8,200 tokens. Every agent is told to call maxx_budget before token-expensive work, so ASKING
+// how much of the week was left had become a real line item in the week. 281 rows were one-shot
+// builder worktrees that will never exist again, and the list only ever grows.
+
+test("surfaces[] is capped and the tail is aggregated into one row, never dropped", () => {
+  const s = emptyStore();
+  // 60 surfaces, descending burn: 60e6, 59e6, ... 1e6. Total 1830e6.
+  for (let i = 60; i >= 1; i--) {
+    s.events.push({ surface: `laptop:s${String(i).padStart(2, "0")}`, root: "r", ts: T - 600, billed: i * 1e6 });
+  }
+  s.anchors.push({
+    ts: T - 600, five_pct: 0.1, week_pct: 0.5, five_reset: T + 4 * H, week_reset: T + 3 * 86400,
+  });
+  const b = computeBudget(s, T);
+
+  assert.equal(b.surfaces.length, 26, "25 named surfaces + exactly one aggregate row");
+  const agg = b.surfaces[b.surfaces.length - 1];
+  assert.equal(agg.aggregated, 35, "60 surfaces - 25 named = 35 folded into the tail");
+  assert.match(agg.surface, /35 more surfaces/);
+
+  // CONSERVATION: the column must still add up to the account's real week. Dropping the tail
+  // would have silently deleted a third of the week's spend from a payload whose entire job is
+  // answering "where did it go".
+  const total = b.surfaces.reduce((a, r) => a + r.week_pct, 0);
+  assert.ok(Math.abs(total - 50) < 0.5, `surfaces must still sum to the real 50% of week, got ${total}`);
+
+  // The named rows are the BIGGEST ones -- a cap that kept an arbitrary 25 would be useless.
+  assert.equal(b.surfaces[0].surface, "laptop:s60");
+  assert.ok(b.surfaces[24].week_pct >= agg.week_pct / 35,
+    "every named row must outrank the average tail row");
+});
+
+test("no aggregate row appears when the surfaces fit under the cap", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r", ts: T - 600, billed: 10e6 });
+  s.anchors.push({
+    ts: T - 600, five_pct: 0.1, week_pct: 0.2, five_reset: T + 4 * H, week_reset: T + 3 * 86400,
+  });
+  const b = computeBudget(s, T);
+  assert.equal(b.surfaces.length, 1);
+  assert.ok(!("aggregated" in b.surfaces[0]), "a short list must not grow a synthetic row");
+});
