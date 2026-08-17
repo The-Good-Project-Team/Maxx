@@ -23,6 +23,7 @@ import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDi
 import { resolveSettings, DEFAULTS } from "./settings.mjs";
 import { ACCOUNTS_KEY, accountId, accountOf, handlesFor, linkHandle, pick } from "./account.mjs";
 import { probeAnchor } from "./probe.mjs";
+import { CREDENTIALS_KEY, credKey, seal, open as openCred, credentialStatus, putCredential, reportBoxState, auditFetch } from "./credentials.mjs";
 
 const TOOLS = [
   {
@@ -2618,6 +2619,96 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     }
 
     // Link a handle into an account so the pool above can see it. Idempotent.
+    // ---- credentials: maxx as the ONE place an account's login lives -----------------------
+    //
+    // CREDENTIAL AUTH IS NOT BUDGET AUTH. `authed()` accepts the per-handle bearer that sits in
+    // ~/.maxx/config.json on every box and that every agent uses before spending tokens. If that
+    // were enough to fetch an OAuth token, every one of those callers could take the account. So
+    // these routes require MAXX_CRED_KEY_<HANDLE> (or the shared MAXX_CRED_ACCESS) presented as
+    // `x-cred-key`, issued only to the sync agent. Budget auth is checked TOO -- both, never
+    // either.
+    const credAccessOk = (h, headers) => {
+      const want = process.env[`MAXX_CRED_ACCESS_${String(h).toUpperCase()}`]
+        || process.env.MAXX_CRED_ACCESS || "";
+      if (!want) return false;               // unset = credentials disabled, never open
+      const got = String(headers["x-cred-key"] || headers["X-Cred-Key"] || "");
+      if (!got || got.length !== want.length) return false;
+      try {
+        return timingSafeEqual(Buffer.from(got), Buffer.from(want));
+      } catch { return false; }
+    };
+
+    // STATUS is the safe read: present / fingerprint / what the box reports. No ciphertext, no
+    // token. Deliberately gated by ORDINARY auth so the dash and the fleet can SEE a dead
+    // account -- invisibility, not theft, is the failure this whole feature exists to fix.
+    m = p.match(/^\/api\/u\/([^/]+)\/credential\/status$/);
+    if (m && method === "GET") {
+      const h = decodeURIComponent(m[1]);
+      if (!(await authed(h, readTokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      const doc = (await store.load(CREDENTIALS_KEY)) || {};
+      return json(200, credentialStatus(doc.index || {}, h));
+    }
+
+    // The box reports whether the credential actually WORKS. Storage and usability are different
+    // facts: a perfectly stored token whose account was logged out elsewhere is still dead, and
+    // only the machine trying to use it can say so.
+    m = p.match(/^\/api\/u\/([^/]+)\/credential\/state$/);
+    if (m && method === "POST") {
+      const h = decodeURIComponent(m[1]);
+      if (!(await authed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      let b; try { b = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
+      const doc = (await store.load(CREDENTIALS_KEY)) || {};
+      doc.index = reportBoxState(doc.index || {}, h, { ok: !!b.ok, note: b.note, now: now() });
+      await store.save(CREDENTIALS_KEY, doc);
+      return json(200, credentialStatus(doc.index, h));
+    }
+
+    // STORE / FETCH the secret itself. Both require cred access ON TOP OF ordinary auth.
+    m = p.match(/^\/api\/u\/([^/]+)\/credential$/);
+    if (m && (method === "PUT" || method === "GET")) {
+      const h = decodeURIComponent(m[1]);
+      // `_`-prefixed names are INDEX DOCS (_credentials, _accounts), not handles. They can only
+      // arrive here by someone probing for the store's internals, and no legitimate caller ever
+      // needs one. Refused before any load.
+      if (h.startsWith("_")) return json(404, { error: "no_such_handle" });
+      // tokenOf, NOT readTokenOf -- deliberately stricter than every other GET on this server.
+      // readTokenOf also accepts the maxx_k browser cookie, which exists so an operator's
+      // dashboard can read without putting a secret in a URL. Ambient cookie authority is
+      // exactly wrong for fetching a credential: it is the one operation where the caller must
+      // prove intent by presenting the bearer explicitly. Not exploitable today (a custom
+      // x-cred-key header requires a CORS preflight this server never grants), but it would
+      // become live the day CORS is added, and the cost of closing it now is one word.
+      if (!(await authed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
+      if (!credAccessOk(h, headers)) {
+        // Say WHICH credential is missing, never whether the guess was close.
+        return json(403, { error: "credential_access_required",
+                           detail: "x-cred-key required; the budget secret is not sufficient" });
+      }
+      const key = credKey();
+      if (!key) return json(503, { error: "credential_store_disabled",
+                                   detail: "MAXX_CRED_KEY is not configured on this server" });
+      const doc = (await store.load(CREDENTIALS_KEY)) || {};
+      if (method === "PUT") {
+        let b; try { b = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
+        if (!b.credential) return json(400, { error: "credential required" });
+        doc.index = putCredential(doc.index || {}, h, b.credential, key, now());
+        await store.save(CREDENTIALS_KEY, doc);
+        // The response carries the STATUS shape, never the thing just stored.
+        return json(200, credentialStatus(doc.index, h));
+      }
+      const row = (doc.index || {})[h];
+      const who = String(headers["x-cred-who"] || "unknown").slice(0, 64);
+      doc.audit = auditFetch(doc.audit, h, { who, now: now(), ok: !!row });
+      await store.save(CREDENTIALS_KEY, doc);
+      if (!row) return json(404, { error: "no_credential_stored", handle: h });
+      let plaintext;
+      try { plaintext = openCred(row, key); }
+      catch { return json(500, { error: "credential_unreadable",
+                                 detail: "stored envelope did not decrypt under the current key" }); }
+      return json(200, { handle: h, credential: plaintext, fingerprint: row.fingerprint,
+                         updated_at: row.updated_at });
+    }
+
     m = p.match(/^\/api\/u\/([^/]+)\/account$/);
     if (m && (method === "GET" || method === "PUT")) {
       const h = decodeURIComponent(m[1]);
