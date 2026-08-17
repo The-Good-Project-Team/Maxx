@@ -5,6 +5,8 @@
  *   REST  (laptop emit.mjs):
  *     POST /api/u/:handle/logs      → ingest an envelope
  *     GET  /api/u/:handle/budget    → read the budget
+ *     GET  /api/u/:handle/settings  → read the operator's knobs (owner only)
+ *     PUT  /api/u/:handle/settings  → update them (owner only; merges over stored)
  *   MCP   (account-wide cloud connector, Streamable HTTP / JSON-RPC 2.0):
  *     POST /mcp[?handle=]           → initialize | tools/list | tools/call
  *       tools: maxx_emit(envelope)  → same as POST logs
@@ -15,6 +17,7 @@
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDirectives, logOp, autoAdvise, anchorAgeSec, ANCHOR_TRUST_SEC } from "./tally.mjs";
+import { resolveSettings, DEFAULTS } from "./settings.mjs";
 import { probeAnchor } from "./probe.mjs";
 
 const TOOLS = [
@@ -2476,6 +2479,39 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       const res = await ingest(h, env);
       return json(200, { ok: true, ...res });
     }
+    // ---- settings: the operator's knobs ---------------------------------------------------
+    // GET is owner-only, unlike /budget's public read. The budget payload is a magnitude an
+    // anonymized public dash can show; the settings are the operator's own policy (their
+    // ceiling, their strategy), and there is no reason for a shared link to expose them.
+    m = p.match(/^\/api\/u\/([^/]+)\/settings$/);
+    if (m && (method === "GET" || method === "PUT")) {
+      const h = decodeURIComponent(m[1]);
+      if (!(await authed(h, method === "GET" ? readTokenOf(headers, url) : tokenOf(headers, url))))
+        return json(401, { error: "unauthorized" });
+      const s0 = await store.load(h);
+      if (method === "GET") {
+        const { settings, rejected } = resolveSettings(s0.config || {});
+        return json(200, { settings, rejected, defaults: DEFAULTS });
+      }
+      let patch; try { patch = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
+      if (!patch || typeof patch !== "object" || Array.isArray(patch))
+        return json(400, { error: "body must be an object of settings" });
+      // Merge over what is STORED, so a pane may PUT one field without resending the rest.
+      const merged = { ...(s0.config || {}), ...patch };
+      // Resolve before saving: an invalid value is reported to the caller AND never persisted,
+      // so the store can never hold a config that reads back as something else.
+      const { settings, rejected } = resolveSettings(merged);
+      s0.config = settings;
+      logOp(s0, "settings", Object.keys(patch).join(", ").slice(0, 80), now());
+      await store.save(h, s0);
+      // No explicit bump() here: the store wrapper above already does bump(h) +
+      // budgetMemo.delete(h) on EVERY save (see `save:` in the wrapped store), so the budget
+      // payload picks the new settings up on the next read. Adding a second bump looked
+      // prudent and was dead code -- the mutation test that was supposed to prove it
+      // necessary stayed green with it deleted, which is how it was caught.
+      return json(200, { ok: true, settings, rejected });
+    }
+
     m = p.match(/^\/api\/u\/([^/]+)\/budget$/);
     if (m && method === "GET") {
       const h = decodeURIComponent(m[1]);
