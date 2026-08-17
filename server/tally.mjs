@@ -285,58 +285,48 @@ export function computeBudget(store, now) {
   const wr = a?.week_reset || 0;
   let week = windowedBilled(store.events, now, WEEK, wr ? weekLoFor(wr, now) : undefined);
 
-  // ── Caps: implied by Anthropic, never configured ───────────────────────────
-  // limit = what WE billed in the window ÷ what THEY say that window is used. Their % is
-  // dimensionless, so the quotient lands back in our weighted units and the whole payload
-  // stays in one currency. Below 2% the divide is noise (a 1% reading off 40k tokens implies
-  // anything between 2M and 8M), so under 2% we decline to guess and ship null. Null = unknown, and
-  // unknown must never read as empty — that conflation is what the tank got wrong.
-  const impliedLimit = (billed, pct) => (pct != null && pct >= 0.02 && billed > 0 ? billed / pct : null);
-  const weekLimit = impliedLimit(week, a?.week_pct);
-  const fiveLimit = impliedLimit(five, a?.five_pct);
+  // ── Percentages only. No token count reaches a caller. ────────────────────
+  // We published token figures twice, and both were wrong in the same way: first against a
+  // 1e9 tank we set ourselves, then implied from Anthropic's % (billed ÷ pct). Our ledger is
+  // cache-weighted and does not agree with Anthropic's billing, so every token number we ever
+  // printed was an estimate wearing a decimal point. Their % is the one reading that is not a
+  // guess, so the payload is expressed in it and nothing else.
+  //
+  // ONE denominator throughout: percent OF THE WEEK. Block allowance, block spend, reserves
+  // and per-surface burn all compare directly, with no arithmetic left to the reader.
+  const weekPctReal = a && a.week_pct != null ? a.week_pct : null;
+  const fivePctReal = a && a.five_pct != null ? a.five_pct : null;
+  // A surface's share of the LEDGER, restated as a share of the real week. The ledger's
+  // absolute magnitude is untrustworthy; the RATIO between two surfaces inside it is not, and
+  // multiplying that ratio by Anthropic's % lands it on the only scale that means anything.
+  // A 0% reading apportions nothing: 0 would read as 'this surface burned nothing', which is
+  // the opposite of 'we cannot tell yet'. Null is the only honest answer.
+  const pctOfWeek = (billed) => (weekPctReal > 0 && week > 0 ? Math.round((billed / week) * weekPctReal * 1000) / 10 : null);
+  const pctOfFive = (billed) => (fivePctReal > 0 && five > 0 ? Math.round((billed / five) * fivePctReal * 1000) / 10 : null);
   // Anthropic's real utilization is the only wall. Honored only while the anchor's window is
   // still LIVE (fr/wr ahead of now); a stale anchor describing a dead, pre-reset window must
   // never re-block a fresh one (that was the 2026-07-23 reif_tgp false-over).
   const weekWallHit = a && a.week_pct >= 0.99 && wr > now;
   const fiveWallHit = a && a.five_pct >= 0.99 && fr > now;
-
-  const weeklyLeft = weekLimit != null ? Math.round(Math.max(0, weekLimit - week)) : null;
-  // room left in THIS 5h window before Anthropic's own wall — the hard ceiling you can
-  // physically spend to right now, as opposed to the paced share you SHOULD spend.
-  const fiveLeft = fiveLimit != null && fr > now ? Math.round(Math.max(0, fiveLimit - five)) : null;
-  // The week bar's even-pace mark: bank = cap×elapsed − used, the same ruler the CLI prints
-  // (maxx/pace.mjs). It went to a hardcoded null when the statusline passthrough was dropped,
-  // which silently took the ╎ off the weekly bar while the legend went on promising it.
-  // Elapsed needs a LIVE reset: without one — or with a sentinel reset far in the future —
-  // elapsed collapses toward 0 and the bank comes back sign-flipped, so suppress instead.
+  // The week bar's ╎ mark, in percent: how far the CLOCK is through the week, minus how far
+  // the SPEND is. Positive = ahead of pace. Elapsed needs a LIVE reset — without one, or with
+  // a sentinel far-future reset, elapsed collapses toward 0 and the mark lands sign-flipped,
+  // so suppress it rather than draw it in the wrong place.
   const weekElapsed = wr > now && wr - now <= 8 * 24 * 3600
     ? Math.min(1, Math.max(0, 1 - (wr - now) / WEEK))
     : null;
-  const slBank = weekElapsed != null && weekLimit != null ? Math.round(weekLimit * weekElapsed - week) : null;
-  // The SESSION REMAINDER: the weekly coin headroom spread over the 5h windows left = a fair
-  // share for this window. We SHOW it as-is and let routines pace against it — we do NOT clamp
-  // it to our even-pace sub-cap or zero it out when a window front-loads. Over-pace is surfaced
-  // by net_per_min (guidance); the only HARD stop is Anthropic's real wall. weeklyLeft already
-  // nets cumulative spend, so this share naturally shrinks as the week fills — no separate 5h
-  // subtraction, no self-inflicted zero while the tank still has coins.
-  const windowsLeft = wr && wr > now ? Math.max(1, (wr - now) / FIVE_H) : 1;
-  const pacedShare = weeklyLeft != null ? Math.round(weeklyLeft / windowsLeft) : null;
-  // What you SHOULD spend this window: your paced share of what's left, but never more than
-  // the window physically holds (fiveLeft). Both terms are Anthropic-derived, so this stops
-  // being a promise about a tank and becomes a reading of the real remaining room. Null when
-  // there's no anchor to imply either — callers must treat null as unknown and proceed.
-  const sessionSafe = pacedShare == null ? null : fiveLeft == null ? pacedShare : Math.min(pacedShare, fiveLeft);
-  const sessionToSpend = sessionSafe;
-  // over-pace: what this window has already spent past its fair share. Guidance, not a wall —
-  // borrowing from later blocks breaches nothing, it just shortens the week.
-  const slOver = pacedShare != null ? Math.max(0, Math.round(five - (weeklyLeft + five) / windowsLeft)) : 0;
+  const weekElapsedPct = weekElapsed != null ? Math.round(weekElapsed * 1000) / 10 : null;
+  const weekBankPct = weekElapsedPct != null && weekPctReal != null
+    ? Math.round((weekElapsedPct - weekPctReal * 100) * 10) / 10
+    : null;
 
   // #4 reservation leases: active leases subtract from the allowance other
   // callers see (the grantee tracks its own lease). Expired leases are ignored
   // here and pruned on write in the handler.
   const activeLeases = (store.leases || []).filter((l) => l.expires > now);
-  const reservedTokens = activeLeases.reduce((s, l) => s + l.tokens, 0);
-  const spendAfterReserve = sessionToSpend != null ? Math.max(0, sessionToSpend - reservedTokens) : null;
+  // A lease holds a slice OF THE WEEK — same denominator as block_share_pct, so a dispatcher
+  // subtracts it from its allowance without converting anything.
+  const reservedPct = Math.round(activeLeases.reduce((acc, l) => acc + (l.pct || 0), 0) * 10) / 10;
 
   // "degraded" = no fresh /usage anchor, but the weekly standing is still computable
   // from our own ledger against the last known caps. Callers may proceed on it (weekly
@@ -364,12 +354,16 @@ export function computeBudget(store, now) {
   // dirs) are distinct channels, not one blob. Events without a project (cloud
   // routines — already unique per surface — and legacy rows) stay surface-only.
   // Owner-facing (authed budget/dash); the public card never sees these keys.
-  const surfaces = {};
+  // TWO windows per surface, because "what ate my week" and "what is burning right now" are
+  // different questions. Each is summed on the same bound as the total it will be divided by —
+  // mixing a rolling sum into a fixed-window one printed a surface at 648% of a 5h window.
+  const surfacesWeek = {}, surfacesFive = {};
+  const fiveStart = fiveLo != null ? fiveLo : now - FIVE_H;
+  const weekStart = wr ? weekLoFor(wr, now) : now - WEEK;
   for (const e of store.events) {
-    if (e.ts > now - FIVE_H) {
-      const key = e.project ? `${e.surface} · ${e.project}` : e.surface;
-      surfaces[key] = (surfaces[key] || 0) + e.billed;
-    }
+    const key = e.project ? `${e.surface} · ${e.project}` : e.surface;
+    if (e.ts > weekStart) surfacesWeek[key] = (surfacesWeek[key] || 0) + e.billed;
+    if (e.ts > fiveStart) surfacesFive[key] = (surfacesFive[key] || 0) + e.billed;
   }
 
   // lifetime odometer: the whole store, backfill included (weighted units), plus whatever
@@ -380,28 +374,21 @@ export function computeBudget(store, now) {
   const burn5m = store.events.reduce((s, e) => (e.ts > now - 300 && e.ts <= now + 60 ? s + e.billed : s), 0);
   const ratePerSec = burn5m / 300;
 
-  // The pace model: the WEEK is the budget. sustainable = the per-minute rate that
-  // spends exactly the weekly reserve by the time it resets. net = sustainable − recent
-  // burn: + = under weekly pace (you'll make the week), − = over (dry early). Replaces the
-  // 5h-refill proxy — the 5h cap resets in a cliff, so "refill/min" was a fiction; the
-  // weekly pace is the real constraint the standing is already derived from.
-  const weekMinLeft = wr && wr > now ? (wr - now) / 60 : null;
-  const sustainablePerMin = weeklyLeft != null && weekMinLeft ? weeklyLeft / weekMinLeft : null;
-  const netPerMinVal = sustainablePerMin != null
-    ? Math.round(sustainablePerMin - burn5m / 5)
-    : (five != null ? Math.round(five / (FIVE_H / 60) - burn5m / 5) : null);
-  // projected wall hit: trailing-6h burn extrapolated forward. 6h smooths the 5m spikes
-  // a live session throws; a projection inside the current week window means "at this
-  // pace you hit the wall EARLY" — the signal this week's postmortem never got.
+  // PACE, in percent. Rate comes from the trailing 6h (smooths the spikes a live session
+  // throws) as a share of the ledger, restated against Anthropic's %. sustainable is the %/hr
+  // that spends exactly what's left by the reset — the two are directly comparable, and
+  // burning above sustainable means the week ends early. projected_wall_at says when.
   const burn6h = windowedBilled(store.events, now, 6 * 3600);
-  const rate6hPerSec = burn6h / (6 * 3600);
+  const burn6hPct = pctOfWeek(burn6h);
+  const burnPctPerHour = burn6hPct != null ? Math.round((burn6hPct / 6) * 100) / 100 : null;
+  const hoursLeft = wr && wr > now ? (wr - now) / 3600 : null;
+  const weekLeftPct = weekPctReal != null ? Math.max(0, 100 - weekPctReal * 100) : null;
+  const sustainablePctPerHour = hoursLeft && weekLeftPct != null
+    ? Math.round((weekLeftPct / hoursLeft) * 100) / 100
+    : null;
   const projectedWallAt =
-    weeklyLeft != null && wr && wr > now && rate6hPerSec > 0 && weeklyLeft / rate6hPerSec < wr - now
-      ? Math.round(now + weeklyLeft / rate6hPerSec)
-      : null;
-  const emptiesAt =
-    ratePerSec > 3 && spendAfterReserve != null
-      ? Math.round(now + spendAfterReserve / ratePerSec)
+    burnPctPerHour > 0 && weekLeftPct != null && hoursLeft
+      ? (weekLeftPct / burnPctPerHour < hoursLeft ? Math.round(now + (weekLeftPct / burnPctPerHour) * 3600) : null)
       : null;
 
   // #2 attribution: heaviest sessions of the last hour, with live 5m rate
@@ -417,7 +404,18 @@ export function computeBudget(store, now) {
     if (e.name) b.name = e.name;
     if (e.ts >= b._ts && e.ctx) { b._ts = e.ts; b.ctx = e.ctx; b.cost_per_action = e.cost_per_action || 0; }
   }
-  const topBurners = [...burners.values()].sort((x, y) => y.tokens_1h - x.tokens_1h).slice(0, 3);
+  const ranked = [...burners.values()].sort((x, y) => y.tokens_1h - x.tokens_1h);
+  // COST INDEX — the efficiency reading, and the number that says which surface to fix.
+  // Absolute tokens-per-action means nothing to a reader; the same user's OWN surfaces
+  // compared against each other mean everything. 1.0 = this account's median session,
+  // 1.8 = burning 80% more per action than typical. No benchmark to invent, no count to ship.
+  const costs = ranked.map((x) => x.cost_per_action).filter((c) => c > 0).sort((x, y) => x - y);
+  const medianCost = costs.length ? costs[Math.floor(costs.length / 2)] : 0;
+  const topBurners = ranked.slice(0, 5).map((x) => ({
+    surface: x.surface, session: x.session, project: x.project, name: x.name,
+    week_pct: pctOfWeek(x.tokens_1h), five_pct: pctOfFive(x.rate_5m),
+    cost_index: medianCost > 0 && x.cost_per_action > 0 ? Math.round((x.cost_per_action / medianCost) * 100) / 100 : null,
+  }));
 
   // when tokens come back: session_to_spend refills at five_reset (next 5h
   // window); a weekly wall only lifts at week_reset. Shipped as countdowns so
@@ -451,27 +449,18 @@ export function computeBudget(store, now) {
     // individual session inside its limits the whole way.
     ...blockShare(a, week, wr, five, now),
     tokens_again: weekWallHit
-      ? `weekly cap — tokens at week_reset (${resetIn(wr) != null ? Math.round(resetIn(wr) / 3600) + "h" : "?"})`
-      : `next 5h window (${resetIn(fiveReset) != null ? Math.round(resetIn(fiveReset) / 60) + "m" : "?"}) refills session_to_spend`,
-    weekly_left_tokens: weeklyLeft, session_to_spend: spendAfterReserve,
-    // absolute weekly ruler for charts: the IMPLIED limit + used, same units as weekly_left_tokens
-    week_cap_tokens: weekLimit != null ? Math.round(weekLimit) : null,
-    week_used_tokens: Math.round(week),
-    session_over: slOver,
-    week_bank: slBank,
-    // net_per_min = sustainable weekly pace − recent (5m) burn. + under pace / − over.
-    // sustainable_per_min = weekly reserve ÷ minutes to week reset. session_burst = the
-    // hard 5h ceiling Anthropic's own reading implies you can physically spend to now
-    // (≥ the paced session_to_spend, which is the share you should stop at).
-    net_per_min: netPerMinVal,
-    sustainable_per_min: sustainablePerMin != null ? Math.round(sustainablePerMin) : null,
-    // trailing-6h burn per minute + where it lands: null = makes the week at this pace,
-    // an epoch = projected wall hit BEFORE week_reset.
-    burn_6h_per_min: Math.round(burn6h / 360),
+      ? `weekly wall — the week reopens at week_reset (${resetIn(wr) != null ? Math.round(resetIn(wr) / 3600) + "h" : "?"})`
+      : `next 5h window (${resetIn(fiveReset) != null ? Math.round(resetIn(fiveReset) / 60) + "m" : "?"}) opens a fresh block share`,
+    // ---- pace, all percent of the week ----------------------------------------------------
+    // week_bank_pct: clock elapsed − spend used, + = ahead of pace. burn/sustainable are %/hr
+    // on the same scale, so "am I going to make the week" is one comparison. No token figure
+    // appears anywhere in this payload, by design.
+    week_elapsed_pct: weekElapsedPct,
+    week_bank_pct: weekBankPct,
+    burn_pct_per_hour: burnPctPerHour,
+    sustainable_pct_per_hour: sustainablePctPerHour,
     projected_wall_at: projectedWallAt,
-    session_burst: fiveLeft,
-    reserved_tokens: reservedTokens, leases: activeLeases.length,
-    burn_5m: burn5m, empties_at: emptiesAt,
+    reserved_pct: reservedPct, leases: activeLeases.length,
     top_burners: topBurners,
     verdict, fresh,
     // what is queued FOR each channel, so the dash can show a channel and the orders
@@ -485,10 +474,19 @@ export function computeBudget(store, now) {
       })),
     anchor_age_sec: Number.isFinite(anchorAge) ? Math.round(anchorAge) : null,
     stored_at: new Date(now * 1000).toISOString(),
-    five_billed: five, week_billed: week, lifetime_billed: lifetime,
-    surfaces: Object.entries(surfaces)
+    // THE ODOMETER, and the only counts that survive. These are not budget readings and must
+    // never be paced against — they are the product's proof that every surface is being seen
+    // at all. lifetime_billed drives the hero counter; burn_5m makes it creep between polls.
+    lifetime_billed: lifetime, burn_5m: burn5m,
+    // Which surface ate the account, on the week's own scale. This is the answer to "where did
+    // it go" — a laptop project at 12.4% of your week is a sentence you can act on.
+    surfaces: Object.entries(surfacesWeek)
       .sort((x, y) => y[1] - x[1])
-      .map(([surface, billed_5h]) => ({ surface, billed_5h })),
+      .map(([surface, billed]) => ({
+        surface,
+        week_pct: pctOfWeek(billed),
+        five_pct: pctOfFive(surfacesFive[surface] || 0),
+      })),
   };
 }
 
@@ -566,28 +564,39 @@ function perTurnSlope(store, root, now) {
 
 export function autoAdvise(store, now) {
   const b = computeBudget(store, now);
-  const pace = b.sustainable_per_min;
+  // Everything published is a percentage now, so the trigger is one too: burning at 3× the
+  // rate the week can sustain. Same comparison as before, on a scale that is Anthropic's
+  // rather than our own cache-weighted ledger's.
+  const pace = b.sustainable_pct_per_hour;
   if (!pace || pace <= 0) return [];
-  const burnPerMin = (b.burn_5m || 0) / 5;
-  if (burnPerMin < 3 * pace) return []; // not hot enough to interrupt anyone over
+  if (!(b.burn_pct_per_hour >= 3 * pace)) return []; // not hot enough to interrupt anyone over
   pruneDirectives(store, now);
   store.watched = store.watched || {};
+  // Context size stays an internal signal — it is the thing being diagnosed, not a budget
+  // reading — but it never reaches the payload or the note as a raw count.
+  const ctxOf = (session) => {
+    let ts = 0, ctx = 0;
+    for (const e of store.events) if (e.root === session && e.ts >= ts && e.ctx) { ts = e.ts; ctx = e.ctx; }
+    return ctx;
+  };
   const sent = [];
   for (const t of b.top_burners || []) {
-    const rate = (t.rate_5m || 0) / 5;
-    if (!t.session || rate < pace) continue;   // must actually be burning right now
+    if (!t.session || !(t.five_pct > 0)) continue;   // must actually be burning right now
     const slope = perTurnSlope(store, t.session, now);
-    const pastWall = t.ctx > CTX_WALL;
+    const pastWall = ctxOf(t.session) > CTX_WALL;
     // climbing catches it on the way UP; past-wall is the backstop for a session that
     // was already fat when we started watching it
     const climbing = !!(slope && slope.rising && slope.last3 >= 150e3);
     if (!pastWall && !climbing) continue;
     const last = store.watched[t.session];
     if (last && now - last < WATCH_COOLDOWN) continue;
+    // Multipliers, not counts: "1.9× more per turn" is both truer to what we can measure and
+    // easier to act on than a token figure in a unit nobody is billed in.
+    const climbX = slope && slope.prev3 > 0 ? Math.round((slope.last3 / slope.prev3) * 10) / 10 : null;
     const why = climbing
-      ? `cost per turn is climbing — ${kf(slope.prev3)} → ${kf(slope.last3)} per turn over the last 6 turns` +
-        (pastWall ? `, and ctx ${kf(t.ctx)} is past the ${kf(CTX_WALL)} wall` : "")
-      : `ctx ${kf(t.ctx)} is past the ${kf(CTX_WALL)} wall`;
+      ? `cost per turn is climbing — ${climbX != null ? `${climbX}×` : "sharply up"} over the last 6 turns` +
+        (pastWall ? ", and the context is past the compaction wall" : "")
+      : "the context is past the compaction wall";
     const r = addDirective(store, {
       session: t.session,
       // full channel key when we know the project, so the dash pins it exactly instead
@@ -599,7 +608,8 @@ export function autoAdvise(store, now) {
       // advisory — there is still room to finish the thought.
       rise: pastWall,
       note:
-        `${why}. Burning ${kf(rate)}/min against a sustainable ${kf(pace)}/min — ` +
+        `${why}. This session is taking ${t.week_pct != null ? `${t.week_pct}% of your week` : "a large share of your week"} ` +
+        `while the account burns at ${b.burn_pct_per_hour}%/hr against a sustainable ${pace}%/hr — ` +
         `every turn re-bills the whole context`,
       ttl_sec: 3600,
     }, now);
@@ -607,7 +617,7 @@ export function autoAdvise(store, now) {
       const dir = store.directives.find((d) => d.id === r.id);
       if (dir) dir.auto = true;
       store.watched[t.session] = Math.round(now);
-      sent.push({ session: t.session, name: t.name || t.project || null, ctx: t.ctx, rate });
+      sent.push({ session: t.session, name: t.name || t.project || null, week_pct: t.week_pct });
     }
   }
   return sent;

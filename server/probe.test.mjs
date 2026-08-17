@@ -72,7 +72,7 @@ test("push gone: stale anchor is pulled, and the fleet stops reading stale", asy
   assert.equal(calls[0].token, "tok");
   assert.notEqual(b.verdict, "stale");
   assert.equal(b.anchor_age_sec, 0, "budget computed against the freshly pulled anchor");
-  assert.ok(b.session_to_spend > 0, `expected live headroom, got ${b.session_to_spend}`);
+  assert.ok(b.block_share_pct > 0, `expected a live block share, got ${b.block_share_pct}`);
   const ops = (await store.load("testy")).ops.filter((o) => o.op === "probe");
   assert.equal(ops.length, 1);
 });

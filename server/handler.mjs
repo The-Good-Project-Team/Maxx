@@ -48,7 +48,7 @@ const TOOLS = [
   },
   {
     name: "maxx_budget",
-    description: "Read this account's live token budget from the central maxx tally. THE RULE: maxx COUNTS, Anthropic LIMITS. Nothing in this payload can deny you work — the only things that stop a call are Anthropic's own 5h and weekly windows, and they enforce themselves by rejecting it. Pace against block_share_pct: the percentage of your WEEK that THIS 5h block may spend (what remains of the week ÷ the 5h blocks left in it), paired with block_used_pct, what it has spent, on the same denominator so the two compare. Going past your share is fine — it borrows from later blocks and breaches nothing; on_pace says which side you are on, blocks_left_week says how many blocks remain. Do NOT pace against '% of the 5h limit': that reads 100%-is-fine every block because the 5h window refills, and six of those in a row ends the week on Wednesday with every session 'within limits'. usage_week_pct / usage_five_pct are Anthropic's REAL /usage utilization (0..1, null when never anchored; usage_week_live / usage_five_live say the anchored window has not reset yet) — these are the ONLY hard stops. verdict is ok / degraded (no fresh /usage anchor, weekly ledger still governs, proceed) / over (a real Anthropic wall) / stale / calibrating (never anchored — set up first). Every token figure here (weekly_left_tokens, session_to_spend, session_burst, week_cap_tokens, week_bank) is DERIVED from those readings — limit = what we billed in the window ÷ their %, so the units are ours and the ceiling is theirs. maxx used to pace against a tank it set itself; every account outspent it and those fields pinned at 0 forever while the real weeks were untouched, so the tank is gone. They are null, never 0, when there is no reading to derive from: null means UNKNOWN, so proceed and re-check. If a read fails, PROCEED: an unreadable meter is not an exhausted account, and treating those as the same thing cost a fleet 26 hours. Full model: GET /api/model.",
+    description: "Read this account's live token budget from the central maxx tally. THE RULE: maxx COUNTS, Anthropic LIMITS. Nothing in this payload can deny you work — the only things that stop a call are Anthropic's own 5h and weekly windows, and they enforce themselves by rejecting it. Pace against block_share_pct: the percentage of your WEEK that THIS 5h block may spend (what remains of the week ÷ the 5h blocks left in it), paired with block_used_pct, what it has spent, on the same denominator so the two compare. Going past your share is fine — it borrows from later blocks and breaches nothing; on_pace says which side you are on, blocks_left_week says how many blocks remain. Do NOT pace against '% of the 5h limit': that reads 100%-is-fine every block because the 5h window refills, and six of those in a row ends the week on Wednesday with every session 'within limits'. usage_week_pct / usage_five_pct are Anthropic's REAL /usage utilization (0..1, null when never anchored; usage_week_live / usage_five_live say the anchored window has not reset yet) — these are the ONLY hard stops. verdict is ok / degraded (no fresh /usage anchor, weekly ledger still governs, proceed) / over (a real Anthropic wall) / stale / calibrating (never anchored — set up first). This payload contains NO token counts, by design. maxx published them twice and both were estimates wearing a decimal point — first against a 1e9 tank it set itself, then implied from their % — because our ledger is cache-weighted and does not agree with Anthropic's billing. Everything here is a PERCENT OF THE WEEK, one denominator, so block_share_pct, block_used_pct, reserved_pct and each surface's week_pct subtract and compare directly. week_bank_pct is clock-elapsed minus spend-used (+ = ahead of pace); burn_pct_per_hour against sustainable_pct_per_hour answers 'will I make the week', and projected_wall_at says when you won't. surfaces[] and top_burners[] attribute the week by percent, and top_burners[].cost_index is tokens-per-action against THIS account's median session (1.0 = typical, 1.8 = burning 80% more per action) — the number that says which surface to fix. A field is null, never 0, when there is no reading to derive it from: null means UNKNOWN, so proceed and re-check. If a read fails, PROCEED: an unreadable meter is not an exhausted account, and treating those as the same thing cost a fleet 26 hours. Full model: GET /api/model.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: { handle: { type: "string" } },
@@ -56,22 +56,22 @@ const TOOLS = [
   },
   {
     name: "maxx_reserve",
-    description: "Reserve part of session_to_spend before spawning agents, so concurrent dispatchers don't double-spend the same allowance. Granted leases subtract from the session_to_spend other callers see and auto-expire at ttl_sec. Returns {granted, lease_id, remaining}. Call before a fan-out; size tokens to the fleet you're about to spawn. Pass your existing lease_id to RENEW: the old lease is replaced by the new grant (resize/extend) instead of stacking. When the fan-out completes, call maxx_release — the spend has landed via emits, so a lingering lease double-throttles everyone else until TTL.",
+    description: "Reserve part of this block's share before spawning agents, so concurrent dispatchers don't double-spend the same allowance. Sizes are PERCENT OF THE WEEK — the same scale as block_share_pct — so a fan-out you expect to cost about a fifth of this block's share reserves that fifth. Granted leases subtract from the allowance other callers compute (block_share_pct minus block_used_pct minus reserved_pct) and auto-expire at ttl_sec. Returns {granted, lease_id, remaining_pct}. Pass your existing lease_id to RENEW: the old lease is replaced by the new grant (resize/extend) instead of stacking. When the fan-out completes, call maxx_release — the spend has landed via emits, so a lingering lease double-throttles everyone else until TTL.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
         handle: { type: "string" },
-        tokens: { type: "integer", description: "Tokens to reserve" },
+        pct: { type: "number", description: "Percent OF THE WEEK to reserve (same scale as block_share_pct)" },
         ttl_sec: { type: "integer", description: "Lease lifetime (default 3600)" },
         label: { type: "string", description: "Who/what this lease is for" },
         lease_id: { type: "string", description: "Your existing lease to replace (renew/resize) instead of stacking a new one" },
       },
-      required: ["tokens"],
+      required: ["pct"],
     },
   },
   {
     name: "maxx_release",
-    description: "Release a reservation lease when the fan-out it guarded completes (or is cancelled). The tokens actually spent are already in the tally via maxx_emit; releasing returns the UNSPENT hold to session_to_spend immediately instead of after TTL. Returns {ok, released}.",
+    description: "Release a reservation lease when the fan-out it guarded completes (or is cancelled). What was actually spent is already in the tally via maxx_emit; releasing returns the UNSPENT hold to the allowance every other dispatcher sees, immediately instead of after TTL. Returns {ok, released}.",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -226,10 +226,10 @@ function renderCard(h, s, b, setup = null) {
   // bars data (initial paint; live.json tick keeps it current). Stale/calibrating
   // honesty markers ride in the bar text — same semantics the old rows carried.
   const bars0 = JSON.stringify({
-    five_billed: b.five_billed, available: b.session_to_spend,
-    week: b.usage_week_pct, quota: b.usage_five_pct,
-    weekly_left: b.weekly_left_tokens, session_over: b.session_over, burn_5m: b.burn_5m,
-    week_billed: b.week_billed, week_bank: b.week_bank, net_per_min: b.net_per_min,
+    week_pct: b.usage_week_pct, five_pct: b.usage_five_pct,
+    block_share_pct: b.block_share_pct, block_used_pct: b.block_used_pct,
+    week_bank_pct: b.week_bank_pct, week_elapsed_pct: b.week_elapsed_pct, on_pace: b.on_pace,
+    burn_pct_per_hour: b.burn_pct_per_hour, sustainable_pct_per_hour: b.sustainable_pct_per_hour,
     week_reset_in_sec: b.week_reset_in_sec, fresh: b.fresh, anchor_age_sec: b.anchor_age_sec,
     verdict: b.verdict,
   });
@@ -443,25 +443,28 @@ ${CHART_JS}
     var stale=!d.fresh?(d.anchor_age_sec!=null?' · '+vw+' · anchored '+ago(d.anchor_age_sec)+' ago':' · '+vw):'';
     // calibrating = no /usage reading to derive from. A real 3% week is a LIVE 3%, not a
     // warm-up — only a missing reading means the numbers aren't ready yet.
-    var calib=d.week==null?' · calibrating':'';
-    // net = sustainable weekly pace − burn (server-computed, one ruler with dash/statusline)
-    var prog=d.net_per_min!=null?d.net_per_min:0,up=prog>=0;
-    var avail=d.available!=null?d.available:0,over=d.session_over||0,banked=avail>0;
-    var sNum=(banked?'+'+kf(avail):'<span class="bad">−'+kf(over)+'</span>')+
-      (Math.abs(prog)>=500?' · <span class="'+(up?'good':'bad')+'">'+(up?'+':'−')+kf(Math.abs(prog))+'/min</span>':'')+stale;
-    var bank=d.week_bank;
-    var wNum=(d.weekly_left!=null?kf(d.weekly_left)+' left':'—')+
-      (bank!=null?(bank>=0?' · <span class="good">+'+kf(bank)+' banked</span>':' · <span class="bad">−'+kf(-bank)+' over</span>'):'')+
+    var calib=d.week_pct==null?' · calibrating':'';
+    // Everything on this card is a PERCENT OF THE WEEK. The session bar compares what this
+    // 5h block has spent against what it may spend; the week bar shows what's left with the
+    // clock's own position as the pace mark. No token count appears anywhere.
+    var share=d.block_share_pct!=null?d.block_share_pct:0;
+    var used=d.block_used_pct!=null?d.block_used_pct:0;
+    var onPace=d.on_pace!==false;
+    var burn=d.burn_pct_per_hour, sus=d.sustainable_pct_per_hour;
+    var sNum=(share>0?used.toFixed(1)+'% of '+share.toFixed(1)+'% share':'—')+
+      (burn!=null&&sus!=null?' · <span class="'+(onPace?'good':'bad')+'">'+burn+'%/hr vs '+sus+'%/hr</span>':'')+stale;
+    var bank=d.week_bank_pct;
+    var weekUsedPct=d.week_pct!=null?d.week_pct*100:null;
+    var wNum=(weekUsedPct!=null?(100-weekUsedPct).toFixed(1)+'% left':'—')+
+      (bank!=null?(bank>=0?' · <span class="good">+'+bank.toFixed(1)+'% ahead</span>':' · <span class="bad">'+bank.toFixed(1)+'% behind</span>'):'')+
       (d.week_reset_in_sec!=null?' · '+ago(d.week_reset_in_sec):'')+calib;
-    // session netBar: standing / realMax (green), over / room-to-lockout (red)
-    var realMax=(d.five_billed||0)+avail-over;
-    var fiveCap=d.quota>0?(d.five_billed||0)/d.quota:null;
-    var overRoom=fiveCap&&fiveCap>realMax?fiveCap-realMax:Math.max(realMax,1);
-    var sSpec={green:realMax>0?avail/realMax:0,red:over/overRoom,col:'green'};
-    // week fuel tank: fill = LEFT, pace tick from bank, CLI color thresholds
-    var weekCap=(d.week_billed||0)+(d.weekly_left||0);
-    var leftFrac=weekCap>0?(d.weekly_left||0)/weekCap:0;
-    var wTick=weekCap>0&&bank!=null?Math.min(1,Math.max(0,((d.weekly_left||0)-bank)/weekCap)):null;
+    // session bar: the block's share is the full width; spend fills it, overspill reads red
+    var sSpec=share>0
+      ?{green:Math.min(1,used/share),red:used>share?Math.min(1,(used-share)/share):0,col:onPace?'green':'amber'}
+      :{green:0};
+    // week bar: fill = LEFT, pace mark = where the clock says you should be
+    var leftFrac=weekUsedPct!=null?Math.max(0,1-weekUsedPct/100):0;
+    var wTick=d.week_elapsed_pct!=null?Math.min(1,Math.max(0,1-d.week_elapsed_pct/100)):null;
     var wRatio=wTick!=null&&wTick>0.02?leftFrac/wTick:1;
     var wCol=(leftFrac<0.1||wRatio<0.5)?'red':wRatio<0.85?'amber':'green';
     document.getElementById('bars').innerHTML=
@@ -481,7 +484,7 @@ ${CHART_JS}
         odo.rate=(j.burn_5m||0)/300;
         window.__setLife(odo.cur);
       }
-      if(j.five_billed!=null)renderBars(j);
+      if(j.week_pct!==undefined)renderBars(j);
       if(j.feed&&j.feed.length)feed.innerHTML=j.feed.slice(0,8).map(function(e){
         return '<li><span>'+e.channel+' · '+ago(e.ago_sec)+' ago</span><b>'+(e.tokens_1h>0?'+'+hum(e.tokens_1h)+' <span class="sub">/1h</span>':'<span class="sub">idle</span>')+'</b></li>';}).join('');
       document.getElementById('stamp').textContent=new Date().toLocaleString([],{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
@@ -751,7 +754,7 @@ function weekWallSeries(s, nowS) {
     return head;
   };
   return {
-    start, end, now: nowS, cum, cap: b.week_cap_tokens, used: b.week_used_tokens, pct: b.week,
+    start, end, now: nowS, cum, cap: 100, used: b.usage_week_pct != null ? b.usage_week_pct * 100 : null, pct: b.usage_week_pct,
     projAt: b.projected_wall_at, rate: b.burn_6h_per_min,
     byProject: top(byProject, 6), byModel: top(byModel, 6),
   };
@@ -1283,57 +1286,51 @@ if(location.search)history.replaceState(null,'',location.pathname);
     // session number = signed STANDING (available to spend: + banked / − over), NOT used.
     // rate = refuel − live burn (tank refills at rolling-5h-burn ÷ 300); its sign and
     // color follow the STANDING, never the raw rate. week = left · even-pace bank · reset.
-    var burnMin=b.burn_5m!=null?b.burn_5m/5:0;
-    // NET = sustainable weekly pace − recent burn (server-computed, one ruler). + under
-    // pace (you'll make the week) / − over pace (dry early). The 5h-refill model is gone.
-    var prog=b.net_per_min!=null?b.net_per_min:0;
-    var up=prog>=0;
-    // live drift: standing moves at net/min, week reserve drains at burn/min
-    var standing=(b.session_to_spend||0)-(b.session_over||0)+prog*drift/60;
-    var toSpend=Math.max(0,standing),over=Math.max(0,-standing);
-    var weekLeft=Math.max(0,(b.weekly_left_tokens||0)-Math.max(0,burnMin)*drift/60);
-    var bank=b.week_bank!=null?b.week_bank-Math.max(0,burnMin)*drift/60:null;
-    var banked=toSpend>0;
-    var progStr=(up?'+':'−')+kf(Math.abs(prog))+'/min';
-    var sNum=(banked?'+'+kf(toSpend):'<span class="bad">−'+kf(over)+'</span>')+
-      (Math.abs(prog)>=500?' · <span class="'+(up?'good':'bad')+'">'+progStr+'</span>':'');
-    var wNum=(b.weekly_left_tokens!=null?kf(weekLeft)+' left':'—')+
-      (bank!=null?(bank>=0?' · <span class="good">+'+kf(bank)+' banked</span>':' · <span class="bad">−'+kf(-bank)+' over</span>'):'')+
+    // ONE denominator: percent of the week. The session bar is this block's spend against
+    // this block's share; the week bar is what's left with the clock as the pace mark.
+    var share=b.block_share_pct!=null?b.block_share_pct:0;
+    var used=b.block_used_pct!=null?b.block_used_pct:0;
+    var onPace=b.on_pace!==false;
+    var burn=b.burn_pct_per_hour, sus=b.sustainable_pct_per_hour;
+    var weekUsedPct=b.usage_week_pct!=null?b.usage_week_pct*100:null;
+    var bank=b.week_bank_pct;
+    var sNum=(share>0?used.toFixed(1)+'% of '+share.toFixed(1)+'% share':'—')+
+      (burn!=null&&sus!=null?' · <span class="'+(onPace?'good':'bad')+'">'+burn+'%/hr vs '+sus+'%/hr sustainable</span>':'');
+    var wNum=(weekUsedPct!=null?(100-weekUsedPct).toFixed(1)+'% left':'—')+
+      (bank!=null?(bank>=0?' · <span class="good">+'+bank.toFixed(1)+'% ahead of pace</span>':' · <span class="bad">'+bank.toFixed(1)+'% behind pace</span>'):'')+
       (b.week_reset_in_sec!=null?' · '+ago(b.week_reset_in_sec):'');
-    // session spec: standing vs realMax (green), over vs room-to-lockout (red)
-    var realMax=(b.five_billed||0)+(b.session_to_spend||0)-(b.session_over||0);
-    var fiveCap=b.usage_five_pct>0?(b.five_billed||0)/b.usage_five_pct:null;
-    var overRoom=fiveCap&&fiveCap>realMax?fiveCap-realMax:Math.max(realMax,1);
-    var sSpec={green:realMax>0?toSpend/realMax:0,red:over/overRoom,col:'green'};
-    // week spec: fuel left, pace tick from the shipped bank ((left − bank) ÷ cap), CLI colors
-    var weekCap=(b.week_billed||0)+(b.weekly_left_tokens||0);
-    var leftFrac=weekCap>0?weekLeft/weekCap:0;
-    var wTick=weekCap>0&&bank!=null?Math.min(1,Math.max(0,(weekLeft-bank)/weekCap)):null;
+    var sSpec=share>0
+      ?{green:Math.min(1,used/share),red:used>share?Math.min(1,(used-share)/share):0,col:onPace?'green':'amber'}
+      :{green:0};
+    var leftFrac=weekUsedPct!=null?Math.max(0,1-weekUsedPct/100):0;
+    var wTick=b.week_elapsed_pct!=null?Math.min(1,Math.max(0,1-b.week_elapsed_pct/100)):null;
     var wRatio=wTick!=null&&wTick>0.02?leftFrac/wTick:1;
     var wCol=(leftFrac<0.1||wRatio<0.5)?'red':wRatio<0.85?'amber':'green';
     document.getElementById('bars').innerHTML=bar('session',sSpec,sNum)+bar('week',{green:leftFrac,tick:wTick,col:wCol},wNum)+
       '<div style="font-size:11.5px;color:#a3abba">bar = what\\'s left · <span style="color:#152036">╎</span> = even pace</div>';
 
-    // NET / MIN = sustainable weekly pace − recent burn. + under pace, − over pace.
+    // PACE: the week's consumption rate against what it can sustain, in %/hr.
     var netV=document.getElementById('netV'),netU=document.getElementById('netU'),netSub=document.getElementById('netSub');
-    var nh=hum(Math.abs(prog));
-    if(Math.abs(prog)<1000){netV.textContent='0';netU.textContent='/min';netV.style.color='var(--ink)';}
-    else{netV.textContent=(up?'+':'−')+nh.slice(0,-1);netU.textContent=nh.slice(-1)+'/min';netV.style.color=up?'var(--green)':'var(--red)';}
-    netSub.textContent=up?'under weekly pace':'over weekly pace';
-    // WEEK LEFT: the weekly reserve, with the pace bank as context
-    var remV=document.getElementById('remV'),remSub=document.getElementById('remSub');
-    remV.textContent=hum(weekLeft);remV.style.color='var(--ink)';
-    remSub.textContent=(bank!=null?(bank>=0?'+'+hum(bank)+' ahead of pace':hum(-bank)+' over pace'):'—')+
-      (b.week_reset_in_sec!=null?' · resets '+ago(b.week_reset_in_sec):'');
-    // THIS SESSION: safe-to-spend (weekly-paced) with the hard 5h burst ceiling as context
-    var runV=document.getElementById('runV'),runSub=document.getElementById('runSub');
-    if(banked){
-      runV.textContent='+'+hum(toSpend);runV.style.color='var(--ink)';
-      runSub.textContent='safe to spend'+(b.session_burst!=null?' · burst to '+hum(b.session_burst):'');
-    }else{
-      runV.textContent=over>0?'−'+hum(over):'0';runV.style.color='var(--red)';
-      runSub.textContent='over pace'+(b.session_burst!=null?' · burst to '+hum(b.session_burst):'');
+    if(burn==null||sus==null){netV.textContent='—';netU.textContent='';netV.style.color='var(--ink)';netSub.textContent='no reading yet';}
+    else{
+      netV.textContent=burn.toFixed(2);netU.textContent='%/hr';
+      netV.style.color=onPace?'var(--green)':'var(--red)';
+      netSub.textContent=(onPace?'under':'over')+' pace · '+sus.toFixed(2)+'%/hr sustainable';
     }
+    // WEEK LEFT: what remains of the real week, with the pace bank as context
+    var remV=document.getElementById('remV'),remSub=document.getElementById('remSub');
+    remV.textContent=weekUsedPct!=null?(100-weekUsedPct).toFixed(1)+'%':'—';remV.style.color='var(--ink)';
+    remSub.textContent=(bank!=null?(bank>=0?'+'+bank.toFixed(1)+'% ahead of pace':bank.toFixed(1)+'% behind pace'):'—')+
+      (b.week_reset_in_sec!=null?' · resets '+ago(b.week_reset_in_sec):'');
+    // THIS BLOCK: spend against share, with the 5h wall as context
+    var runV=document.getElementById('runV'),runSub=document.getElementById('runSub');
+    if(share>0){
+      var leftInBlock=share-used;
+      runV.textContent=(leftInBlock>=0?'+':'')+leftInBlock.toFixed(2)+'%';
+      runV.style.color=leftInBlock>=0?'var(--ink)':'var(--red)';
+      runSub.textContent=(leftInBlock>=0?'left in this block\\'s share':'past this block\\'s share')+
+        (b.session_used_pct!=null?' · 5h window at '+b.session_used_pct+'%':'');
+    }else{runV.textContent='—';runV.style.color='var(--ink)';runSub.textContent='no reading yet';}
     // SURFACES: how many machines and cloud agents are pouring into this one tally — the
     // count IS the product claim, and it is the one number no per-machine /usage can show.
     var surfV=document.getElementById('surfV'),surfSub=document.getElementById('surfSub');
@@ -1389,7 +1386,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
     ev.forEach(function(e){var x=new Date(e.ts0||e.ts).getTime()/1000;if(x>0&&x<oldest)oldest=x});
     var covLo=ev.length>=200?Math.max(0,Math.min(47,47-Math.floor((t-oldest)/60))):0,cov=48-covLo;
     var mx=Math.max.apply(null,buckets.concat([1]));
-    var pace=b.sustainable_per_min!=null?b.sustainable_per_min:(b.five_billed||0)/300;
+    var pace=b.sustainable_pct_per_hour!=null?b.sustainable_pct_per_hour:0;
     var H=140,BOX=170;
     // SIGNED against pace. Every minute grants one pace-worth: spend less and the
     // difference is BANKED (bar up, green); spend more and you are DOWN by it (bar
@@ -1465,9 +1462,9 @@ if(location.search)history.replaceState(null,'',location.pathname);
     // verdicts mean the numbers themselves are not live
     else if(b.verdict!=='ok'&&b.verdict!=='over')warns.push({s:'red',t:'signal <b>'+esc(b.verdict)+'</b> · numbers not live'});
     // the 5h wall itself (burst exhausted): Claude has stopped you anyway — offer the view
-    if(b.verdict!=='calibrating'&&b.session_burst!=null&&b.session_burst<=0)
+    if(b.verdict!=='calibrating'&&b.usage_five_pct!=null&&b.usage_five_pct>=0.99)
       warns.push({s:'red wrap',t:'you hit the session wall — sorry. time for some contemplation → <a href="https://www.youtube.com/watch?v=linlz7-Pnvw" target="_blank" rel="noopener" style="color:inherit;font-weight:700">Swiss Alps in 8K</a>'+(b.five_reset_in_sec!=null?' · back in '+ago(b.five_reset_in_sec):'')});
-    else if(b.verdict!=='calibrating'&&b.session_to_spend!=null&&b.session_to_spend<=0)warns.push({s:'red',t:'session over by <b>'+hum(b.session_over||0)+'</b> · ease off'});
+    else if(b.verdict!=='calibrating'&&b.on_pace===false)warns.push({s:'amber',t:'this block is at <b>'+(b.block_used_pct||0).toFixed(1)+'%</b> of the week against a <b>'+(b.block_share_pct||0).toFixed(1)+'%</b> share · borrowing from later blocks'});
     // context warnings are TRAJECTORY-based, not size-based: a session holding at
     // 105k is fine (no warn); one climbing shows +k/turn and turns-to-wall. Most
     // urgent (soonest wall) first. window.__ctxS is set at the top of renderAll.
@@ -1484,7 +1481,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
     if(werrs>0)warns.push({s:'amber',t:'<b>'+werrs+'</b> token error'+(werrs===1?'':'s')+' · last hour'});
     var wheld=(window.__ops||[]).filter(function(o){return /held|OVER|pause/i.test((o.op||'')+' '+(o.d||''))&&o.ts>t-1800}).sort(function(x,y){return y.ts-x.ts})[0];
     if(wheld)warns.push({s:'amber',t:'🛡 gate held spend · '+ago(Math.max(0,t-wheld.ts))+' ago'});
-    var wBurn=b.burn_5m!=null?b.burn_5m/5:0,wPace=b.sustainable_per_min||0;
+    var wBurn=b.burn_pct_per_hour||0,wPace=b.sustainable_pct_per_hour||0;
     // A burn multiple on its own is a number, not an answer. Name the session driving
     // it, its context size, and the action — the cause is nearly always one session
     // past the context wall re-billing its whole context every turn.
@@ -1757,17 +1754,23 @@ never anchored). Pair each with \`usage_week_live\` / \`usage_five_live\` — an
 has already reset describes a window that no longer exists. \`verdict\` is \`over\` only when one of
 those real walls is hit.
 
-## Every token figure is derived, never configured
+## There are no token figures
 
-\`weekly_left_tokens\`, \`session_to_spend\`, \`session_burst\`, \`week_cap_tokens\` and \`week_bank\`
-come from ONE identity: \`limit = billed_in_window ÷ their_pct\`. Our ledger supplies the numerator,
-Anthropic's reading supplies the ceiling, and the quotient lands back in our weighted units.
-Below a 2% reading the divide is noise, so they ship \`null\`.
+Everything is a **percent of the week** — one denominator, so \`block_share_pct\`, \`block_used_pct\`,
+\`reserved_pct\` and each surface's \`week_pct\` subtract and compare with no arithmetic.
 
-\`null\` means UNKNOWN — proceed and re-check. It never means empty. maxx used to pace against a
-1e9 "coin" tank it set for itself; every account outspent it, and on 2026-08-17 reif_tgp read
-\`session_to_spend 0\` against a real 5h window at 1%. A counter that reads empty forever is worse
-than no counter, because fleets parse it as no budget. The tank is gone.
+\`week_bank_pct\` is clock-elapsed minus spend-used (+ = ahead of pace). \`burn_pct_per_hour\` against
+\`sustainable_pct_per_hour\` answers "will I make the week"; \`projected_wall_at\` says when you won't.
+
+maxx published token counts twice and both were estimates wearing a decimal point: first against a
+1e9 "coin" tank it set for itself, then implied from Anthropic's own % (\`billed ÷ pct\`). Our ledger
+is cache-weighted and does not agree with Anthropic's billing, so no token number we printed was
+ever a quantity anyone is charged for. Their percentage is the one reading that is not a guess.
+
+\`lifetime_billed\` and \`burn_5m\` are the odometer — proof that every surface is being counted at
+all. They are NOT budget readings and must never be paced against.
+
+A field is \`null\`, never \`0\`, when there is nothing to derive it from. Null means UNKNOWN.
 
 ## If you cannot read the meter, PROCEED
 
@@ -1937,7 +1940,7 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
         const payload = { ...ev, handle };
         const isDash = hook.format === "dash";
         const body = isDash
-          ? JSON.stringify({ source: "maxx", kind: `budget-${ev.event}`, payload: { text: `maxx: ${ev.event} verdict=${ev.verdict} spend=${ev.session_to_spend} week=${Math.round((ev.week || 0) * 100)}%${ev.session ? ` session=${ev.session}` : ""}` } })
+          ? JSON.stringify({ source: "maxx", kind: `budget-${ev.event}`, payload: { text: `maxx: ${ev.event} verdict=${ev.verdict} week=${Math.round((ev.usage_week_pct || 0) * 100)}% block=${ev.block_used_pct}/${ev.block_share_pct}%${ev.session ? ` session=${ev.session}` : ""}` } })
           : JSON.stringify(payload);
         fetch(hook.url, {
           method: "POST",
@@ -2067,9 +2070,9 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // Bounded so a retry loop can't grow the doc without limit: total lease tokens are
   // already capped by the allowance, but 1-token grants could stack thousands of rows.
   const MAX_LEASES = 100;
-  async function reserve(handle, { tokens, ttl_sec = 3600, label = null, lease_id = null } = {}) {
-    tokens = Math.round(Number(tokens));
-    if (!(tokens > 0)) return { granted: false, error: "tokens must be > 0" };
+  async function reserve(handle, { pct, ttl_sec = 3600, label = null, lease_id = null } = {}) {
+    pct = Math.round(Number(pct) * 10) / 10;
+    if (!(pct > 0)) return { granted: false, error: "pct must be > 0 (percent of the week)" };
     const s = await store.load(handle);
     const t = now();
     s.leases = (s.leases || []).filter((l) => l.expires > t);
@@ -2080,16 +2083,21 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       return { granted: false, error: `too many active leases (max ${MAX_LEASES})` };
     await maybeRefreshAnchor(handle, s, t);   // a fan-out must not be sized off a dead anchor
     const b = computeBudget(s, t);
-    const avail = b.session_to_spend ?? 0;
+    // The allowance is this block's share of the week, net of what the block already spent
+    // and of every hold other dispatchers are sitting on. All four terms are percentages of
+    // the same week, so they subtract directly.
+    const avail = b.block_share_pct != null
+      ? Math.round(Math.max(0, b.block_share_pct - (b.block_used_pct || 0) - (b.reserved_pct || 0)) * 10) / 10
+      : null;
     // degraded (no fresh /usage anchor, weekly standing still live) still grants —
     // otherwise a sleeping laptop leaves fan-outs unreserved and unguarded.
-    if (!(b.verdict === "ok" || b.verdict === "degraded") || tokens > avail)
-      return { granted: false, remaining: avail, verdict: b.verdict };
-    const lease = { id: randomBytes(8).toString("hex"), tokens, expires: Math.round(t + Math.min(Math.max(ttl_sec, 60), 6 * 3600)), label };
+    if (!(b.verdict === "ok" || b.verdict === "degraded") || avail == null || pct > avail)
+      return { granted: false, remaining_pct: avail, verdict: b.verdict };
+    const lease = { id: randomBytes(8).toString("hex"), pct, expires: Math.round(t + Math.min(Math.max(ttl_sec, 60), 6 * 3600)), label };
     s.leases.push(lease);
-    logOp(s, "reserve", `${Math.round(tokens / 1000)}k granted${label ? ` · ${label}` : ""}`, t);
+    logOp(s, "reserve", `${pct}% of week granted${label ? ` · ${label}` : ""}`, t);
     await store.save(handle, s);
-    return { granted: true, lease_id: lease.id, tokens, remaining: avail - tokens, expires_at: lease.expires };
+    return { granted: true, lease_id: lease.id, pct, remaining_pct: Math.round((avail - pct) * 10) / 10, expires_at: lease.expires };
   }
 
   // The other half of the lease contract: a fan-out that lands must give its hold back.
@@ -2199,12 +2207,14 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
         const lifetime = s.events.reduce((a, e) => a + (e.raw || e.billed || 0), 0);
         return { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" },
           body: JSON.stringify({
-            lifetime, available: budget.session_to_spend, burn_5m: budget.burn_5m,
+            lifetime, burn_5m: budget.burn_5m,
             // magnitudes for the card's session/week bars — counts only, same class of
             // data as "available"; never names
             five_billed: budget.five_billed, week: budget.week, quota: budget.quota,
-            weekly_left: budget.weekly_left_tokens, session_over: budget.session_over,
-            week_billed: budget.week_billed, week_bank: budget.week_bank, net_per_min: budget.net_per_min,
+            block_share_pct: budget.block_share_pct, block_used_pct: budget.block_used_pct, on_pace: budget.on_pace,
+            week_pct: budget.usage_week_pct, five_pct: budget.usage_five_pct, week_bank_pct: budget.week_bank_pct,
+            week_elapsed_pct: budget.week_elapsed_pct, burn_pct_per_hour: budget.burn_pct_per_hour,
+            sustainable_pct_per_hour: budget.sustainable_pct_per_hour,
             five_reset_in_sec: budget.five_reset_in_sec, week_reset_in_sec: budget.week_reset_in_sec,
             fresh: budget.fresh, anchor_age_sec: budget.anchor_age_sec, verdict: budget.verdict, feed,
           }) };
@@ -2676,28 +2686,30 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
           instructions:
             "BUDGET GATE — before any token-expensive work (spawning agents/subagents, long " +
             "generations, builds, large batches) you MUST first call `maxx_budget`. It returns the " +
-            "whole account's live budget (all machines + cloud combined). STOP if: verdict is " +
-            "\"over\" or \"stale\", or session_to_spend <= 0. \"degraded\" means no machine has read " +
-            "/usage recently (a laptop asleep) — the weekly standing is still live from the ledger, so " +
-            "PROCEED, but against the weekly numbers (weekly_left_tokens, session_to_spend) and re-check " +
-            "more often; do not trust the 5h window fields. If verdict is \"ok\", plan your work against " +
-            "session_to_spend — the SAFE envelope: weekly budget paced across the remaining 5h windows " +
-            "(so future windows keep giving you fair shares), capped at the 5h wall, net of reserves. " +
-            "session_burst is the HARD 5h ceiling you can physically spend to now — use it only if you " +
-            "must exceed pace, it eats into future weeks. Two cautions: (1) net_per_min is sustainable " +
-            "pace − recent burn; if negative you're spending faster than the week can sustain, so re-check " +
-            "before each expensive step, not just once. (2) Before a FAN-OUT (spawning multiple agents at " +
-            "once) call `maxx_reserve` for the tokens you'll need FIRST — otherwise every concurrent agent " +
-            "sees the same full allowance and the fleet can overspend it — and call `maxx_release` with the " +
-            "lease_id when the fan-out completes: the spend is already in the tally via emits, so an unreleased " +
-            "lease double-throttles every other dispatcher until its TTL. Hard gate — check it every run. " +
+            "whole account's live budget (all machines + cloud combined), and every number in it is a " +
+            "PERCENT OF THE WEEK — there are no token counts, because our ledger is cache-weighted and " +
+            "never agreed with Anthropic's billing. STOP only if verdict is \"over\" (a real Anthropic " +
+            "wall) or \"stale\". \"degraded\" means no machine has read /usage recently (a laptop asleep) — " +
+            "PROCEED and re-check more often. PACE against block_share_pct: what THIS 5h block may spend " +
+            "as a percentage of your week, paired with block_used_pct, what it HAS spent, on the same " +
+            "denominator so the two compare directly. on_pace says which side you are on. Going past your " +
+            "share is allowed — it borrows from later blocks and breaches nothing — but burn_pct_per_hour " +
+            "above sustainable_pct_per_hour means the week ends early, and projected_wall_at says when. " +
+            "Do NOT pace against the 5h window %: it refills every block, so it reads fine six blocks " +
+            "running while the week ends on Wednesday. A null field means UNKNOWN, never empty — proceed " +
+            "and re-check. Before a FAN-OUT (spawning multiple agents at once) call `maxx_reserve` with " +
+            "the PERCENT of the week you expect it to cost — otherwise every concurrent agent sees the " +
+            "same full allowance and the fleet overspends it — and call `maxx_release` with the lease_id " +
+            "when it completes: the spend is already in the tally via emits, so an unreleased lease " +
+            "double-throttles every other dispatcher until its TTL. Check it every run. " +
             "BURN REPORT — the gate is half the contract; the other half is that YOUR burn appears in the " +
             "tally. At the END of every run (and at checkpoints in a long one) you MUST call `maxx_emit` " +
             "with surface \"cloud:<routine-name>\" and one sessions[] entry carrying your best-effort " +
             "output-token count for this run (name it after the task so the owner's board can show WHO " +
-            "burned WHAT). Leave `anchor` unset — cloud cannot read /usage, and the laptop anchor trues " +
-            "totals up. A run that gates but never emits makes the whole account's budget read " +
-            "optimistically wrong for every other agent. A BLOCKED run emits nothing — that's fine.",
+            "burned WHAT — the tally converts it to a percentage; you never read one back). Leave " +
+            "`anchor` unset — cloud cannot read /usage, and the laptop anchor trues totals up. A run that " +
+            "gates but never emits makes the whole account's budget read optimistically wrong for every " +
+            "other agent. A BLOCKED run emits nothing — that's fine.",
         });
       }
       if (rm === "notifications/initialized" || rm === "notifications/cancelled")

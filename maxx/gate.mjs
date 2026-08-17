@@ -126,7 +126,8 @@ if (args.includes("--status")) {
     gate: pol.enabled ? "ON" : "OFF", mode: pol.mode, margin_pct: pol.margin,
     weekly_stop_pct: pol.weeklyStop, fail_mode: pol.fail, overturn: gate.overturn || null,
     verdict: b.verdict, week: b.usage_week_pct ?? null, week_live: !!b.usage_week_live,
-    session_to_spend: b.session_to_spend ?? null, five_billed: b.five_billed ?? null,
+    block_share_pct: b.block_share_pct ?? null, block_used_pct: b.block_used_pct ?? null,
+    on_pace: b.on_pace ?? null,
     tokens_again: b.tokens_again ?? null,
   }, null, 2));
   process.exit(0);
@@ -318,11 +319,11 @@ if (realWeek != null && realWeek * 100 >= pol.weeklyStop) {
 // 3. spree: pacing off, wall already checked
 if (pol.mode === "spree") allow("spree");
 // 4. pacing is ADVICE, and advice does not deny (Reif, 2026-08-13: "it's just a counter").
-// session_to_spend is now derived from Anthropic's own reading rather than a tank we set,
-// which makes it honest — but honest pacing still isn't a wall. Overspending a block borrows
-// from later blocks; only the checks above can stop a call, because only Anthropic can.
+// The payload is percentages now, so the advice is one comparison: what this block has spent
+// against what it may spend, both as a share of the week. Overspending borrows from later
+// blocks; only the checks above can stop a call, because only Anthropic can.
 allow(
-  b.session_to_spend != null && (b.five_billed || 0) > b.session_to_spend
-    ? `over paced share (${b.five_billed} spent vs ${b.session_to_spend} advised) — borrowing from later blocks`
+  b.on_pace === false
+    ? `over this block's share (${b.block_used_pct}% of the week spent vs a ${b.block_share_pct}% share) — borrowing from later blocks`
     : "under budget",
 );
