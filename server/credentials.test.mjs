@@ -260,3 +260,63 @@ test("index doc names are not fetchable as handles", async () => {
     }
   } finally { restore(); }
 });
+
+// ---- the probe token: found in production as cleartext, migrated on read ----------------------
+
+import { setProbeToken, openProbeToken } from "./credentials.mjs";
+
+const KEY = credKey({ MAXX_CRED_KEY: KEY_ENV });
+const PROBE = "sk-ant-oat01-" + "P".repeat(95);
+
+test("a LEGACY cleartext probe token still works, and is sealed on first read", async () => {
+  // Production 2026-08-17: $.probe.token on reif_tgp was a 108-char sk-ant-oat… in cleartext,
+  // inside a 36MB doc at mode 664. It must keep working through the upgrade -- the probe is what
+  // stops the whole fleet reading `stale` when the laptop sleeps -- and the cleartext must be
+  // gone afterwards without anyone running a migration script.
+  //
+  // MUTATION: have openProbeToken return the legacy token without re-sealing it (drop the
+  // migration branch) and this goes RED on the cleartext assertion.
+  const s = { probe: { token: PROBE, at: 0 } };
+  const { token, migrated } = openProbeToken(s, KEY);
+  assert.equal(token, PROBE, "the probe must keep working across the migration");
+  assert.equal(migrated, true, "the caller must be told to persist");
+  assert.equal(s.probe.token, undefined, "the cleartext must be gone");
+  assert.ok(s.probe.sealed, "and replaced by an envelope");
+  assert.ok(!JSON.stringify(s).includes("sk-ant-oat"), "no cleartext anywhere in the doc");
+});
+
+test("a sealed probe token round-trips and never appears in the doc", () => {
+  const s = setProbeToken({}, PROBE, KEY, 1000);
+  assert.ok(!JSON.stringify(s).includes("sk-ant-oat"));
+  assert.equal(openProbeToken(s, KEY).token, PROBE);
+  assert.equal(openProbeToken(s, KEY).migrated, false, "already sealed: nothing to persist");
+});
+
+test("storing a probe token with NO key configured is REFUSED, not written in cleartext", () => {
+  // "Just this once" is how the last one sat readable for weeks.
+  assert.throws(() => setProbeToken({}, PROBE, null, 1000), /MAXX_CRED_KEY/);
+});
+
+test("a sealed probe token is unreadable under the wrong key, and fails CLOSED", () => {
+  const s = setProbeToken({}, PROBE, KEY, 1000);
+  const wrong = credKey({ MAXX_CRED_KEY: "w".repeat(48) });
+  assert.equal(openProbeToken(s, wrong).token, null, "must not return garbage as a token");
+  assert.equal(openProbeToken(s, null).token, null, "no key: no probe, rather than a leak");
+});
+
+test("clearing the probe token clears it", () => {
+  const s = setProbeToken({ probe: { sealed: { v: 1 } } }, null, KEY, 1000);
+  assert.equal(s.probe, null);
+});
+
+test("the config route seals what it stores and never echoes it", async () => {
+  const { h, store, restore } = handlerWith();
+  try {
+    const res = await call(h, "POST", "/api/u/reif/config", { body: { probe_token: PROBE } });
+    assert.equal(res.status, 200);
+    assert.ok(!res.raw.includes("sk-ant-oat"), "the config echo must not carry the token");
+    const doc = JSON.stringify(store.docs.get("reif"));
+    assert.ok(!doc.includes("sk-ant-oat"), "the stored doc must not carry cleartext");
+    assert.ok(doc.includes("sealed"), "expected a sealed envelope on the doc");
+  } finally { restore(); }
+});

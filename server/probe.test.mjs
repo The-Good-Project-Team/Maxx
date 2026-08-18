@@ -6,6 +6,13 @@ import assert from "node:assert/strict";
 import { createHandler } from "./handler.mjs";
 import { createMemoryStore } from "./store.mjs";
 import { probeAnchor } from "./probe.mjs";
+import { openProbeToken, credKey } from "./credentials.mjs";
+
+// The probe token is a SECRET and is now stored sealed (server/credentials.mjs). Storing one
+// with no vault key configured is REFUSED (503) rather than written in cleartext -- production
+// carried a 108-char sk-ant-oat… in a mode-664 blob for weeks, which is the failure that rule
+// exists to prevent. So these tests must configure a key, exactly as a real deployment does.
+process.env.MAXX_CRED_KEY = process.env.MAXX_CRED_KEY || "probe-test-vault-key-".padEnd(48, "x");
 
 const T = 1_800_000_000;
 const SECRET = "shh-owner";
@@ -41,7 +48,16 @@ test("probe token is write-only: set via config, never echoed back", async () =>
   const b = JSON.parse(res.body);
   assert.equal(b.probe, true, "reports that a probe credential exists");
   assert.equal(JSON.stringify(b).includes("sk-ant-oat-secret"), false, "token must not appear in any response");
-  assert.equal((await store.load("testy")).probe.token, "sk-ant-oat-secret");
+  // SEALED AT REST, not cleartext. This assertion used to read
+  //   assert.equal((await store.load("testy")).probe.token, "sk-ant-oat-secret")
+  // i.e. it REQUIRED the token be stored in the clear -- and that is precisely what was found
+  // in production on 2026-08-17: a 108-char sk-ant-oat… in $.probe.token inside a mode-664
+  // 36MB blob. The test was pinning the vulnerability in place. It now pins the opposite.
+  const doc = await store.load("testy");
+  assert.equal(doc.probe.token, undefined, "no cleartext token on the doc");
+  assert.ok(doc.probe.sealed, "expected a sealed envelope");
+  assert.equal(JSON.stringify(doc).includes("sk-ant-oat-secret"), false, "no cleartext anywhere");
+  assert.equal(openProbeToken(doc, credKey()).token, "sk-ant-oat-secret", "and it round-trips");
   // and it clears
   await h(post(`/api/u/testy/config?${K}`, { probe_token: "" }));
   assert.equal((await store.load("testy")).probe, null);

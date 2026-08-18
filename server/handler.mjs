@@ -23,7 +23,7 @@ import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDi
 import { resolveSettings, DEFAULTS } from "./settings.mjs";
 import { ACCOUNTS_KEY, accountId, accountOf, handlesFor, linkHandle, pick } from "./account.mjs";
 import { probeAnchor } from "./probe.mjs";
-import { CREDENTIALS_KEY, credKey, seal, open as openCred, credentialStatus, putCredential, reportBoxState, auditFetch } from "./credentials.mjs";
+import { CREDENTIALS_KEY, credKey, seal, open as openCred, credentialStatus, putCredential, reportBoxState, auditFetch, setProbeToken, openProbeToken } from "./credentials.mjs";
 
 const TOOLS = [
   {
@@ -2077,7 +2077,15 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // (dead token, network) backs off exactly like a successful one.
   const PROBE_MIN_INTERVAL = 300;
   async function maybeRefreshAnchor(handle, s, t) {
-    const token = s.probe?.token;
+    // The probe token is SEALED (credentials.mjs). openProbeToken transparently upgrades a
+    // legacy cleartext `s.probe.token` on first read -- production carried one at mode 664 for
+    // weeks -- and tells us to persist the upgrade. Migrating on read rather than in a script
+    // means the cleartext is gone the first time the probe runs, with nobody to remember.
+    const { token, migrated } = openProbeToken(s, credKey());
+    if (migrated) {
+      logOp(s, "probe", "migrated a cleartext probe token into the sealed store", t);
+      await store.save(handle, s);
+    }
     if (!token) return false;
     if (anchorAgeSec(s, t) <= ANCHOR_TRUST_SEC) return false;
     if (t - (s.probe.at || 0) < PROBE_MIN_INTERVAL) return false;
@@ -2850,7 +2858,16 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       // Probe credential: WRITE-ONLY. Kept off s.config so it can never ride out in the
       // config echo below. "" clears it. A setup-token (sk-ant-oat…, user:inference) —
       // it lets the server pull an anchor when the laptop stops pushing one.
-      if (b.probe_token != null) s.probe = b.probe_token ? { token: String(b.probe_token), at: 0 } : null;
+      // SEALED on write, never cleartext. setProbeToken THROWS when no key is configured
+      // rather than falling back -- writing "just this once" in cleartext is how the last one
+      // sat readable in a 36MB blob for weeks.
+      if (b.probe_token != null) {
+        try {
+          setProbeToken(s, b.probe_token ? String(b.probe_token) : null, credKey(), now());
+        } catch (e) {
+          return json(503, { error: "credential_store_disabled", detail: String(e.message || e) });
+        }
+      }
       await store.save(h, s);
       return json(200, { ok: true, config: s.config, probe: !!s.probe });
     }

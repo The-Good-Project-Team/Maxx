@@ -134,3 +134,55 @@ export function auditFetch(log, handle, { who, now, ok }) {
   const entry = { handle: String(handle), who: String(who || "unknown").slice(0, 64), ts: Math.round(now), ok: !!ok };
   return [entry, ...(log || [])].slice(0, 500);
 }
+
+
+// ---- the probe credential -------------------------------------------------------------------
+//
+// FOUND IN PRODUCTION 2026-08-17, and it is why this module exists at all rather than only the
+// OAuth store: `$.probe.token` on the reif_tgp handle doc was a 108-character sk-ant-oat…
+// setup-token in CLEARTEXT, inside a 36MB JSON blob at mode 664 -- group- and world-readable on
+// the box, and copied into every backup of that state dir.
+//
+// The probe is the pull-on-miss anchor (server/probe.mjs): when the laptop stops pushing, maxx
+// calls Anthropic itself with this token to read the rate-limit headers. So maxx genuinely does
+// hold a key to the account -- Reif said so and he was right. It was simply held badly.
+//
+// These two functions are the whole migration. Reading goes through openProbeToken(), which
+// transparently upgrades a legacy plaintext token to a sealed one and reports that it did, so
+// the cleartext disappears on first use rather than needing a migration script that someone has
+// to remember to run.
+
+/** Seal a probe token onto the handle doc, removing any plaintext. Mutates `s`, returns it. */
+export function setProbeToken(s, token, key, now) {
+  if (!token) { s.probe = null; return s; }
+  if (!key) {
+    // No key configured: refuse rather than silently writing cleartext. This is the exact
+    // failure being repaired; re-creating it "temporarily" is how it lasted this long.
+    throw new Error("MAXX_CRED_KEY is not configured — refusing to store a probe token in cleartext");
+  }
+  s.probe = { sealed: seal(token, key), at: (s.probe && s.probe.at) || 0, sealed_at: Math.round(now) };
+  return s;
+}
+
+/**
+ * The probe token for this handle, or null.
+ *
+ * Returns {token, migrated} — `migrated` true means a legacy cleartext token was just sealed and
+ * the caller MUST persist `s`. Never returns the plaintext to a payload; the only consumer is
+ * probeAnchor().
+ */
+export function openProbeToken(s, key) {
+  const p = s && s.probe;
+  if (!p) return { token: null, migrated: false };
+  if (p.sealed) {
+    if (!key) return { token: null, migrated: false };   // sealed but unreadable: fail closed
+    try { return { token: open(p.sealed, key), migrated: false }; }
+    catch { return { token: null, migrated: false }; }
+  }
+  if (!p.token) return { token: null, migrated: false };
+  // LEGACY CLEARTEXT. Hand it back so the probe keeps working, and upgrade it in place.
+  if (!key) return { token: p.token, migrated: false };  // no key yet: still works, still loud
+  const token = p.token;
+  s.probe = { sealed: seal(token, key), at: p.at || 0, sealed_at: Math.round(Date.now() / 1000) };
+  return { token, migrated: true };
+}

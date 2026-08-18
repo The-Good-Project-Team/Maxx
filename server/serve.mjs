@@ -9,6 +9,7 @@
  */
 import http from "node:http";
 import path from "node:path";
+import fs from "node:fs";
 import { homedir } from "node:os";
 import { createHandler } from "./handler.mjs";
 import { createFileStore } from "./store.mjs";
@@ -24,6 +25,23 @@ const dir = arg("--dir", process.env.MAXX_STATE_DIR || path.join(homedir(), ".ma
 // not just a dev server — so "nothing set = open" is not an acceptable default here. Bind to
 // localhost with MAXX_OPEN=1 for dev; anything reachable keeps unclaimed handles closed, so a
 // name nobody has signed up for cannot be filled with usage that was never theirs.
+// Vault keys, from the STATE DIR when not already in the environment.
+//
+// MAXX_CRED_KEY encrypts stored credentials; MAXX_CRED_ACCESS authorises fetching them. Reading
+// them from files beside .secret (which the unit already does for MAXX_SECRET) means enabling
+// the vault is `install a file + restart`, with no systemd edit -- one less privileged step, and
+// the same shape the operator already knows. Env wins when set, so a container can inject them.
+//
+// Trimmed: a trailing newline from `openssl rand ... > file` would otherwise become part of the
+// key, and the resulting ciphertext would be undecryptable by anything that trimmed.
+for (const [envName, file] of [["MAXX_CRED_KEY", ".credkey"], ["MAXX_CRED_ACCESS", ".credaccess"]]) {
+  if (process.env[envName]) continue;
+  try {
+    const v = fs.readFileSync(path.join(dir, file), "utf8").trim();
+    if (v) process.env[envName] = v;
+  } catch { /* absent = vault stays off, which is the safe default */ }
+}
+
 const secretFor = async (h) =>
   process.env[`MAXX_SECRET_${String(h).toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] || null;
 const handler = createHandler({
