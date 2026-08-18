@@ -170,3 +170,18 @@ test("public reads are redacted: no names, no session ids, no directive text, em
   const own = await h(get("/api/u/testy/feed?n=50", bear));
   assert.match(own.body, /Acme prod incident debug/);
 });
+
+test("owner feed serves 10k; public feed stays at 200", async () => {
+  const { h } = mkHandler();
+  const bear = { authorization: `Bearer ${SECRET}` };
+  for (let i = 0; i < 250; i++) {
+    await h(post("/api/u/testy/logs", {
+      surface: "laptop:x",
+      sessions: [{ root: `r${i}`, billed: 10, name: `turn ${i}` }],
+    }, bear));
+  }
+  const own = JSON.parse((await h(get("/api/u/testy/feed?n=99999", bear))).body);
+  assert.equal(own.events.length, 250, "owner n=99999 must not clamp below what is stored");
+  const pub = JSON.parse((await h(get("/api/u/testy/feed?n=99999"))).body);
+  assert.equal(pub.events.length, 200, "public feed must stay at 200 even when asked for more");
+});

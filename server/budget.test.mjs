@@ -557,6 +557,19 @@ test("a store inside retention is left completely alone", () => {
   assert.equal(s.lifetime_base, 0);
 });
 
+test("compaction keeps the last 10k events even when they are all inside the time window", () => {
+  const s = emptyStore();
+  for (let i = 0; i < 10_001; i++) {
+    s.events.push({ surface: "a", root: "r", ts: T - H + i, billed: 1e3 });
+  }
+  const before = computeBudget(s, T);
+  compact(s, T);
+  assert.equal(s.events.length, 10_000, "the 10,001st oldest must roll off");
+  assert.equal(s.events[0].ts, T - H + 1, "the oldest kept is the 2nd-oldest written");
+  const after = computeBudget(s, T);
+  assert.equal(after.lifetime_billed, before.lifetime_billed, "the odometer rolled backwards");
+});
+
 // ---------------------------------------------------------------------------
 // A budget read never waits on a recompute (Reif, 2026-08-13: "the delay is 0, and the worst
 // case is the next one uses up all the tokens and is stopped by the wall").

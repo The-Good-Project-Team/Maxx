@@ -19,7 +19,7 @@
  * The Netlify function and a local node http server are both thin wrappers.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDirectives, logOp, autoAdvise, anchorAgeSec, ANCHOR_TRUST_SEC } from "./tally.mjs";
+import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDirectives, logOp, autoAdvise, anchorAgeSec, ANCHOR_TRUST_SEC, MAX_FEED_EVENTS, MAX_PUBLIC_FEED_EVENTS } from "./tally.mjs";
 import { resolveSettings, DEFAULTS } from "./settings.mjs";
 import { ACCOUNTS_KEY, accountId, accountOf, handlesFor, linkHandle, pick } from "./account.mjs";
 import { probeAnchor } from "./probe.mjs";
@@ -1464,17 +1464,17 @@ if(location.search)history.replaceState(null,'',location.pathname);
       var span=hi-lo+1, share=e.billed/span;
       for(var i=lo;i<=hi;i++)buckets[i]+=share;
     });
-    // How far back the data actually reaches. The feed is capped at 200 events, so with
+    // How far back the data actually reaches. The feed used to cap at 200 events, so with
     // several sessions emitting the newest 200 may only span a few minutes — the rest of
     // the 48 were never FETCHED, not idle. Plotting them as zero and averaging over all
     // 48 understated burn ~3x and printed "under pace" through a 3x-over-pace stretch.
     // Judge only over the minutes we actually have.
-    // Only when the feed came back FULL (n=200) is it truncated. Short of that the oldest
+    // Only when the feed came back FULL (n=MAX_FEED) is it truncated. Short of that the oldest
     // event is where this account's activity actually begins, and the earlier minutes are
     // genuinely idle — hatching those would be the same lie pointed the other way.
     var oldest=t;
     ev.forEach(function(e){var x=new Date(e.ts0||e.ts).getTime()/1000;if(x>0&&x<oldest)oldest=x});
-    var covLo=ev.length>=200?Math.max(0,Math.min(47,47-Math.floor((t-oldest)/60))):0,cov=48-covLo;
+    var covLo=ev.length>=${MAX_FEED_EVENTS}?Math.max(0,Math.min(47,47-Math.floor((t-oldest)/60))):0,cov=48-covLo;
     var mx=Math.max.apply(null,buckets.concat([1]));
     var pace=b.sustainable_pct_per_hour!=null?b.sustainable_pct_per_hour:0;
     var H=140,BOX=170;
@@ -1524,7 +1524,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
       document.getElementById('chartMeta').textContent='nothing spent in the last 48 minutes · banking the full '+hum(pace)+'/min'+(window.__perTurn?' · '+window.__perTurn:'');
     }else{
       document.getElementById('chartMeta').textContent='banked (up) vs spent-over (down) per minute · '+covLab+' net '+(banking?'+':'−')+hum(Math.abs(netAvg))+'/min vs pace '+hum(pace)+'/min · worst minute −'+hum(Math.max(0,mx-pace))+' · √'
-        +(cov<48?' · older minutes not fetched (feed caps at 200 events)':'')
+        +(cov<48?' · older minutes not fetched (feed caps at ${MAX_FEED_EVENTS} events)':'')
         +(window.__perTurn?' · '+window.__perTurn:'');
     }
     // intervention markers: red = gate held spend / pause delivered, amber = other maxx ops
@@ -1762,7 +1762,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
 
   function tick(){
     fetch('/api/u/${h}/budget').then(function(r){return r.json()}).then(function(j){window.__b=j;window.__bAt=Date.now();renderAll();}).catch(function(){});
-    fetch('/api/u/${h}/feed?n=200').then(function(r){return r.json()}).then(function(j){
+    fetch('/api/u/${h}/feed?n=${MAX_FEED_EVENTS}').then(function(r){return r.json()}).then(function(j){
       window.__ev=(j.events||[]).filter(function(e){return e.billed>0&&e.surface!=='directive'});
       renderAll();renderTerm();
     }).catch(function(){});
@@ -2932,7 +2932,8 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       const h = decodeURIComponent(m[1]);
       // cookie accepted: GET read, powers the owner dashboard
       const isOwner = await authed(h, readTokenOf(headers, url));
-      const n = Math.min(200, Math.max(1, Number(url.searchParams.get("n")) || 30));
+      const cap = isOwner ? MAX_FEED_EVENTS : MAX_PUBLIC_FEED_EVENTS;
+      const n = Math.min(cap, Math.max(1, Number(url.searchParams.get("n")) || 30));
       const s = await store.load(h);
       // Absolute turn numbers per session. `turns` on an event is a per-batch DELTA, so
       // counting it up from the returned slice would restart at whatever the window

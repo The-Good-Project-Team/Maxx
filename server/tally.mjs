@@ -204,8 +204,20 @@ export function applyEnvelope(store, env, now = Math.floor(Date.now() / 1000)) {
 // past the only window that is read, and the lifetime odometer is unaffected either way
 // (dropped billed goes to lifetime_base). MAXX_RETENTION_DAYS overrides for a box that wants
 // a longer local history.
+//
+// COUNT CAP on top of the time cutoff: a busy morning writes events faster than 10 days
+// can age them out (reif sat at 26k / 13MB with the last 200 covering 14 minutes). The
+// feed is the log; 10k of it is still tiny and is what GET /feed actually serves.
 export const RETENTION_SEC = Number(process.env.MAXX_RETENTION_DAYS || 10) * 24 * 3600;
 export const MAX_ANCHORS = 500;
+// Count cap on the event log (the feed). 200 was the old API window and hid a 40-minute
+// morning under a 14-minute tail (measured 2026-08-18: last 200 events were 09:58–10:12,
+// while 08:00–08:40 — 298 events, 6.7M billed — sat in the store unread). 10k is still
+// tiny (reif.json was 13MB at 26k; 10k ≈ 5MB) and is enough to reconstruct a busy morning.
+// Dropped billed still rolls into lifetime_base, same as the time cutoff.
+export const MAX_EVENTS = 10_000;
+export const MAX_FEED_EVENTS = MAX_EVENTS;
+export const MAX_PUBLIC_FEED_EVENTS = 200;
 
 export function compact(store, now) {
   const cutoff = now - RETENTION_SEC;
@@ -215,6 +227,10 @@ export function compact(store, now) {
     for (const e of store.events) {
       if (e.ts >= cutoff) keep.push(e);
       else dropped += e.billed || 0;
+    }
+    if (keep.length > MAX_EVENTS) {
+      for (const e of keep.slice(0, keep.length - MAX_EVENTS)) dropped += e.billed || 0;
+      keep.splice(0, keep.length - MAX_EVENTS);
     }
     if (keep.length !== store.events.length) {
       store.lifetime_base = (store.lifetime_base || 0) + dropped;

@@ -34,7 +34,7 @@ claude.ai chat, another machine) with that connector gets the budget-gate
 
 Your own eyes: `node ~/.claude/skills/maxx/watch.mjs` (live dashboard) ·
 `tail -f ~/.maxx/emit.log` (shipper log) ·
-`GET /api/u/<you>/feed?n=50` (server-side event feed).
+`GET /api/u/<you>/feed?n=50` (server-side event feed; owner max 10,000, public max 200).
 
 ### The four verdicts (the contract every agent gates on)
 
