@@ -909,12 +909,11 @@ function main() {
     put(1, 0, pair("chat", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
     // every wall ends with the thing it is measured against: the chat has turns, the session has
     // a clock, the week has days. Same slot, same voice, so the three read as one grammar.
-    // TWO numbers, because one of them was a lie by omission. "8 turns" is what you sent;
-    // the tool calls and subagents it set off were 781 inferences, each re-billing a whole
-    // window. The pair is the multiplier, and the multiplier is the thing worth seeing.
+    // ONE number, and it is the inference count — not the message count, which is the one
+    // reading in a session that does not multiply. Every tool call is another inference and
+    // every subagent opens a window of its own: 12 messages measured 781 turns.
     const t = turnCount(p.transcript_path, sid, total);
-    if (t.turns > 0) put(1, 3, faint(DIM, (t.msgs > 0 ? t.msgs + " msg" + (t.msgs === 1 ? "" : "s") + " · " : "") +
-      t.turns + " turn" + (t.turns === 1 ? "" : "s")));
+    if (t.turns > 0) put(1, 3, faint(DIM, t.turns + " turn" + (t.turns === 1 ? "" : "s")));
   }
 
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──
