@@ -11,11 +11,12 @@
  * and the coach hook) — nothing extra to install, nothing to compile. A tiny ANSI
  * compositor stands in for lipgloss.
  */
-import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { turnCount } from "./turns.mjs";
 import { plausibleReset } from "./pace.mjs";
 import { sessionShare } from "./session.mjs";
 import { weighUsage } from "./limit.mjs";
@@ -310,58 +311,6 @@ function sessionBrief(st) {
   return out.join("\n");
 }
 
-
-// TURN COUNT — how many times you have spoken in this chat, counted INCREMENTALLY. The transcript
-// is append-only and runs to megabytes; re-reading it every two seconds to count lines would make
-// the statusline the most expensive thing on the box. So the byte offset and the running total are
-// persisted per session and each render reads only what was appended since.
-//
-// A turn is a row of type "user" whose content is a string, or blocks with no tool_result in them.
-// Tool results arrive as "user" rows too — on a real session they outnumber real turns twenty to
-// one (202 vs 11 on the transcript this was written against), so counting them would be nonsense.
-function turnCount(tp, sid, ctxNow) {
-  const p = path.join(HOME, ".maxx", "turns.json");
-  const db = readJSON(p, {});
-  const key = sid || "unknown";
-  let cur = db[key] || { off: 0, n: 0, ctx: 0 };
-  if (!tp) return cur.n || 0;
-  let size; try { size = statSync(tp).size; } catch { return cur.n || 0; }
-  if (size < cur.off) cur = { off: 0, n: 0, ctx: 0 };            // replaced or truncated — recount
-  // /clear and /compact collapse the context, and this number sits beside the context reading, so
-  // it restarts with it: "72 turns" next to a freshly emptied window would be a lie about both.
-  // The tell is the context itself halving — Claude Code keeps the session id across a compact.
-  if (ctxNow > 0 && cur.ctx > 0 && ctxNow < cur.ctx * 0.5) cur = { off: size, n: 0, ctx: 0 };
-  if (ctxNow > 0) cur.ctx = ctxNow;
-  if (size > cur.off) {
-    let text = "";
-    try {
-      const fd = openSync(tp, "r");
-      const buf = Buffer.alloc(size - cur.off);
-      readSync(fd, buf, 0, size - cur.off, cur.off);
-      closeSync(fd);
-      text = buf.toString("utf8");
-    } catch { text = ""; }
-    // whole lines only: a render can land mid-append, so stop at the last newline and leave the
-    // fragment for next time rather than dropping the row or counting it twice.
-    const cut = text.lastIndexOf("\n");
-    if (cut >= 0) {
-      for (const line of text.slice(0, cut).split("\n")) {
-        if (!line || line[0] !== "{") continue;
-        let r; try { r = JSON.parse(line); } catch { continue; }
-        if (r.type !== "user") continue;
-        const c = r.message && r.message.content;
-        if (typeof c === "string") cur.n++;
-        else if (Array.isArray(c) && !c.some((b) => b && b.type === "tool_result")) cur.n++;
-      }
-      cur.off += Buffer.byteLength(text.slice(0, cut + 1), "utf8");
-    }
-  }
-  db[key] = cur;
-  const keys = Object.keys(db);                                   // don't grow forever
-  if (keys.length > 12) for (const k of keys.slice(0, keys.length - 12)) delete db[k];
-  try { writeFileSync(p, JSON.stringify(db)); } catch {}
-  return cur.n;
-}
 
 // ─── sidecar state ─────────────────────────────────────────────────────────────
 const HOME = homedir();
@@ -960,8 +909,12 @@ function main() {
     put(1, 0, pair("chat", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
     // every wall ends with the thing it is measured against: the chat has turns, the session has
     // a clock, the week has days. Same slot, same voice, so the three read as one grammar.
-    const turns = turnCount(p.transcript_path, sid, total);
-    if (turns > 0) put(1, 3, faint(DIM, turns + " turn" + (turns === 1 ? "" : "s")));
+    // TWO numbers, because one of them was a lie by omission. "8 turns" is what you sent;
+    // the tool calls and subagents it set off were 781 inferences, each re-billing a whole
+    // window. The pair is the multiplier, and the multiplier is the thing worth seeing.
+    const t = turnCount(p.transcript_path, sid, total);
+    if (t.turns > 0) put(1, 3, faint(DIM, (t.msgs > 0 ? t.msgs + " msg" + (t.msgs === 1 ? "" : "s") + " · " : "") +
+      t.turns + " turn" + (t.turns === 1 ? "" : "s")));
   }
 
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──
