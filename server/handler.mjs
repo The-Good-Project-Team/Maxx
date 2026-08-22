@@ -721,6 +721,8 @@ td{border-bottom-color:#222b40}
  <div class="row br"><label>Session reserve <span class="hint2">a session may hold a slice of the week, visible to every surface</span></label>
   <span class="checks"><label class="ck"><input type="checkbox" id="ares"${set.allow_session_reserve ? " checked" : ""}> allowed</label>
   <span class="hint2">${b.leases || 0} active · ${esc(b.reserved_pct ?? 0)}% of week reserved</span></span></div>
+ <div class="row br"><label>Probe check-in <span class="hint2">how often the server pulls a fresh /usage anchor on its own clock for an account with a registered probe token — the only signal for a server-only account nothing ever calls in for. 0 turns it off (falls back to request-triggered refresh only)</span></label>
+  <input id="probeint" value="${esc(Math.round((set.probe_interval_sec ?? 1800) / 60))}" size="6"> <span class="unit">minutes${s.probe ? "" : ' <span class="hint2">(no probe token registered on this account — nothing to check in with)</span>'}</span></div>
  <div class="row"><button class="primary" id="budSave">Save</button><span class="flash" id="budFlash"></span></div>
 
  <h2>Runaway detection <span class="sub">— sustained burn that trips the runaway webhook event</span></h2>
@@ -765,7 +767,8 @@ if(location.search)history.replaceState(null,'',location.pathname);
       per_diem_granularity:document.getElementById('pdgran').value,
       account_strategy:document.getElementById('astrat').value,
       allow_session_reserve:document.getElementById('ares').checked,
-      allow_session_overburn:{one_h:document.getElementById('ob1').checked,three_h:document.getElementById('ob3').checked,five_h:document.getElementById('ob5').checked}
+      allow_session_overburn:{one_h:document.getElementById('ob1').checked,three_h:document.getElementById('ob3').checked,five_h:document.getElementById('ob5').checked},
+      probe_interval_sec:Math.round(Number(document.getElementById('probeint').value)*60)
     })}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(r){
       if(!r.ok){f.textContent='failed';return;}
       // A rejected field fell back to its default server-side. Say so instead of letting the

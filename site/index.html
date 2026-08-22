@@ -3,192 +3,84 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>maxx — track your coins from everywhere.</title>
-<meta name="description" content="Every machine, every cloud agent, one live tally. One line to install.">
-<meta property="og:title" content="maxx — track your coins from everywhere.">
-<meta property="og:description" content="Every machine, every cloud agent, one live tally. One line to install.">
+<title>maxx — one tally for what you can spend right now.</title>
+<meta name="description" content="Give any agent an MCP endpoint and it can check its own Claude budget before it burns it. Counts, never gates.">
+<meta property="og:title" content="maxx — one tally for what you can spend right now.">
+<meta property="og:description" content="Give any agent an MCP endpoint and it can check its own Claude budget before it burns it. Counts, never gates.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://meetmaxx.co/">
 <meta property="og:image" content="https://meetmaxx.co/og-card.png">
-<meta property="og:image:width" content="2400">
-<meta property="og:image:height" content="1260">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="maxx — track your coins from everywhere.">
-<meta name="twitter:description" content="Every machine, every cloud agent, one live tally. One line to install.">
-<meta name="twitter:image" content="https://meetmaxx.co/og-card.png">
+<meta name="twitter:title" content="maxx — one tally for what you can spend right now.">
+<meta name="twitter:description" content="Give any agent an MCP endpoint and it can check its own Claude budget before it burns it. Counts, never gates.">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:hsl(265 60% 96%);
-    --panel:hsl(265 62% 93%);
-    --ink:hsl(266 46% 22%);
-    --dim:hsl(266 22% 44%);
-    --brand:hsl(264 66% 54%);
-    --brand-deep:hsl(266 60% 40%);
-    --green:hsl(150 46% 40%);
-    --amber:hsl(45 82% 42%);
-    --red:hsl(354 58% 56%);
-    --track:hsl(266 42% 84%);
-    --wall:hsl(352 62% 30%);
-    --line:hsl(266 30% 86%);
-    --radius:16px;
+    --bg:hsl(265 60% 96%);--panel:hsl(265 62% 93%);--ink:hsl(266 46% 22%);--dim:hsl(266 22% 44%);
+    --brand:hsl(264 66% 54%);--brand-deep:hsl(266 60% 40%);--green:hsl(150 46% 40%);--red:hsl(354 58% 56%);
+    --line:hsl(266 30% 86%);--radius:14px;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
     --display:"Space Grotesk",var(--sans);
   }
   @media (prefers-color-scheme:dark){
-    :root{
-      color-scheme:dark;
-      --bg:hsl(266 30% 10%);
-      --panel:hsl(266 28% 14%);
-      --ink:hsl(266 40% 92%);
-      --dim:hsl(266 20% 66%);
-      --brand:hsl(264 72% 72%);
-      --brand-deep:hsl(266 60% 78%);
-      --amber:hsl(48 84% 62%);
-      --track:hsl(266 24% 26%);
-      --line:hsl(266 22% 22%);
-    }
+    :root{color-scheme:dark;--bg:hsl(266 30% 10%);--panel:hsl(266 28% 14%);--ink:hsl(266 40% 92%);
+      --dim:hsl(266 20% 66%);--brand:hsl(264 72% 72%);--brand-deep:hsl(266 60% 78%);--line:hsl(266 22% 22%);}
   }
   *{box-sizing:border-box}
-  /* no smooth-scroll, no parallax — nav jumps land instantly, install is the point */
-  @media (prefers-reduced-motion: reduce){
-    *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
-  }
-  body{
-    margin:0;font-family:var(--sans);color:var(--ink);
-    background:
-      radial-gradient(1200px 600px at 50% -10%, hsl(264 66% 88% / .55), transparent 60%),
-      var(--bg);
-    line-height:1.55;-webkit-font-smoothing:antialiased;
-  }
-  @media (prefers-color-scheme:dark){
-    body{background:radial-gradient(1200px 600px at 50% -10%, hsl(264 60% 30% / .45), transparent 60%),var(--bg);}
-  }
+  @media (prefers-reduced-motion: reduce){*,*::before,*::after{transition-duration:.001ms!important}}
+  body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--bg);line-height:1.55;-webkit-font-smoothing:antialiased}
   a{color:var(--brand);text-decoration:none}
   a:hover{text-decoration:underline}
-  /* Keyboard users had no focus indicator anywhere on this page; every app page
-     under /u/ already ships this ring. Same treatment, so tabbing feels the same. */
   :focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:4px}
-  .wrap{max-width:960px;margin:0 auto;padding:0 24px}
-  /* the live dash is a two-pane page — give it room, don't squeeze it to a column */
-  .wide{max-width:1400px;margin:0 auto;padding:0 24px}
-  /* paired sections sit side by side; the page is not one long column */
-  .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;max-width:1200px;margin:0 auto;padding:52px 24px;align-items:start}
-  @media(max-width:920px){.grid2{grid-template-columns:minmax(0,1fr);padding:36px 24px}}
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
+  code{font-family:var(--mono)}
 
-  /* nav */
-  nav{display:flex;align-items:center;justify-content:space-between;padding:16px 0;max-width:960px;margin:0 auto;padding-left:24px;padding-right:24px}
-  .logo{font-family:var(--mono);font-weight:700;font-size:20px;letter-spacing:.02em;color:var(--ink)}
+  nav{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;max-width:760px;margin:0 auto}
+  .logo{font-family:var(--mono);font-weight:700;font-size:19px}
   .logo b{color:var(--brand)}
-  nav .links{display:flex;gap:22px;align-items:center;font-size:15px}
-  nav .links a{color:var(--dim);white-space:nowrap}
-  @media(max-width:480px){nav .links{gap:14px;font-size:14px}nav .links a[href="#read"]{display:none}}
-  /* Hit targets, not layout: nav links were 23px tall and footer links 17px,
-     well under the 44px minimum. The pseudo-element grows the tappable box
-     without moving a single pixel of the design. */
-  nav .links a,footer a,.caption a{position:relative}
-  nav .links a::after,footer a::after,.caption a::after{content:"";position:absolute;inset:-14px -6px}
+  nav .links{display:flex;gap:20px;align-items:center;font-size:14px}
+  nav .links a{color:var(--dim)}
 
-  /* hero */
-  header{text-align:center;padding:40px 0 14px}
-  .eyebrow{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);margin-bottom:18px}
-  .coin-hero{display:flex;justify-content:center;margin-bottom:16px}
-  .coin-hero canvas{image-rendering:pixelated;width:clamp(74px,13vw,98px);height:auto;filter:drop-shadow(0 5px 5px hsl(266 55% 32% / .30));animation:coin-bob 2.8s ease-in-out infinite}
-  @keyframes coin-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-  @media (prefers-reduced-motion:reduce){.coin-hero canvas{animation:none}}
-  h1{font-family:var(--display);font-size:clamp(34px,6vw,58px);line-height:1.04;margin:0 0 18px;letter-spacing:-.02em;font-weight:700}
-  .sub{font-size:clamp(17px,2.4vw,21px);color:var(--dim);max-width:700px;margin:0 auto 24px;text-wrap:balance}
+  header{padding:56px 0 8px;text-align:center}
+  .eyebrow{font-family:var(--mono);font-size:12.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--brand);margin-bottom:16px}
+  h1{font-family:var(--display);font-size:clamp(30px,5.5vw,46px);line-height:1.08;margin:0 0 16px;letter-spacing:-.02em;font-weight:700}
+  .sub{font-size:clamp(16px,2.2vw,19px);color:var(--dim);max-width:560px;margin:0 auto 28px;text-wrap:balance}
 
-  /* install */
-  .install{display:inline-flex;align-items:stretch;gap:0;background:var(--ink);border-radius:12px;overflow:hidden;max-width:100%;box-shadow:0 12px 30px hsl(266 50% 30% / .18)}
-  .install code{font-family:var(--mono);font-size:14px;color:hsl(265 60% 94%);padding:15px 18px;white-space:nowrap;overflow-x:auto;display:block}
-  .install code .p{color:hsl(264 66% 74%)}
-  .install button{border:0;background:var(--brand);color:#fff;font-family:var(--sans);font-weight:600;font-size:14px;padding:0 18px;cursor:pointer;transition:background .15s;white-space:nowrap}
-  .install button:hover{background:var(--brand-deep)}
-  .install button.done{background:var(--green)}
-  @media(max-width:600px){.install code{white-space:normal;overflow-wrap:anywhere}}
-  .hint{font-size:13px;color:var(--dim);margin-top:12px}
+  .block{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin:14px 0;overflow-x:auto}
+  .block code{font-size:13.5px;white-space:pre;display:block;color:var(--ink)}
+  .block .p{color:var(--dim)}
+  .copybar{display:flex;align-items:stretch;gap:0;background:var(--ink);border-radius:12px;overflow:hidden;margin:14px 0}
+  .copybar code{flex:1;font-size:13.5px;color:hsl(265 60% 94%);padding:14px 16px;white-space:nowrap;overflow-x:auto}
+  .copybar code .p{color:hsl(264 66% 74%)}
+  .copybar button{border:0;background:var(--brand);color:#fff;font-family:var(--sans);font-weight:600;font-size:13.5px;padding:0 16px;cursor:pointer;white-space:nowrap}
+  .copybar button:hover{background:var(--brand-deep)}
+  .copybar button.done{background:var(--green)}
+  @media(max-width:520px){.copybar code{white-space:normal;overflow-wrap:anywhere}}
 
-  /* demo */
-  .demo{margin:30px auto 10px}
-  .term{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:0 24px 60px hsl(266 50% 30% / .16)}
-  .term .dots{display:flex;gap:7px;padding:4px 6px 12px}
-  .term .dots i{width:11px;height:11px;border-radius:50%;display:block;background:var(--track)}
-  .term img,.term video{width:100%;height:auto;display:block;border-radius:9px}
-  .shot{border-radius:var(--radius);overflow:hidden;box-shadow:0 24px 60px hsl(266 50% 30% / .18);border:1px solid var(--line)}
-  .shot img{width:100%;display:block}
+  section{padding:34px 0}
+  h2{font-family:var(--display);font-size:clamp(20px,3vw,25px);margin:0 0 8px;letter-spacing:-.015em;font-weight:600}
+  .lead{color:var(--dim);font-size:15.5px;margin:0 0 16px}
+  hr{border:0;border-top:1px solid var(--line);margin:0}
 
-  /* live embed — Reif's real dashboard, in an iframe. Public view: names redacted. */
-  .live-wrap{position:relative}
-  .live-shot{position:relative}
-  .live-shot iframe{width:100%;height:1180px;border:0;display:block;background:#eceef3}
-  /* mobile: render the dash at desktop width inside the iframe and scale the whole
-     thing down to fit — the full page stays visible, just minimized (JS sets scale). */
-  /* the handwritten notes LAYER over the frame: text rides the edge, the arrow
-     reaches into the live page. pointer-events:none so the dash stays usable. */
-  .live-note{position:absolute;z-index:3;pointer-events:none;display:flex;align-items:flex-start;gap:10px;font-family:var(--mono);font-size:17px;font-weight:700;color:var(--brand)}
-  .live-note svg{flex:none;stroke:var(--brand);fill:none;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
-  .ln-top{top:-30px;right:26px;transform:rotate(-2deg);animation:nudge-down 1.4s ease-in-out infinite alternate}
-  .ln-bottom{bottom:-26px;left:22px;transform:rotate(1.5deg);align-items:flex-end;animation:nudge-up 1.4s ease-in-out infinite alternate}
-  @keyframes nudge-down{from{translate:0 0}to{translate:0 8px}}
-  @keyframes nudge-up{from{translate:0 0}to{translate:0 -8px}}
-  @media(max-width:700px){.live-note{font-size:14px}.ln-top{right:10px}.ln-bottom{left:8px}}
-  .gh{width:17px;height:17px;fill:currentColor;vertical-align:-3.5px;margin-right:3px}
-  .caption{text-align:center;color:var(--dim);font-size:14px;margin-top:14px}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+  th{text-align:left;color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+  td:first-child{font-family:var(--mono);white-space:nowrap;color:var(--brand-deep)}
+  @media(prefers-color-scheme:dark){td:first-child{color:var(--brand)}}
 
-  /* sections */
-  section{padding:52px 0}
-  .grid2 section,section.ingrid{padding:0}
-  h2{font-family:var(--display);font-size:clamp(24px,3.6vw,32px);margin:0 0 8px;letter-spacing:-.015em;font-weight:600}
-  .lead{color:var(--dim);font-size:17px;margin:0 0 30px;max-width:640px}
+  .signup{display:flex;align-items:stretch;gap:0;background:var(--ink);border-radius:12px;overflow:hidden;max-width:420px}
+  .signup input{flex:1;background:none;border:0;outline:0;color:hsl(265 60% 94%);font:14px var(--mono);padding:14px 16px;min-width:0}
+  .signup input::placeholder{color:hsl(265 30% 60%)}
+  .signup button{border:0;background:var(--brand);color:#fff;font-weight:600;font-size:13.5px;padding:0 16px;cursor:pointer;white-space:nowrap}
+  .signup button:hover{background:var(--brand-deep)}
+  .hint{font-size:13px;color:var(--dim);margin-top:10px}
+  #sg-out{display:none;margin-top:14px}
 
-  /* reading the bar */
-  .rail{font-family:var(--mono);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow-x:auto;margin-bottom:14px}
-  .rail .lbl{color:var(--dim)}
-  #math .rail .k-dim{display:block;margin-top:6px}
-  .bar{display:inline-block;border-radius:4px;height:14px;vertical-align:middle;margin:0 2px}
-  .b-track{background:var(--track)}
-  .b-green{background:var(--green)}
-  .b-red{background:var(--red)}
-  .b-amber{background:var(--amber)}
-  .k-red{color:var(--red)} .k-green{color:var(--green)} .k-dim{color:var(--dim)} .k-ink{color:var(--ink)}
-  /* the statusline demo — same typography rules the real bar uses: faint labels, a rule under
-     the advised mark, weight for the reading that has passed it, a squiggle at the hard wall. */
-  .sl{white-space:nowrap;font-size:clamp(10px,1.15vw,14px);letter-spacing:-.01em}
-  .sl .lbl{color:var(--dim);opacity:.85}
-  .sl .sep{color:var(--dim);opacity:.7}
-  .sl .dot{color:var(--dim);opacity:.45}
-  .sl .val{color:var(--ink)}
-  .sl .val.good{color:var(--green)} /* no transition: a state change is not an animation, and a half-finished blend reads as a colour nobody chose */
-  .sl .val.over{color:var(--amber);font-weight:700}
-  .sl .val.wk.over,.sl .val.ctx.over{font-weight:400}
-  .sl .val.wall{color:var(--red);font-weight:700;text-decoration:underline wavy;text-underline-offset:3px}
-  .sl .std{color:var(--dim)}
-  .sl .sl-of{color:var(--dim);opacity:.45}
-  .sl .brand{color:var(--brand);text-decoration:underline;text-underline-offset:3px}
-  .sl .mark{color:var(--brand);font-weight:700}
-  .demo-note{margin:4px 0 16px;font-size:14px;color:var(--dim);min-height:1.2em;transition:opacity .3s}
-  .readlist{list-style:none;padding:0;margin:18px 0 0}
-  .readlist li{padding:10px 0;border-top:1px solid var(--line);color:var(--dim);font-size:15px}
-  .readlist li b{color:var(--ink)}
-  .hello{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:32px;text-align:center}
-  .lie{background:linear-gradient(135deg,hsl(266 45% 19%),hsl(268 52% 29%));color:hsl(265 60% 94%);border-radius:var(--radius);padding:42px 36px;height:100%;display:flex;flex-direction:column;justify-content:center}
-  .lie h2{color:#fff;margin:0 0 18px}
-  .lie p{font-size:18px;line-height:1.5;margin:0 0 14px;color:hsl(265 38% 86%)}
-  .lie p:last-child{margin-bottom:0}
-  .lie .big{font-size:clamp(22px,3vw,28px);font-weight:800;color:#fff;letter-spacing:-.01em}
-  .lie .fix{margin-top:22px;padding-top:20px;border-top:1px solid hsl(266 40% 50% / .35);font-size:17px}
-  .lie b{color:hsl(264 76% 84%)}
-
-  /* privacy */
-  .privacy{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:30px;text-align:center}
-  .privacy h2{margin-bottom:8px}
-
-  footer{border-top:1px solid var(--line);margin-top:40px;padding:30px 0 60px;text-align:center;color:var(--dim);font-size:14px}
+  footer{border-top:1px solid var(--line);margin-top:20px;padding:26px 0 50px;text-align:center;color:var(--dim);font-size:13.5px}
   footer a{color:var(--dim)}
 </style>
 </head>
@@ -197,195 +89,80 @@
 <nav>
   <div class="logo"><b>maxx</b></div>
   <div class="links">
-    <a href="#math">The math</a>
-    <a href="/counter">Counter, not gate</a>
-    <a href="#read">How to read it</a>
-    <a href="#install">Install</a>
-    <a href="https://github.com/The-Good-Project-Team/Maxx"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+    <a href="#agents">For agents</a>
+    <a href="#humans">Install</a>
+    <a href="https://github.com/The-Good-Project-Team/Maxx">GitHub</a>
   </div>
 </nav>
 
 <header class="wrap">
-  <div class="coin-hero"><canvas id="lcoin" width="30" height="30" role="img" aria-label="Spinning pixel coin"></canvas></div>
-  <div class="eyebrow">For <b style="color:var(--brand)">Claude Code</b></div>
-  <h1>Track your <span style="color:var(--brand)">coins</span><br>from everywhere.</h1>
-  <p class="sub">Every machine, every cloud agent, one live tally.</p>
-
-  <div class="install" id="install-top">
-    <code><span class="p">$</span> curl -fsSL https://meetmaxx.co/install | bash</code>
-    <button data-copy="curl -fsSL https://meetmaxx.co/install | bash">Copy</button>
-  </div>
+  <div class="eyebrow">For Claude Code agents</div>
+  <h1>Your agents need to know<br>their budget — even headless.</h1>
+  <p class="sub">A headless agent can't glance at a statusline. Claude enforces a 5-hour cap and a 7-day cap; <code>/usage</code> only shows the 5-hour one. maxx gives any agent one call to answer "how much can I safely spend right now" — no human watching.</p>
 </header>
 
-<div class="wide demo">
-  <div class="live-wrap">
-    <div class="live-note ln-top" aria-hidden="true">not a mockup — this is Reif's account, live
-      <svg width="44" height="72" viewBox="0 0 30 52"><path d="M5 2 C 19 8, 23 22, 19 44 M12 37 l7 9 8-8"/></svg>
-    </div>
-    <div class="shot live-shot">
-      <iframe src="https://meetmaxx.co/u/reif_tgp/dash" title="Reif's live maxx dashboard: budget bars, burn rate, coins per minute, machines and cloud agents, and the live activity tail — updating as he works" loading="lazy"></iframe>
-    </div>
-    <div class="live-note ln-bottom" aria-hidden="true">
-      <svg width="44" height="72" viewBox="0 0 30 52"><path d="M25 50 C 11 44, 7 30, 11 8 M4 16 l7-9 8 8"/></svg>
-      that burn is Reif's session, right now
-    </div>
-  </div>
-  <p class="caption">Share it — viewers see names redacted. <a href="https://meetmaxx.co/u/reif_tgp/dash">Binge-watch Reif's →</a></p>
-</div>
+<section class="wrap" id="agents">
+  <h2>Give your agent an MCP endpoint</h2>
+  <p class="lead">Any agent with this URL checks its own budget before it burns it — no human in the loop.</p>
+  <div class="block"><code>https://api.meetmaxx.co/mcp?handle=&lt;you&gt;&amp;k=&lt;secret&gt;</code></div>
+  <p class="lead" style="margin-top:18px">Or call it directly:</p>
+  <div class="block"><code><span class="p">curl -X POST</span> "https://api.meetmaxx.co/mcp?handle=&lt;you&gt;&amp;k=&lt;secret&gt;" \
+  <span class="p">-H</span> "Content-Type: application/json" \
+  <span class="p">-d</span> '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"maxx_budget","arguments":{}}}'</code></div>
 
-<div class="wrap demo" style="margin-top:34px;max-width:900px">
-  <div class="term">
-    <div class="dots"><i></i><i></i><i></i></div>
-    <video id="statusline-vid" src="statusline.mp4" poster="statusline-poster.jpg" width="1100" height="508"
-           autoplay muted loop playsinline preload="metadata"
-           aria-label="The maxx statusline running under a live Claude Code session: one line below the transcript carrying the session and week readings while work streams in above it"></video>
-  </div>
-  <p class="caption">Same numbers in your statusline, every second.</p>
-  <script>(function(){var v=document.getElementById('statusline-vid');
-    if(v&&matchMedia('(prefers-reduced-motion: reduce)').matches){v.removeAttribute('autoplay');v.pause();v.setAttribute('controls','')}
-  })();</script>
-</div>
+  <table>
+    <thead><tr><th>tool</th><th>what it does</th></tr></thead>
+    <tbody>
+      <tr><td>maxx_budget</td><td>Read live pacing: <code>verdict</code> (ok / over / calibrating…), how much of this 5h block is spent vs. advised, whether you're on pace for the week.</td></tr>
+      <tr><td>maxx_emit</td><td>Report this session's usage back to the tally — the only way a direct-API server (not the Claude Code CLI) becomes visible.</td></tr>
+      <tr><td>maxx_reserve / maxx_release</td><td>Hold a slice of budget before fanning out concurrent agents, release it when done.</td></tr>
+      <tr><td>maxx_directive</td><td>Pause, resume, or nudge a live session to <code>/clear</code> — fleet-wide remote control.</td></tr>
+    </tbody>
+  </table>
 
-<div class="grid2">
-  <section class="ingrid" id="lie" style="align-self:stretch">
-    <div class="lie">
-      <h2><code style="font-family:var(--mono)">/usage</code> shows you the wrong number.</h2>
-      <p class="big">A 7-day limit holds about 2.8 days of full 5-hour sessions.</p>
-      <p class="fix">Burn every window to the wall and the week is gone by Wednesday night.</p>
-    </div>
-  </section>
-
-  <section class="ingrid" id="math">
-    <h2>Here is the math.</h2>
-    <p class="lead" style="margin-bottom:18px">It counts <b>coins</b>, not barrels. Four lines. That is the whole product.</p>
-    <div class="rail"><span class="lbl">coin&nbsp;&nbsp;&nbsp;</span> <span class="k-ink">1 coin = (input + 5·output + 1.25·cache_write + 0.1·cache_read) × model_price</span>&nbsp;&nbsp;<span class="k-dim">One honest unit of burn.</span></div>
-    <div class="rail"><span class="lbl">limit&nbsp;&nbsp;</span> <span class="k-ink">Anthropic's 5-hour and weekly windows</span>&nbsp;&nbsp;<span class="k-dim">The only things that can stop you.</span></div>
-    <div class="rail"><span class="lbl">share&nbsp;&nbsp;</span> <span class="k-ink">this_block = week_left% ÷ 5h_blocks_left</span>&nbsp;&nbsp;<span class="k-dim">What to spend this window.</span></div>
-    <div class="rail"><span class="lbl">models&nbsp;</span> <span class="k-ink">haiku ⅓ · sonnet 1 · opus 5⁄3 · fable 10⁄3</span>&nbsp;&nbsp;<span class="k-dim">From Anthropic's price sheet, daily.</span></div>
-    <p class="hint" style="margin-top:14px">Fable burns 10 coins where Haiku burns 1. It's an MPG meter for your week — you count coins, the plan bills by the barrel.</p>
-    <p class="hint" style="margin-top:10px">maxx never denies you anything: it counts, Anthropic limits. <a href="/counter" style="color:var(--brand)">Why that distinction matters →</a></p>
-  </section>
-</div>
-
-<div class="wrap" style="max-width:1180px;margin-bottom:22px">
-  <h2 style="margin-bottom:6px">How to read the bar</h2>
-  <p class="lead" style="margin-bottom:16px">One line: who you are, then your three walls — chat, session, week — then where you're working. Each wall reads <b>x/y</b>. <b>y</b> is the standard — muted, fixed, never moving. <b>x</b> is where you actually are, and it is the only thing that carries colour.</p>
-    <div class="rail sl"><span class="brand">@you</span><span class="dot"> · </span><span class="lbl">opus</span><span class="sep">  │  </span><span class="lbl">ctx </span><span class="val ctx" id="sl-c">26</span><span class="sl-of">/</span><span class="std" id="sl-ca">35%</span><span class="dot"> · </span><span class="lbl">11 turns</span><span class="sep">  │  </span><span class="lbl">session </span><span class="val" id="sl-s">34</span><span class="sl-of">/</span><span class="std" id="sl-sa">22%</span><span class="dot"> · </span><span class="lbl">1h57m</span><span class="sep">  │  </span><span class="lbl">week </span><span class="val wk" id="sl-w">16</span><span class="sl-of">/</span><span class="std" id="sl-wa">8%</span><span class="dot"> · </span><span class="lbl">6d</span><span class="sep">  │  </span><span class="lbl">Maxx</span><span class="dot"> · </span><span class="lbl">main</span><span class="dot"> · </span><span class="lbl">590e</span><span class="sep">  │  </span><span class="mark">/maxx</span></div>
-    <p class="demo-note" id="sl-note">&nbsp;</p>
-</div>
-
-<div class="grid2">
-  <section class="ingrid" id="read">
-    <h2>Anatomy</h2>
-    <p class="lead" style="margin-bottom:18px">Every piece, and what it is telling you.</p>
-
-
-    <ul class="readlist">
-      <li><b>x/y</b> — <code>session 34/22%</code> reads "34% spent, against a standard of 22%". <b>y</b> is muted, fixed, and says nothing: it is the reference, and it stays quieter than the reading so it never steals the glance. <b>x</b> carries the whole verdict in its colour, so a glance at three pairs tells you where you stand three times without reading a word.</li>
-      <li><b>the four states</b> — <b style="color:var(--green)">green</b> while you have real room (under three quarters of the standard), plain ink as you close on it, <b style="color:var(--amber)">amber</b> once you're past, and <b style="color:var(--red)">red with a squiggle</b> at the hard wall — the way a spell-checker tells you something is wrong. Only the session is ever <b>bold</b> below the wall: two shouts on one line is no hierarchy at all.</li>
-      <li><b>the trailing fact</b> — each wall ends with what it is measured against: the chat has <b>turns</b>, the session has a <b>clock</b>, the week has <b>days</b>.</li>
-      <li><b>ctx</b> — how full this conversation is, and how many turns filled it. Its line is whichever arrives first: 75% of the window, or 350k tokens — on a 1M window that's 35%. Past it, hand off deliberately with <code>/fenix</code> rather than letting auto-compact pick the cut for you.</li>
-      <li><b>session</b> — your 5-hour window. Its line is your weekly share expressed in this window's terms. Pass it and nothing is denied; the rest of the week just gets less.</li>
-      <li><b>week</b> — the only wall that can actually stop you. Its line is simply how far into the week you are: burn evenly and used tracks elapsed. Without it, <code>week 16%</code> is unreadable — excellent on Tuesday, alarming an hour in.</li>
-      <li><b>who and where</b> — <code>@you · model · repo · branch · id</code>, trailing. The numbers lead, because they're what you glance at; this is what you look up once you know the numbers are fine. <b>@you</b> links to your dash — cmd-click it.</li>
-      <li><b>narrow terminal</b> — pieces drop by rank, least useful first: the id, then the repo, the branch, the model, then each wall's trailing fact. Tighter still and whole walls go — where, then week, then session — because a cut number is not a smaller truth, it's a wrong one. <b>@you</b>, the chat wall and the mark never drop.</li>
-      <li><b>the wall</b> — hit it and maxx hands you <a href="https://www.youtube.com/watch?v=linlz7-Pnvw" rel="noopener">Switzerland in 8K</a> with the reset clock. Contemplate.</li>
-    </ul>
-  </section>
-
-  <section class="ingrid" id="install">
-    <h2>Install</h2>
-    <p class="lead" style="margin-bottom:18px">One line in your terminal. Restart Claude Code. Done.</p>
-    <div class="install" style="display:flex;width:100%">
-      <code style="flex:1"><span class="p">$</span> curl -fsSL https://meetmaxx.co/install | bash</code>
-      <button data-copy="curl -fsSL https://meetmaxx.co/install | bash">Copy</button>
-    </div>
-    <p class="hint">Plugin manager (skill only, no bar): <code>/plugin marketplace add The-Good-Project-Team/Maxx</code> · <code>/plugin install maxx@maxx</code>.</p>
-    <p class="hint">Plain ANSI — works in every terminal Claude Code does.</p>
-    <p class="hint" style="margin-top:18px">Then <code>/maxx</code> for your stats. <code>/maxx session</code> for this window.</p>
-  </section>
-</div>
-
-<section class="wrap" id="connector">
-  <h2>Every machine, one tally.</h2>
-  <p class="lead">Your quota is one pool. maxx counts it as one: laptops, cloud routines, claude.ai. <b>The installer claims your handle on its own.</b> This form first if you want a particular name.</p>
-  <p class="hint">Webhooks: <code>over</code> / <code>recovered</code> / <code>week-80/90/95</code> / <code>runaway</code> → <code>POST /api/u/&lt;you&gt;/webhooks</code>. Poll <code>GET /api/u/&lt;you&gt;/budget</code>.</p>
-  <div class="install" style="display:flex;width:100%;max-width:560px">
-    <code style="flex:1;padding-right:0"><span class="p">@</span><input id="sg-handle" placeholder="your-handle" maxlength="32" autocomplete="off" spellcheck="false" style="background:none;border:0;outline:0;color:inherit;font:inherit;width:100%"></code>
-    <button id="sg-go">Get my URL</button>
-  </div>
-  <p class="hint" id="sg-msg">3–32 chars: a-z 0-9 - _ · first come, first served · the URL is shown once — save it.</p>
-  <div id="sg-out" style="display:none;margin-top:14px">
-    <p style="font-size:19px;font-weight:700;margin:6px 0 14px">Your live card → <a id="sg-card" href="#" target="_blank" rel="noopener"></a></p>
-    <p class="hint" style="margin-bottom:4px"><b>One step</b> — paste into your terminal. Installs the bar, links this handle, turns on auto-tracking; when it finishes it prints your claude.ai connector paste too:</p>
-    <div class="install" style="display:flex;width:100%">
-      <code style="flex:1;overflow-x:auto" id="sg-cli"></code>
-      <button data-copy-id="sg-cli">Copy</button>
-    </div>
-    <p class="hint" style="margin-top:10px">Check your setup any time — <a id="sg-check" href="#" target="_blank" rel="noopener">your private setup-check link</a> shows ✅/❌ for CLI, connector, and anchor (it contains your secret; don't share it).</p>
-    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">No terminal handy? Paste the connector manually</summary>
-    <p class="hint" style="margin:8px 0 4px"><a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener">claude.ai → Connectors</a> → Add custom connector → name <code>Maxx</code>, paste:</p>
-    <div class="install" style="display:flex;width:100%">
-      <code style="flex:1;overflow-x:auto" id="sg-url"></code>
-      <button data-copy-id="sg-url" id="sg-copy">Copy</button>
-    </div>
-    </details>
-    <p class="hint" style="margin-top:10px">The URL is your secret — shown once, save it. Every session on any surface now reports to your tally and reads your live budget.</p>
-  </div>
-  <p class="hint">Prefer the terminal? After installing: <code>node ~/.claude/skills/maxx/emit.mjs --signup</code> (derives your handle from your Claude login).</p>
-  <script>
-  (function(){
-    var go=document.getElementById('sg-go'),h=document.getElementById('sg-handle'),msg=document.getElementById('sg-msg'),out=document.getElementById('sg-out'),urlEl=document.getElementById('sg-url');
-    function claim(){
-      var v=(h.value||'').trim().toLowerCase();
-      if(!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(v)){msg.textContent='handle must be 3-32 chars: a-z 0-9 - _ (no leading - or _)';return;}
-      go.disabled=true;go.textContent='…';
-      fetch('https://api.meetmaxx.co/api/signup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handle:v})})
-        .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-        .then(function(res){
-          go.disabled=false;go.textContent='Get my URL';
-          if(!res.ok){msg.textContent=res.j.error||'signup failed — try another handle';return;}
-          urlEl.textContent=res.j.mcp_url;out.style.display='block';
-          var card=document.getElementById('sg-card');card.textContent='meetmaxx.co/u/'+res.j.handle;card.href='https://meetmaxx.co/u/'+res.j.handle;
-          document.getElementById('sg-cli').textContent='curl -fsSL https://meetmaxx.co/install | MAXX_HANDLE='+res.j.handle+' MAXX_SECRET='+res.j.secret+' bash';
-          document.getElementById('sg-check').href='https://meetmaxx.co/u/'+res.j.handle+'?k='+res.j.secret;
-          msg.textContent='@'+res.j.handle+' claimed. This URL is your secret — shown once, save it now.';
-        })
-        .catch(function(){go.disabled=false;go.textContent='Get my URL';msg.textContent='network error — try again';});
-    }
-    go.addEventListener('click',claim);
-    h.addEventListener('keydown',function(e){if(e.key==='Enter')claim();});
-    document.querySelectorAll('#sg-out [data-copy-id]').forEach(function(b){
-      b.addEventListener('click',function(){
-        navigator.clipboard.writeText(document.getElementById(b.getAttribute('data-copy-id')).textContent).then(function(){b.textContent='Copied';b.className='done';setTimeout(function(){b.textContent='Copy';b.className='';},1500);});
-      });
-    });
-  })();
-  </script>
+  <p class="lead" style="margin-top:18px"><b>maxx counts, Anthropic limits.</b> Nothing here can deny a call — only Anthropic's own windows do that. <code>verdict: "over"</code> means Anthropic's real wall is up, not a number maxx invented.</p>
+  <p class="hint">Full field-by-field model: <a href="https://api.meetmaxx.co/api/model">GET /api/model</a>.</p>
 </section>
 
-<div class="grid2">
-  <section class="ingrid">
-    <div class="privacy">
-      <h2>Your stuff stays yours</h2>
-      <p class="lead" style="margin:0 auto">Counts only: coins, timestamps, model names. Never a prompt, never your code — the emitter can't leak what it never reads. MIT. Read the code.</p>
-    </div>
-  </section>
+<hr class="wrap">
 
-  <section class="ingrid" id="hello">
-    <div class="hello">
-      <h2>Say hello</h2>
-      <p class="lead" style="margin:6px auto 0">Better formula? Tell Reif.</p>
-      <p style="margin-top:20px"><a class="btn primary" style="display:inline-block;padding:11px 22px;border-radius:10px;font-weight:600;font-size:15px;background:var(--brand);color:#fff" href="mailto:reif@thegoodproject.net">Email Reif</a></p>
-    </div>
-  </section>
-</div>
+<section class="wrap">
+  <h2>Get a handle</h2>
+  <p class="lead">One call, or paste a name below.</p>
+  <div class="block"><code><span class="p">curl -X POST</span> https://api.meetmaxx.co/api/signup \
+  <span class="p">-H</span> "Content-Type: application/json" -d '{"handle":"you"}'</code></div>
+
+  <div class="signup">
+    <input id="sg-handle" placeholder="your-handle" maxlength="32" autocomplete="off" spellcheck="false">
+    <button id="sg-go">Get my URL</button>
+  </div>
+  <p class="hint" id="sg-msg">3–32 chars: a-z 0-9 - _ · first come, first served · shown once — save it.</p>
+  <div id="sg-out">
+    <p style="margin:8px 0"><b>MCP URL</b> — paste into an MCP client or your agent's config:</p>
+    <div class="copybar"><code id="sg-mcp"></code><button data-copy-id="sg-mcp">Copy</button></div>
+    <p class="hint">Dashboard: <a id="sg-card" href="#" target="_blank" rel="noopener"></a></p>
+  </div>
+</section>
+
+<hr class="wrap">
+
+<section class="wrap" id="humans">
+  <h2>Install (humans)</h2>
+  <p class="lead">Want the same numbers as a live statusline in your terminal, plus a <code>/maxx</code> skill?</p>
+  <div class="copybar"><code><span class="p">$</span> curl -fsSL https://meetmaxx.co/install | bash</code><button data-copy="curl -fsSL https://meetmaxx.co/install | bash">Copy</button></div>
+  <p class="hint">Restart Claude Code. <code>/maxx</code> shows totals; <code>/maxx session</code> shows what's safe to spend right now.</p>
+  <p class="hint">Stays current on its own — checks in every 30 minutes and reinstalls itself when a new version ships. Nothing to remember.</p>
+</section>
+
+<section class="wrap">
+  <h2>Your stuff stays yours</h2>
+  <p class="lead">Local by default — nothing leaves your machine until you claim a handle. After that: counts only (tokens, timestamps, model names). Never a prompt, never your code — the emitter never reads it.</p>
+</section>
 
 <footer>
   <div class="wrap">
-    <p>Made for you by the folks over at <a href="https://goodindustries.co"><b>Good Industries</b></a>.</p>
-    <p>Tokenmaxx is spelled with <b>maxx</b>.</p>
-    <p><span class="logo" style="font-size:16px"><b>maxx</b></span> · a fuel gauge for Claude Code · <a href="https://github.com/The-Good-Project-Team/Maxx">GitHub</a> · <a href="https://github.com/The-Good-Project-Team/Maxx/blob/main/LICENSE">MIT</a></p>
+    <p>Made by <a href="https://goodindustries.co">Good Industries</a>. Tokenmaxx is spelled with <b>maxx</b>.</p>
+    <p><a href="https://github.com/The-Good-Project-Team/Maxx">GitHub</a> · <a href="https://github.com/The-Good-Project-Team/Maxx/blob/main/LICENSE">MIT</a> · <a href="mailto:reif@thegoodproject.net">Email Reif</a></p>
   </div>
 </footer>
 
@@ -398,108 +175,36 @@
       });
     });
   });
-
-  // the statusline demo — cycle the four states so people see what each one looks like before
-  // they ever hit it. Mirrors render.mjs: plain under the advised mark, amber+bold past it,
-  // red+squiggle at the hard wall, and the week never louder than the session.
+  document.querySelectorAll('button[data-copy-id]').forEach(function(b){
+    b.addEventListener('click',function(){
+      var el=document.getElementById(b.getAttribute('data-copy-id'));
+      navigator.clipboard.writeText(el.textContent).then(function(){
+        var t=b.textContent;b.textContent='Copied';b.classList.add('done');
+        setTimeout(function(){b.textContent=t;b.classList.remove('done')},1500);
+      });
+    });
+  });
   (function(){
-    const s=document.getElementById('sl-s'),
-          w=document.getElementById('sl-w'),
-          c=document.getElementById('sl-c'),
-          note=document.getElementById('sl-note');
-    if(!s) return;
-    const S=[
-      {c:'10',cc:'good',s:'8', sc:'good',w:'6', wc:'good', note:'Green everywhere: room to work on all three.'},
-      {c:'33',cc:'',    s:'36',sc:'',    w:'20',wc:'',     note:'Closing on the standards. Nothing wrong — just worth knowing.'},
-      {c:'33',cc:'',    s:'62',sc:'over',w:'20',wc:'',     note:'Past the session standard. Nothing is denied — later windows in this week just get less.'},
-      {c:'55',cc:'over',s:'62',sc:'over',w:'62',wc:'over', note:'Chat and week past theirs too. They say so in colour; only the session gets weight.'},
-      {c:'93',cc:'wall',s:'94',sc:'wall',w:'97',wc:'wall', note:"The hard walls. This is where Claude stops you mid-task."},
-    ];
-    let i=0;
-    function apply(){
-      const x=S[i];
-      note.style.opacity=0;
-      setTimeout(function(){
-        s.textContent=x.s; s.className='val '+x.sc;
-        w.textContent=x.w; w.className='val wk '+x.wc;
-        c.textContent=x.c; c.className='val ctx '+x.cc;
-        note.textContent=x.note; note.style.opacity=1;
-      },260);
-      i=(i+1)%S.length;
+    var go=document.getElementById('sg-go'),h=document.getElementById('sg-handle'),msg=document.getElementById('sg-msg'),out=document.getElementById('sg-out');
+    function claim(){
+      var v=(h.value||'').trim().toLowerCase();
+      if(!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(v)){msg.textContent='handle must be 3-32 chars: a-z 0-9 - _ (no leading - or _)';return;}
+      go.disabled=true;go.textContent='…';
+      fetch('https://api.meetmaxx.co/api/signup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handle:v})})
+        .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+        .then(function(res){
+          go.disabled=false;go.textContent='Get my URL';
+          if(!res.ok){msg.textContent=res.j.error||'signup failed — try another handle';return;}
+          document.getElementById('sg-mcp').textContent=res.j.mcp_url;
+          var card=document.getElementById('sg-card');card.textContent='meetmaxx.co/u/'+res.j.handle;card.href='https://meetmaxx.co/u/'+res.j.handle;
+          out.style.display='block';
+          msg.textContent='@'+res.j.handle+' claimed. This URL is your secret — shown once, save it now.';
+        })
+        .catch(function(){go.disabled=false;go.textContent='Get my URL';msg.textContent='network error — try again';});
     }
-    // reduced-motion: show the one state that teaches the most, and hold it.
-    if(matchMedia('(prefers-reduced-motion: reduce)').matches){ i=1; apply(); }
-    else { apply(); setInterval(apply,6000); }
+    go.addEventListener('click',claim);
+    h.addEventListener('keydown',function(e){if(e.key==='Enter')claim();});
   })();
-
-  /* mobile dash embed: keep the iframe's internal viewport at desktop width (1000px)
-     and scale it down to the container — the full dashboard stays visible, minimized.
-     Same-origin, so the true page height is read live once the frame loads. */
-  (function(){
-    var shot=document.querySelector('.live-shot');
-    var f=shot&&shot.querySelector('iframe');
-    if(!f)return;
-    var W=1200; /* dash stacks its two columns at <=1000px — render wider so the embed keeps the side-by-side desktop layout */
-    f.setAttribute('scrolling','no');
-    function fit(){
-      var cw=shot.clientWidth;
-      if(cw>=W){f.style.width='';f.style.transform='';}
-      else{f.style.width=W+'px';f.style.transformOrigin='0 0';f.style.transform='scale('+(cw/W)+')';}
-      /* measure AFTER the width is set — the dash reflows to the iframe viewport;
-         the feed is live and grows, so fit() re-runs on an interval too */
-      var h=2100;
-      try{h=f.contentDocument.documentElement.scrollHeight||h;}catch(e){}
-      f.style.height=h+'px';
-      shot.style.height=cw>=W?'':Math.round(h*cw/W)+'px';
-    }
-    f.addEventListener('load',function(){fit();setTimeout(fit,1500);});
-    window.addEventListener('resize',fit);
-    setInterval(fit,3000);
-    fit();
-  })();
-</script>
-<script>
-(function () {
-  var cv = document.getElementById("lcoin");
-  if (!cv || !cv.getContext) return;
-  var ctx = cv.getContext("2d");
-  var N = 30, cx = 15, cy = 15, R = 13, T = 3.0;
-  // gold face, brand-purple rim + "M" emblem
-  var OUT = "#2a1146", G = "#e8b93a", GL = "#f3d271", HI = "#fae9ad", GD = "#c8952a";
-  var PUR = "#7c3aed", PURD = "#551fab", PURL = "#a877f5";
-  var em = ["X.....X", "XX...XX", "X.X.X.X", "X..X..X", "X.....X", "X.....X", "X.....X"];
-  var eset = {};
-  for (var j = 0; j < em.length; j++) for (var i = 0; i < em[j].length; i++) if (em[j][i] === "X") eset[(i - 3) + "," + (j - 3)] = 1;
-  function faceCol(nx, ny) { var L = -nx * 0.5 - ny; if (L > 9) return HI; if (L > 4) return GL; if (L < -6) return GD; return G; }
-  function draw(theta) {
-    ctx.clearRect(0, 0, N, N);
-    var w = Math.cos(theta), s = Math.sin(theta);
-    var faceW = R * Math.abs(w), eT = T * Math.abs(s), front = w >= 0;
-    for (var y = 0; y < N; y++) {
-      var ny = (y - cy) / R; if (Math.abs(ny) > 1) continue;
-      var rh = Math.sqrt(1 - ny * ny), fH = faceW * rh, sH = fH + eT, topBot = Math.abs(ny) > 0.94;
-      for (var x = 0; x < N; x++) {
-        var nx = x - cx, ax = Math.abs(nx); if (ax > sH + 0.4) continue;
-        var col;
-        if (ax > sH - 1 || topBot) col = OUT;                       // dark-purple outline
-        else if (ax <= fH) {                                        // gold face
-          col = faceCol(nx, ny);
-          if (front && faceW > 2) { var ex = Math.round(nx / Math.max(0.2, Math.abs(w))); if (eset[ex + "," + (y - cy)]) col = PUR; }
-        } else {                                                    // purple rim (coin thickness)
-          col = PURD;
-          if (-nx - ny > 3) col = PUR;
-          if (fH < 2.4 && ax < 1.2) col = PURL;                     // glint when edge-on
-        }
-        ctx.fillStyle = col; ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }
-  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduce) { draw(0.6); return; }
-  var t0 = null;
-  function loop(t) { if (t0 === null) t0 = t; draw(((t - t0) / 2600) * Math.PI * 2); requestAnimationFrame(loop); }
-  requestAnimationFrame(loop);
-})();
 </script>
 </body>
 </html>
