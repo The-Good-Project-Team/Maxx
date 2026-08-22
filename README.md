@@ -66,6 +66,11 @@ curl -fsSL https://meetmaxx.co/install | bash
 Restart Claude Code. `/maxx` shows totals; `/maxx session` shows what's safe to spend right now.
 Details, statusline colors, and the dashboard: [meetmaxx.co](https://meetmaxx.co).
 
+Stays current on its own: if you keep the background shipper running (`--install-agent`, or
+the installer's default), it checks in with the server every 30 minutes and reinstalls itself
+the moment a new version ships — same command as above, run for you. Nothing to remember, no
+cron to set up. A dev checkout (`--link`) is exempt; it's never overwritten.
+
 ## Your stuff stays yours
 
 Local by default — nothing leaves your machine until you claim a handle. After that: counts only
