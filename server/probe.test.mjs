@@ -32,6 +32,7 @@ function mkHandler(anchorFor = (t) => ({ ts: t, five_pct: 0.2, week_pct: 0.02, f
   return { store, h, calls, tick: (s) => (clock += s), at: () => clock };
 }
 const post = (url, body) => ({ method: "POST", url, headers: {}, body: JSON.stringify(body) });
+const put = (url, body) => ({ method: "PUT", url, headers: {}, body: JSON.stringify(body) });
 const get = (url) => ({ method: "GET", url, headers: {} });
 
 const seedAnchor = async (store, ageSec) => {
@@ -112,6 +113,48 @@ test("a failing probe backs off instead of hammering the API every gate check", 
   await h(get(`/api/u/testy/budget?${K}`));
   assert.equal(calls.length, 1, "failure is rate-limited exactly like a success");
   assert.equal(JSON.parse((await h(get(`/api/u/testy/budget?${K}`))).body).verdict, "stale", "no anchor invented on failure");
+});
+
+test("sweepProbes pulls a fresh anchor on its own clock — no request has to call in", async () => {
+  // 2026-08-21: reif/reif_tgp run servers on a bare subscription OAuth token that never calls
+  // maxx at all — nothing ever hits /budget or /mcp for that handle, so maybeRefreshAnchor (which
+  // only runs on the ingest/read paths) never fires and the anchor sits stale forever. sweepProbes
+  // is the fix: it walks every handle with a probe token on ITS OWN clock, gated on the account's
+  // probe_interval_sec setting (default 1800s = 30min), independent of any inbound traffic.
+  const { h, store, calls } = mkHandler();
+  await h(post(`/api/u/testy/config?${K}`, { probe_token: "tok" }));
+  await seedAnchor(store, 13 * 3600);              // stale — no request has read it since
+  assert.equal(calls.length, 0, "no request has come in yet — sanity check");
+
+  await h.sweepProbes();
+  assert.equal(calls.length, 1, "the sweep itself pulled a fresh anchor with zero requests");
+  const b = JSON.parse((await h(get(`/api/u/testy/budget?${K}`))).body);
+  assert.notEqual(b.verdict, "stale", "the account is live without ever having been polled");
+});
+
+test("sweepProbes honours probe_interval_sec — an account can opt out or shorten it", async () => {
+  const { h, store, calls, tick } = mkHandler();
+  await h(post(`/api/u/testy/config?${K}`, { probe_token: "tok" }));
+  // 20min-old anchor: past nothing by the default 30min interval, so a sweep right now must
+  // stay quiet — this is the "not just a max(0, staleAfter) bug" check.
+  await seedAnchor(store, 20 * 60);
+  await h.sweepProbes();
+  assert.equal(calls.length, 0, "20min old anchor is still fresh against the 30min default");
+
+  // Same anchor, now 20min + 6min = 26min old — past PROBE_MIN_INTERVAL's 5min floor so a second
+  // sweep is not blocked by rate-limiting, but still under the 30min default. The operator sets a
+  // tighter 10min interval via settings — now it IS stale against their own threshold.
+  tick(6 * 60);
+  await h(put(`/api/u/testy/settings?${K}`, { probe_interval_sec: 600 }));
+  await h.sweepProbes();
+  assert.equal(calls.length, 1, "a stricter probe_interval_sec makes the same anchor age count as stale");
+});
+
+test("sweepProbes skips accounts with no probe token — nothing to sweep, no crash", async () => {
+  const { h, store, calls } = mkHandler();
+  await seedAnchor(store, 13 * 3600);              // stale, but never registered a probe token
+  await h.sweepProbes();
+  assert.equal(calls.length, 0, "no probe token registered — sweep must not attempt a call");
 });
 
 // The header contract itself, against a stubbed response.

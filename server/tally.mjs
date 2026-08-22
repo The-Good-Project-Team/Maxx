@@ -158,6 +158,9 @@ export function applyEnvelope(store, env, now = Math.floor(Date.now() / 1000)) {
       turns: s.turns || 0,
       ctx: s.ctx || 0,
       cost_per_action: s.cost_per_action || 0,
+      // per-session context window (200k default, 1M for long-context sessions) — the
+      // "chat wall" is a fraction of THIS, not a flat constant across every model.
+      context_window_size: s.context_window_size || 0,
     });
     accepted++;
     billed += s.billed || 0;
@@ -419,12 +422,12 @@ export function computeBudget(store, now) {
     if (e.ts <= now - 3600 || e.ts > now + 60) continue;
     const key = `${e.surface}|${e.root}`;
     let b = burners.get(key);
-    if (!b) { b = { surface: e.surface, session: e.root, project: null, name: null, tokens_1h: 0, rate_5m: 0, ctx: 0, cost_per_action: 0, _ts: 0 }; burners.set(key, b); }
+    if (!b) { b = { surface: e.surface, session: e.root, project: null, name: null, tokens_1h: 0, rate_5m: 0, ctx: 0, context_window_size: 0, cost_per_action: 0, _ts: 0 }; burners.set(key, b); }
     b.tokens_1h += e.billed;
     if (e.ts > now - 300) b.rate_5m += e.billed;
     if (e.project) b.project = e.project;
     if (e.name) b.name = e.name;
-    if (e.ts >= b._ts && e.ctx) { b._ts = e.ts; b.ctx = e.ctx; b.cost_per_action = e.cost_per_action || 0; }
+    if (e.ts >= b._ts && e.ctx) { b._ts = e.ts; b.ctx = e.ctx; b.cost_per_action = e.cost_per_action || 0; b.context_window_size = e.context_window_size || 0; }
   }
   const ranked = [...burners.values()].sort((x, y) => y.tokens_1h - x.tokens_1h);
   // COST INDEX — the efficiency reading, and the number that says which surface to fix.
@@ -437,6 +440,7 @@ export function computeBudget(store, now) {
     surface: x.surface, session: x.session, project: x.project, name: x.name,
     week_pct: pctOfWeek(x.tokens_1h), five_pct: pctOfFive(x.rate_5m),
     cost_index: medianCost > 0 && x.cost_per_action > 0 ? Math.round((x.cost_per_action / medianCost) * 100) / 100 : null,
+    ctx: x.ctx, context_window_size: x.context_window_size,
   }));
 
   // when tokens come back: session_to_spend refills at five_reset (next 5h
@@ -601,7 +605,12 @@ export function addDirective(store, d, now) {
 // delivers as injected context on that session's next tool call. Advisory only:
 // it never pauses or denies, because interrupting a working session on a
 // heuristic is a worse failure than overspending.
-const CTX_WALL = 250e3;
+// Per-session wall: whichever of 75% of the model's real context window or 350k tokens
+// comes first (same rule the statusline and dashboard use) — a 1M-window session is not
+// "past the wall" at the same 250k mark that ends a 200k-window one. Falls back to the
+// flat 250k mark only for sessions whose events predate context_window_size on the wire.
+const CTX_WALL_FALLBACK = 250e3;
+const ctxWallFor = (cws) => (cws ? Math.min(cws * 0.75, 350e3) : CTX_WALL_FALLBACK);
 const WATCH_COOLDOWN = 30 * 60; // never nag the same session more than twice an hour
 const kf = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`);
 
@@ -633,15 +642,16 @@ export function autoAdvise(store, now) {
   // Context size stays an internal signal — it is the thing being diagnosed, not a budget
   // reading — but it never reaches the payload or the note as a raw count.
   const ctxOf = (session) => {
-    let ts = 0, ctx = 0;
-    for (const e of store.events) if (e.root === session && e.ts >= ts && e.ctx) { ts = e.ts; ctx = e.ctx; }
-    return ctx;
+    let ts = 0, ctx = 0, cws = 0;
+    for (const e of store.events) if (e.root === session && e.ts >= ts && e.ctx) { ts = e.ts; ctx = e.ctx; cws = e.context_window_size || 0; }
+    return { ctx, wall: ctxWallFor(cws) };
   };
   const sent = [];
   for (const t of b.top_burners || []) {
     if (!t.session || !(t.five_pct > 0)) continue;   // must actually be burning right now
     const slope = perTurnSlope(store, t.session, now);
-    const pastWall = ctxOf(t.session) > CTX_WALL;
+    const { ctx: sessionCtx, wall: sessionWall } = ctxOf(t.session);
+    const pastWall = sessionCtx > sessionWall;
     // climbing catches it on the way UP; past-wall is the backstop for a session that
     // was already fat when we started watching it
     const climbing = !!(slope && slope.rising && slope.last3 >= 150e3);

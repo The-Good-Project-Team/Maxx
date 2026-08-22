@@ -47,6 +47,15 @@ if (arg === "--wake") {
   // first, then "continue" had nothing to continue from). Manual runs (TTY) stay quiet.
   let src = "";
   try { if (!process.stdin.isTTY) src = (JSON.parse(readFileSync(0, "utf8") || "{}").source || ""); } catch {}
+  // source:"resume" means Claude Code just replayed the FULL prior transcript — this is
+  // not a fresh/light session, so the handoff brief is redundant (the resumed context
+  // already has everything it would say) and stacking it on top only adds tokens to an
+  // already-large first turn, right as context-governor is about to fire on that same
+  // turn for the resume itself. Observed 2026-08-21: a resume's inherited bloat alone
+  // was enough to trip the governor before any real work — injecting the handoff too
+  // just made that turn's context bigger for no benefit. startup/clear/compact are
+  // genuinely fresh and still get the handoff normally.
+  if (src === "resume") process.exit(0);
   try {
     const st = statSync(HANDOFF);
     const ageH = (Date.now() - st.mtimeMs) / 3600000;

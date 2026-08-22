@@ -58,6 +58,9 @@ export function createMemoryStore() {
     async save(handle, store) { mem.set(safe(handle), store); },
     async getSecret(handle) { return auth.get(safe(handle)) || null; },
     async setSecret(handle, secret) { auth.set(safe(handle), secret); },
+    // Matches createFileStore's contract so sweeps (sweepTransitions, sweepProbes) that guard
+    // on `store.listHandles` are exercisable against tests, not just the real file store.
+    async listHandles() { return [...mem.keys()]; },
   };
 }
 

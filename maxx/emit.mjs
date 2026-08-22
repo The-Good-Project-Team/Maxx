@@ -39,6 +39,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractSetupToken } from "./token.mjs";
+import { shouldUpdate } from "./update.mjs";
 
 const HOME = homedir();
 const DEFAULT_DIR = path.join(HOME, ".claude", "projects");
@@ -111,6 +112,18 @@ const PRICE_W = (() => {
   catch { return fallback; }
 })();
 const modelWeight = (m) => { m = String(m || "").toLowerCase(); for (const fam in PRICE_W) if (m.includes(fam)) return PRICE_W[fam]; return PRICE_W.sonnet; };
+
+// Context window size per model family — the "chat" wall is a fraction of THIS, not a
+// flat number: a 1M-window session and a 200k-window session hit their real wall at very
+// different token counts. All current families default to Anthropic's standard 200k.
+// KNOWN GAP: Sonnet's 1M-context beta is an account/request flag, not something the
+// transcript records — the model id reads identical either way — so a beta session is
+// undercounted here (its real wall is 5x higher than this table says). render.mjs's
+// statusline gets the true figure straight from Claude Code itself (cw_.context_window_size)
+// and is unaffected; this table only backstops the server-side dashboard, which has no
+// equivalent source. Revisit if/when a transcript field exposes the active window.
+const CONTEXT_WINDOW_FALLBACK = 200_000;
+const contextWindowSize = (m) => CONTEXT_WINDOW_FALLBACK;
 const weightedTok = (u, model) =>
   ((u.input_tokens || 0) + (u.output_tokens || 0) * 5 +
    (u.cache_creation_input_tokens || 0) * 1.25 + (u.cache_read_input_tokens || 0) * 0.1) * modelWeight(model);
@@ -574,6 +587,7 @@ async function emitRoot(root, { quiet, nowSec, cursorAll, anchor }) {
       input: r.input, cache_read: r.cache_read, cache_write: r.cache_write,
       raw: r.raw, tool_calls: r.tool_calls, agent_turns: r.agent_turns, errors: r.errors,
       ctx: r.ctx, cost_per_action: Math.round(r.ctx * 0.1 * modelWeight(r.lastModel)),
+      context_window_size: contextWindowSize(r.lastModel),
       first_ts: r.first ? iso(r.first) : null, last_ts: r.last ? iso(r.last) : null,
     }));
   const totalBilled = sessions.reduce((a, s) => a + s.billed, 0);
@@ -672,6 +686,38 @@ async function emitRoot(root, { quiet, nowSec, cursorAll, anchor }) {
 
 const fmtK = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1e3) + "k";
 
+// Self-update: install.sh stamps the commit it installed from into config.json's install_sha.
+// GET /api/version reports the server's own — when they differ, this machine is running a
+// stale CLI against a server that has since moved on. Re-run the installer (same command the
+// README tells a human to run) and exit; launchd (KeepAlive) respawns a clean --watch on the
+// new files. "dev" is install.sh --link's sentinel for a live dev checkout that IS the source
+// of truth — never overwrite a developer's own edits out from under them.
+const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // matches the probe sweep's cadence
+
+async function checkForUpdate() {
+  const mine = cfg.install_sha;
+  if (!mine || mine === "dev" || mine === "unknown") return; // nothing to compare, or a dev checkout
+  try {
+    const res = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return;
+    const { sha } = await res.json();
+    if (!shouldUpdate(mine, sha)) return;
+    console.log(`MAXX_EMIT update available (${mine.slice(0, 8)} → ${sha.slice(0, 8)}) — reinstalling…`);
+    const { spawn } = await import("node:child_process");
+    // Same command the README tells a human to run — one install path, not a second one that
+    // can drift from it. Detached + unref so this process can exit clean while the shell
+    // finishes; KeepAlive respawns --watch once install.sh has replaced these files.
+    const child = spawn("bash", ["-c", "curl -fsSL https://meetmaxx.co/install | bash"], {
+      detached: true, stdio: "ignore",
+    });
+    child.unref();
+    console.log("  reinstall started in the background — this process will exit for launchd to respawn.");
+    process.exit(0);
+  } catch (e) {
+    console.log(`  update check failed (harmless, will retry): ${e.message}`);
+  }
+}
+
 if (!args.watch) {
   await runOnce();
 } else {
@@ -732,4 +778,6 @@ if (!args.watch) {
     catch { /* recursive watch unsupported, or root has no projects dir yet — 60s backstop covers it */ }
   }
   setInterval(kick, 60000); // 60s backstop
+  await checkForUpdate();   // once at startup — catches a machine that was asleep through several releases
+  setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
 }

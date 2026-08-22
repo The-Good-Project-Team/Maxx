@@ -33,6 +33,17 @@ fi
 [ -d "$HOME/.tokenmaxx" ] && [ ! -e "$HOME/.maxx" ] && mv "$HOME/.tokenmaxx" "$HOME/.maxx"
 mkdir -p "$SKILL" "$HOME/.maxx"
 
+# Stamp the commit this install came from, so --watch can compare itself against GET
+# /api/version and self-update when the server is ahead. --link mode is a dev checkout that
+# stays live forever (re-reading its SHA later would always read "current"), so it's stamped
+# "dev" instead — --watch's auto-update explicitly skips that sentinel, never overwriting a
+# developer's own edits out from under them.
+if [ "$MODE" = "--link" ]; then
+  INSTALL_SHA="dev"
+else
+  INSTALL_SHA="$(cd "$SRC/.." && git rev-parse HEAD 2>/dev/null || echo unknown)"
+fi
+
 # place a file: link or copy, skipping when src and dst are already the same
 place() {
   [ "$1" -ef "$2" ] 2>/dev/null && return 0
@@ -121,6 +132,18 @@ d.hooks.SessionStart.push({
 mkdirSync(dirname(p), { recursive: true });
 writeFileSync(p, JSON.stringify(d, null, 2));
 JS
+
+# Stamp install_sha into config.json — merge, never clobber handle/secret/accounts already
+# there from a prior install. Must happen before the onboarding branches below so --watch's
+# update check has it from the first run, on a fresh install too (not just re-installs).
+INSTALL_SHA="$INSTALL_SHA" node -e '
+const { readFileSync, writeFileSync, mkdirSync } = require("fs");
+const path = process.env.HOME + "/.maxx/config.json";
+mkdirSync(process.env.HOME + "/.maxx", { recursive: true });
+let c = {}; try { c = JSON.parse(readFileSync(path, "utf8")); } catch {}
+c.install_sha = process.env.INSTALL_SHA;
+writeFileSync(path, JSON.stringify(c, null, 2));
+'
 
 echo "maxx installed ($MODE)."
 echo "  statusline -> $NODE_BIN $SKILL/render.mjs"

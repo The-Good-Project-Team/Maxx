@@ -77,6 +77,28 @@ test("rise refuses the three things the next generation could not undo", () => {
   }
 });
 
+test("--wake skips injection on source:\"resume\" — a resume already carries full context", async () => {
+  // 2026-08-21: context-governor fires on a resume's own inherited transcript bloat before
+  // any real work happens. Stacking fenix's handoff on top of that same first turn only made
+  // it bigger for no benefit — a resumed session's context already HAS everything the handoff
+  // would say. startup/clear/compact are genuinely fresh and must keep getting it.
+  const { dir } = repo();
+  mkdirSync(path.join(dir, ".fenix"), { recursive: true });
+  writeFileSync(path.join(dir, ".fenix", "handoff.md"), "# Handoff\n\nIn motion: the thing.\n");
+
+  // execFile's `input` option does not reliably reach a child that reads fd 0 directly
+  // (fenix.mjs uses readFileSync(0, ...), not process.stdin) — shell out through `sh -c`
+  // with a real pipe instead, the same shape proven working by hand against the live file.
+  const wake = (source) => run("sh", ["-c", `echo '${JSON.stringify({ source })}' | node "${FENIX}" --wake`], { cwd: dir });
+
+  const resumed = await wake("resume");
+  assert.equal(resumed.stdout.trim(), "", "source:\"resume\" must inject nothing");
+
+  const started = await wake("startup");
+  assert.match(started.stdout, /FENIX/, "source:\"startup\" must still inject the handoff");
+  assert.match(started.stdout, /In motion: the thing/, "the actual handoff body must ride along");
+});
+
 test("--state reports branch, HEAD and a dirty tree from git, not from memory", async () => {
   const { dir, git } = repo();
   await git("init", "-q");

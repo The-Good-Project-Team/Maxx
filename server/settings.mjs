@@ -53,6 +53,15 @@ export const DEFAULTS = Object.freeze({
   // The lease machinery already exists (store.leases, reserved_pct); this is the switch that
   // says whether sessions are allowed to use it.
   allow_session_reserve: true,
+
+  // How often (seconds) the server pulls a fresh anchor on ITS OWN clock for an account that
+  // registered a probe token — not gated on anything calling in first. Exists for accounts with
+  // no laptop pushing and nothing reading the budget on their behalf (a server running on a bare
+  // subscription OAuth token): without this, maybeRefreshAnchor never fires for them at all, since
+  // it only runs on the ingest/read paths. 1800 (30 min) matches the interval Reif asked for on
+  // 2026-08-21. 0 disables the standalone sweep for this account (falls back to request-path-only
+  // refresh, i.e. the pre-existing behaviour).
+  probe_interval_sec: 1800,
 });
 
 const NUM01 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
@@ -86,6 +95,7 @@ export function resolveSettings(config = {}) {
   take("per_diem_granularity", (v) => GRANULARITIES.has(v));
   take("account_strategy", (v) => STRATEGIES.has(v));
   take("allow_session_reserve", (v) => typeof v === "boolean");
+  take("probe_interval_sec", (v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
 
   if ("allow_session_overburn" in (config || {})) {
     const v = config.allow_session_overburn;

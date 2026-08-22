@@ -1309,13 +1309,22 @@ if(location.search)history.replaceState(null,'',location.pathname);
   // (laptop:xx, cloud:routine) and their public-redacted labels (machine N, cloud N).
   var surfIcon=function(s){s=String(s||'');return s.indexOf('cloud')===0?'☁️':(s.indexOf('laptop')===0||s.indexOf('machine')===0)?'💻':'✳️'};
   var clockAt=function(fromNow){return new Date(Date.now()+fromNow*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-  var FIVE_H=5*3600,WEEK=7*86400,CTX_WALL=250e3;
+  var FIVE_H=5*3600,WEEK=7*86400,CTX_WALL_FALLBACK=250e3;
+  // Per-session wall: same rule render.mjs's statusline uses — whichever of 75% of the
+  // window or 350k tokens comes first (a 200k window binds on the percentage, a 1M
+  // window binds on the flat number, long past where starting fresh beats carrying it).
+  // Falls back to the flat 250k mark only for events shipped before context_window_size
+  // existed on the wire (context_window_size 0/absent).
+  var ctxWallFor=function(cws){
+    if(!cws)return CTX_WALL_FALLBACK;
+    return Math.min(cws*0.75,350e3);
+  };
 
   // Context trajectory from the feed — the useful signal in the emitter lane. Each
   // batch carries ctx; grouping by session and sloping the recent tail gives ctx
-  // GROWTH per turn and turns-to-wall (/fenix at 250k). A /clear drops ctx → the
-  // tail slope resets, so a freshly-cleared session reads as holding, not climbing.
-  // Also returns prev-ctx per batch so the tail can annotate growth inline.
+  // GROWTH per turn and turns-to-wall (/fenix at the session's own wall). A /clear drops
+  // ctx → the tail slope resets, so a freshly-cleared session reads as holding, not
+  // climbing. Also returns prev-ctx per batch so the tail can annotate growth inline.
   function ctxTrends(){
     var ev=(window.__ev||[]).slice().sort(function(a,b){return new Date(a.ts)-new Date(b.ts)});
     var g={},prev={};
@@ -1323,13 +1332,14 @@ if(location.search)history.replaceState(null,'',location.pathname);
       var k=e.name||((e.project||e.surface||'?')+'');
       var gr=g[k]||(g[k]={name:e.name,project:e.project,s:[]});
       prev[e.ts+'|'+k]=gr.s.length?gr.s[gr.s.length-1].ctx:null;
-      gr.s.push({ctx:e.ctx||0,turns:e.turns||0});
+      gr.s.push({ctx:e.ctx||0,turns:e.turns||0,cws:e.context_window_size||0});
     });
     var sessions=Object.keys(g).map(function(k){
       var s=g[k].s,last=s[s.length-1],tail=s.slice(-6),f=tail[0];
+      var wall=ctxWallFor(last.cws);
       var dctx=last.ctx-f.ctx,dt=0;for(var i=1;i<tail.length;i++)dt+=tail[i].turns;
-      var vel=dt>0?dctx/dt:0,ttw=vel>0?(CTX_WALL-last.ctx)/vel:Infinity;
-      return {name:g[k].name,project:g[k].project,ctx:last.ctx,vel:vel,ttw:ttw};
+      var vel=dt>0?dctx/dt:0,ttw=vel>0?(wall-last.ctx)/vel:Infinity;
+      return {name:g[k].name,project:g[k].project,ctx:last.ctx,vel:vel,ttw:ttw,wall:wall};
     }).filter(function(x){return x.ctx>0});
     return {sessions:sessions,prev:prev};
   }
@@ -1562,7 +1572,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
       var nm=esc((x.name||x.project||'').slice(0,18));
       var climb=x.vel>0?' · +'+hum(x.vel)+'/t':'';
       var ttw=isFinite(x.ttw)?' · →'+Math.round(x.ttw)+'t':'';
-      if(x.ctx>CTX_WALL)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+' · past wall · <b>/fenix</b>'});
+      if(x.ctx>x.wall)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+' · past wall · <b>/fenix</b>'});
       else if(x.vel>0&&x.ttw<15)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+climb+ttw+' · <b>/fenix</b>'});
       else if(x.vel>0&&x.ctx>120e3)warns.push({s:'amber',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+climb+ttw});
       else if(x.ctx>200e3)warns.push({s:'amber',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+' · holding'});
@@ -1585,10 +1595,10 @@ if(location.search)history.replaceState(null,'',location.pathname);
         cause=' — <b>'+esc(lead.name||lead.project||(lead.session||'').slice(0,8))+'</b> '+hum(lrate)+'/min'+
               (share>=15?' ('+share+'%)':'')+
               (lead.ctx?' at ctx'+hum(lead.ctx):'')+
-              (lead.ctx>CTX_WALL?' · past wall · <b>/fenix</b> it':'');
+              (lead.ctx>ctxWallFor(lead.context_window_size)?' · past wall · <b>/fenix</b> it':'');
         if(hot[1]&&hot[1].rate_5m/5>=wBurn*0.15)
           cause+=', then <b>'+esc(hot[1].name||hot[1].project||'session')+'</b> '+hum(hot[1].rate_5m/5)+'/min'+
-                 (hot[1].ctx>CTX_WALL?' (also past wall)':'');
+                 (hot[1].ctx>ctxWallFor(hot[1].context_window_size)?' (also past wall)':'');
       }
       warns.push({s:mult>=5?'red':'amber',t:'burn <b>'+hum(wBurn)+'/min</b> · '+mult+'× weekly pace'+cause});
     }
@@ -1604,9 +1614,9 @@ if(location.search)history.replaceState(null,'',location.pathname);
     var lines=[];
     // the single most-urgent context session, as a headline over the tail (the
     // full trajectory list lives in the left-pane warnings). Climbing sessions only.
-    var urgent=(window.__ctxS||[]).filter(function(x){return x.ctx>150e3&&(x.vel>0||x.ctx>CTX_WALL)}).sort(function(a,b2){return a.ttw-b2.ttw})[0];
+    var urgent=(window.__ctxS||[]).filter(function(x){return x.ctx>150e3&&(x.vel>0||x.ctx>x.wall)}).sort(function(a,b2){return a.ttw-b2.ttw})[0];
     if(urgent){
-      var sev=urgent.ctx>CTX_WALL||(urgent.vel>0&&urgent.ttw<15);
+      var sev=urgent.ctx>urgent.wall||(urgent.vel>0&&urgent.ttw<15);
       lines.push((sev?'⚠ ':'· ')+'<b>'+esc((urgent.name||urgent.project||'').slice(0,40))+'</b> ctx '+hum(urgent.ctx)+
         (urgent.vel>0?' · +'+hum(urgent.vel)+'/turn'+(isFinite(urgent.ttw)?' · ~'+Math.round(urgent.ttw)+' turns to wall':''):'')+
         ' → '+(sev?'<b>/fenix now</b>':'/clear soon'));
@@ -1869,7 +1879,7 @@ and a fixable one. Treating a failed measurement as a spent budget is the single
 mistake in this system's history.
 `;
 
-export function createHandler({ store, secretFor = () => null, fallbackSecret = null, now = () => Date.now() / 1000, probe = probeAnchor, allowUnconfigured = true }) {
+export function createHandler({ store, secretFor = () => null, fallbackSecret = null, now = () => Date.now() / 1000, probe = probeAnchor, allowUnconfigured = true, gitSha = "unknown" }) {
   // ---- per-handle mutex -----------------------------------------------------
   // Every mutating path here is load → mutate → save with an await in the middle. Two
   // requests for the same handle therefore both read the PRE-write doc, and the second
@@ -2076,7 +2086,12 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // Rate-limited by probe_at, which is stamped BEFORE the call so a failing probe
   // (dead token, network) backs off exactly like a successful one.
   const PROBE_MIN_INTERVAL = 300;
-  async function maybeRefreshAnchor(handle, s, t) {
+  // `staleAfter` lets a caller pull sooner than ANCHOR_TRUST_SEC — the standalone sweep passes
+  // the account's own probe_interval_sec setting so a server-only account (no laptop, no push,
+  // nothing ever calls in) still gets checked on ITS clock instead of waiting for something to
+  // read the budget first. Request-path callers keep passing nothing, so their behaviour (pull
+  // only once the push has actually gone stale) is unchanged.
+  async function maybeRefreshAnchor(handle, s, t, staleAfter = ANCHOR_TRUST_SEC) {
     // The probe token is SEALED (credentials.mjs). openProbeToken transparently upgrades a
     // legacy cleartext `s.probe.token` on first read -- production carried one at mode 664 for
     // weeks -- and tells us to persist the upgrade. Migrating on read rather than in a script
@@ -2087,7 +2102,7 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       await store.save(handle, s);
     }
     if (!token) return false;
-    if (anchorAgeSec(s, t) <= ANCHOR_TRUST_SEC) return false;
+    if (anchorAgeSec(s, t) <= staleAfter) return false;
     if (t - (s.probe.at || 0) < PROBE_MIN_INTERVAL) return false;
     s.probe.at = t;
     const anchor = await probe(token, { now: t });
@@ -2096,6 +2111,28 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     if (s.anchors.length > 500) s.anchors = s.anchors.slice(-500);
     logOp(s, "probe", `pulled anchor · 5h ${Math.round(anchor.five_pct * 100)}% · 7d ${Math.round(anchor.week_pct * 100)}%`, t);
     return true;
+  }
+
+  // Standalone probe sweep — for an account with a probe token but no traffic ever calling in
+  // (a server using a subscription OAuth token has nothing to push and nothing to read the
+  // budget on its behalf), maybeRefreshAnchor above never fires: it only runs on the ingest/read
+  // paths. This walks every handle with a probe token on its OWN clock, honouring each account's
+  // probe_interval_sec setting (default 30 min; 0/null disables the account's standalone check,
+  // falling back to request-path-only refresh). PROBE_MIN_INTERVAL inside maybeRefreshAnchor is
+  // still the hard floor, so a misconfigured tiny interval cannot hammer Anthropic.
+  async function sweepProbes() {
+    if (!store.listHandles) return;
+    for (const h of await store.listHandles()) {
+      await withHandleLock(h, async () => {
+        const s = await store.load(h);
+        if (!s.probe) return; // no probe token registered — nothing to sweep
+        const { settings } = resolveSettings(s.config || {});
+        const interval = settings.probe_interval_sec;
+        if (!interval) return; // operator turned the standalone check off for this account
+        const t = now();
+        if (await maybeRefreshAnchor(h, s, t, interval)) { await store.save(h, s); bump(h); }
+      });
+    }
   }
 
   // Budget is the hottest read in the product (every gate check, every fleet pass, every
@@ -2562,6 +2599,20 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
         status: 200,
         headers: { "content-type": "text/markdown; charset=utf-8", "cache-control": "public, max-age=300", ...CORS },
         body: MODEL_BRIEF,
+      };
+    }
+
+    // GET /api/version — the git SHA this deploy was built from (Containerfile ARG,
+    // stamped at build time from `git rev-parse HEAD` in the Maxx repo — see docs/, dino's
+    // docker-compose.yml). A CLI install stamps its OWN sha at install time; --watch compares
+    // the two on a cadence and re-runs the installer when they differ, so a fleet of laptops
+    // tracks the server without anyone remembering to reinstall by hand. No auth: this
+    // describes the deploy, not any account's data.
+    if (p === "/api/version" && (method === "GET" || method === "HEAD")) {
+      return {
+        status: 200,
+        headers: { "content-type": "application/json", "cache-control": "public, max-age=60", ...CORS },
+        body: JSON.stringify({ sha: gitSha }),
       };
     }
 
@@ -3080,6 +3131,7 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   }
 
   handle.sweepTransitions = sweepTransitions;   // for the runner's interval
+  handle.sweepProbes = sweepProbes;             // for the runner's interval
   return handle;
 }
 

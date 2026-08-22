@@ -49,6 +49,7 @@ const handler = createHandler({
   secretFor,
   fallbackSecret: process.env.MAXX_SECRET || null,
   allowUnconfigured: process.env.MAXX_OPEN === "1",
+  gitSha: process.env.MAXX_GIT_SHA || "unknown",
 });
 
 const server = http.createServer(async (req, res) => {
@@ -70,3 +71,9 @@ server.listen(port, () => console.log(`maxx tally on http://localhost:${port}  (
 // transition webhooks fire on ingest, but refills happen on the CLOCK while
 // idle — sweep every 30s so over→ok reaches consumers within a minute.
 setInterval(() => handler.sweepTransitions?.().catch?.(() => {}), 30_000);
+
+// probe accounts (server-only, no laptop push, nothing reading the budget on their behalf)
+// otherwise never get a fresh anchor at all — sweepProbes checks each account against its own
+// probe_interval_sec setting (default 30 min). 60s tick is cheap: sweepProbes itself no-ops for
+// every handle whose interval hasn't elapsed yet, so this is not 60s of real probing.
+setInterval(() => handler.sweepProbes?.().catch?.(() => {}), 60_000);

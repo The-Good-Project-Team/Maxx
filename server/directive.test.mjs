@@ -122,6 +122,28 @@ test("watchdog advises /clear on a past-wall session that is actually burning", 
   assert.equal(autoAdvise(s, T + 60).length, 0, "cooldown suppresses repeat");
 });
 
+test("watchdog wall scales with the session's own context window, not a flat 250k", () => {
+  const s = emptyStore();
+  const T = 1_800_000_000;
+  s.anchors.push({ ts: T - 60, five_pct: 0.2, week_pct: 0.3, five_reset: T + 3600, week_reset: T + 2 * 86400 });
+  // 300k ctx: past the OLD flat 250k wall, but under the 1M-window session's real wall
+  // (min(1M*0.75, 350k) = 350k) — a long-context session this size is not "past the wall"
+  // yet and must not get nagged to /clear.
+  for (let i = 0; i < 5; i++)
+    s.events.push({ surface: "laptop:a", root: "sess-longctx", ts: T - 60 * i, billed: 20e6, ctx: 300e3, context_window_size: 1_000_000, name: "long-context session" });
+  assert.equal(autoAdvise(s, T).length, 0, "300k ctx on a 1M-window session is not past its wall");
+
+  // same 300k ctx, but a standard 200k-window session — its wall is min(200k*0.75,350k)=150k,
+  // so 300k IS past it and must fire.
+  const s2 = emptyStore();
+  s2.anchors.push({ ts: T - 60, five_pct: 0.2, week_pct: 0.3, five_reset: T + 3600, week_reset: T + 2 * 86400 });
+  for (let i = 0; i < 5; i++)
+    s2.events.push({ surface: "laptop:a", root: "sess-stdctx", ts: T - 60 * i, billed: 20e6, ctx: 300e3, context_window_size: 200_000, name: "standard session" });
+  const sent = autoAdvise(s2, T);
+  assert.equal(sent.length, 1, "300k ctx on a 200k-window session IS past its wall");
+  assert.equal(sent[0].session, "sess-stdctx");
+});
+
 test("watchdog stays quiet on a big but idle context", () => {
   const s = emptyStore();
   const T = 1_800_000_000;
