@@ -670,15 +670,20 @@ function main() {
   const q5 = realMax ? Math.min(1, used5 / realMax) : (haveQuota ? quota : 0);
   // week FILL is the coin fraction of the tank — our meter reads our burn, not Anthropic's %.
   const w7 = haveWeek ? week : (cap7s ? Math.min(1, used7 / cap7s) : 0);
-  // how far into each window you are (the pace line): elapsed = time-in / window-span. The span
-  // start clamps to the account epoch — a just-switched account did NOT start its window resets−7d
+  // how far into each window you are (the pace line): elapsed = time-in / window-span. The 5h span
+  // start clamps to the account epoch — a just-switched account did NOT start its window resets−5h
   // ago, and the unclamped math read "51% elapsed, 50pts behind" on an account 90 minutes old.
+  // The 7d week does NOT get this clamp: accountSince is when THIS LEDGER started tracking (a
+  // ledger reset, an account re-link), not when Anthropic's actual weekly window opened. A ledger
+  // that's 2 days old on an account that's been live for months clamped week-start to 2 days ago
+  // and read "week 49/10%" — 10% elapsed instead of the true ~59%. Anthropic's resets_at is the
+  // only trustworthy anchor for the week window; use it unclamped.
   const nowS = Date.now() / 1000;
   const acctS = ((win && win.accountSince) || 0) / 1000;
-  const spanOf = (resetAt, winSec) => { const start = Math.max(resetAt - winSec, acctS); return { start, span: Math.max(1, resetAt - start) }; };
-  const elapsedOf = (resetAt, winSec) => { const { start, span } = spanOf(resetAt, winSec); return Math.max(0, Math.min(1, (nowS - start) / span)); };
-  const e5 = haveQuota ? elapsedOf(rl.five_hour.resets_at, 5 * 3600) : 0;
-  const e7 = haveWeek ? elapsedOf(rl.seven_day.resets_at, 7 * 24 * 3600) : 0;
+  const spanOf = (resetAt, winSec, clamp) => { const start = clamp ? Math.max(resetAt - winSec, acctS) : resetAt - winSec; return { start, span: Math.max(1, resetAt - start) }; };
+  const elapsedOf = (resetAt, winSec, clamp) => { const { start, span } = spanOf(resetAt, winSec, clamp); return Math.max(0, Math.min(1, (nowS - start) / span)); };
+  const e5 = haveQuota ? elapsedOf(rl.five_hour.resets_at, 5 * 3600, true) : 0;
+  const e7 = haveWeek ? elapsedOf(rl.seven_day.resets_at, 7 * 24 * 3600, false) : 0;
   // cache reuse as a plain %, colored by the same heat thresholds (low reuse = burning
   // fresh tokens). A number, not a mood word, so it can't read as "all's well" next to
   // an off-pace line.
@@ -693,8 +698,8 @@ function main() {
   const wr = resetIn(haveWeek ? rl.seven_day.resets_at : 0);
 
   // pace per wall: session (5h) and weekly (7d) — will either hit its cap before it resets?
-  const p5 = haveQuota ? paceOf(rl.five_hour, spanOf(rl.five_hour.resets_at, 5 * 3600).span, quota) : { ok: false, hot: false };
-  const p7 = haveWeek ? paceOf(rl.seven_day, spanOf(rl.seven_day.resets_at, 7 * 24 * 3600).span, week) : { ok: false, hot: false };
+  const p5 = haveQuota ? paceOf(rl.five_hour, spanOf(rl.five_hour.resets_at, 5 * 3600, true).span, quota) : { ok: false, hot: false };
+  const p7 = haveWeek ? paceOf(rl.seven_day, spanOf(rl.seven_day.resets_at, 7 * 24 * 3600, false).span, week) : { ok: false, hot: false };
 
   // ── derived, machine-readable: every number the bars compute — time left, tokens burned, and
   //    needPerMin — as plain fields, so an agent can read ~/.maxx/status.json (or
@@ -714,8 +719,8 @@ function main() {
     return { usedPct: Math.round(usedFrac * 1000) / 10, used, cap, headroom, resetAt: resetAt || 0,
              secLeft, minLeft: Math.round(minLeft), resetIn: resetIn(resetAt), needPerMin, pacePerMin };
   }
-  const sStat = windowStat(used5, realMax, q5, haveQuota ? rl.five_hour.resets_at : 0, haveQuota ? spanOf(rl.five_hour.resets_at, 5 * 3600).span : 5 * 3600);
-  const wStat = windowStat(used7, cap7s, w7, haveWeek ? rl.seven_day.resets_at : 0, haveWeek ? spanOf(rl.seven_day.resets_at, 7 * 24 * 3600).span : 7 * 24 * 3600);
+  const sStat = windowStat(used5, realMax, q5, haveQuota ? rl.five_hour.resets_at : 0, haveQuota ? spanOf(rl.five_hour.resets_at, 5 * 3600, true).span : 5 * 3600);
+  const wStat = windowStat(used7, cap7s, w7, haveWeek ? rl.seven_day.resets_at : 0, haveWeek ? spanOf(rl.seven_day.resets_at, 7 * 24 * 3600, false).span : 7 * 24 * 3600);
   // pace gap (points): elapsed − used. + = behind even-burn (under-using), − = ahead. Cap-independent.
   sStat.elapsedPct = Math.round(e5 * 100); sStat.behindPts = Math.round((e5 - q5) * 100);
   wStat.elapsedPct = Math.round(e7 * 100); wStat.behindPts = Math.round((e7 - w7) * 100);
