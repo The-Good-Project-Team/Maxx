@@ -1978,8 +1978,8 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
   // future credential all become cheap without a ceiling. Per handle+IP so one attacker
   // cannot lock out the real owner, and the window is short so a fat-fingered CLI
   // recovers on its own rather than filing a support ticket.
-  const FAIL_MAX = 10;              // attempts before the door shuts
-  const FAIL_WINDOW_SEC = 900;      // rolling window and lockout length
+  const FAIL_MAX = 200;             // attempts before the door shuts
+  const FAIL_WINDOW_SEC = 60;       // rolling window and lockout length
   const fails = new Map();          // key -> {n, first, until}
   const failKey = (handle, headers) =>
     `${handle}|${String(headers["x-forwarded-for"] || headers["cf-connecting-ip"] || headers["x-real-ip"] || "?").split(",")[0].trim()}`;

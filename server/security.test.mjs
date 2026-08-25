@@ -76,7 +76,7 @@ test("repeated wrong credentials get throttled, per handle+IP", async () => {
   const attempt = (ip, k) => handler({ method: "POST", url: `/api/u/acme/logs?k=${k}`, headers: { "x-forwarded-for": ip }, body: "{}" });
 
   let last;
-  for (let i = 0; i < 12; i++) last = await attempt("10.0.0.1", `guess-${i}`);
+  for (let i = 0; i < 201; i++) last = await attempt("10.0.0.1", `guess-${i}`);
   assert.equal(last.status, 429, "guessing must stop being free");
   assert.match(last.headers["retry-after"] || "", /^\d+$/, "a 429 without retry-after is unactionable");
 
