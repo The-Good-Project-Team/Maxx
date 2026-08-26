@@ -10,12 +10,14 @@
  *                             and mark it consumed — read=consume, exactly like the
  *                             maxx directive channel. Silent no-op otherwise.
  *   node fenix.mjs --status   Show pending/consumed handoffs for this directory.
+ *   node fenix.mjs --recover <id>   Print the handoff with that id (live or archived).
+ *   node fenix.mjs --compact [--list] [--keep N]   Bound the archive (default keep 20).
  *
  * Unattended continuation (the "cron" half): after /fenix you can also relaunch
  * headless — `claude -p "$(cat .fenix/handoff.md)"` — or let the next interactive
  * session in this directory pick it up automatically via --wake.
  */
-import { readFileSync, writeFileSync, writeSync, renameSync, statSync, readdirSync, existsSync, openSync } from "node:fs";
+import { readFileSync, writeFileSync, writeSync, renameSync, statSync, readdirSync, existsSync, openSync, unlinkSync } from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -484,6 +486,69 @@ if (arg === "--state") {
   process.exit(0);
 }
 
+// --recover <id>: resolve a handoff id back to its content.
+//
+// WHY. An id you cannot look up is a label, not a pointer. Every crash-recovery system
+// resolves a small pointer to the state it names (pg_control -> redo point -> replay the WAL);
+// the pointer exists precisely so recovery never scans history. Fenix minted ids in e86d1e4
+// but nothing consumed them, so "which handoff was fx-...-08d007e6?" still meant grepping a
+// directory of 139 files. Now the id IS addressable: the human can quote one back, and a
+// risen session can reconstitute the exact checkpoint it came from.
+//
+// Resolution order: the live handoff, then the id-named archive (written since e86d1e4), then
+// a scan of clock-named archives from before ids existed. Bare or `fx-`-prefixed both work.
+if (arg === "--recover") {
+  const want = (process.argv[3] || "").trim();
+  if (!want) { console.error("fenix: --recover needs a handoff id (see --status)."); process.exit(1); }
+  if (!existsSync(DIR)) { console.error("fenix: no .fenix/ here."); process.exit(1); }
+  const norm = (x) => x.replace(/^fx-/, "");
+  const live = readHandoffId();
+  if (live && live.id && norm(live.id) === norm(want) && existsSync(HANDOFF)) {
+    console.log(readFileSync(HANDOFF, "utf8"));
+    process.exit(0);
+  }
+  const direct = path.join(DIR, `handoff.consumed-${want.startsWith("fx-") ? want : "fx-" + want}.md`);
+  if (existsSync(direct)) { console.log(readFileSync(direct, "utf8")); process.exit(0); }
+  const hit = readdirSync(DIR)
+    .filter((f) => f.startsWith("handoff.consumed-") && norm(f).includes(norm(want)));
+  if (hit.length) { console.log(readFileSync(path.join(DIR, hit[0]), "utf8")); process.exit(0); }
+  console.error(`fenix: no handoff matching "${want}". Try --status, or --compact --list.`);
+  process.exit(1);
+}
+
+// --compact [--list] [--keep N]: bound the archive.
+//
+// WHY. A checkpoint truncates the log it supersedes; that is half of what makes recovery
+// bounded. Fenix never truncated -- measured 139 consumed handoffs in one directory, each a
+// full point-in-time state document, none of which any session will read again. They are not
+// free: they are what a recovery scan walks, and they make "which handoff?" a search problem.
+// Keep a recent window (the only part with any chance of being relevant), drop the rest.
+if (arg === "--compact") {
+  if (!existsSync(DIR)) { console.log("fenix: no .fenix/ here."); process.exit(0); }
+  const rest = process.argv.slice(3);
+  const listOnly = rest.includes("--list");
+  const ki = rest.indexOf("--keep");
+  const keep = ki >= 0 ? Math.max(0, parseInt(rest[ki + 1] || "20", 10)) : 20;
+  const files = readdirSync(DIR)
+    .filter((f) => f.startsWith("handoff.consumed-"))
+    .map((f) => ({ f, m: statSync(path.join(DIR, f)).mtimeMs }))
+    .sort((a, b) => b.m - a.m);
+  if (listOnly) {
+    for (const x of files.slice(0, keep)) {
+      console.log(`${new Date(x.m).toISOString().slice(0, 16).replace("T", " ")}  ${x.f.replace(/^handoff\.consumed-|\.md$/g, "")}`);
+    }
+    console.log(`\n${files.length} archived handoff(s); showing ${Math.min(keep, files.length)}.`);
+    process.exit(0);
+  }
+  const drop = files.slice(keep);
+  let freed = 0;
+  for (const x of drop) {
+    try { freed += statSync(path.join(DIR, x.f)).size; unlinkSync(path.join(DIR, x.f)); } catch {}
+  }
+  console.log(`fenix: compacted ${drop.length} handoff(s), kept ${Math.min(keep, files.length)}, freed ${Math.round(freed / 1024)}KB.`);
+  process.exit(0);
+}
+
 if (arg === "--status") {
   if (!existsSync(DIR)) { console.log("fenix: no .fenix/ here — nothing pending."); process.exit(0); }
   const pending = existsSync(HANDOFF) ? `PENDING (${Math.round((Date.now() - statSync(HANDOFF).mtimeMs) / 60000)}m old)` : "none";
@@ -494,9 +559,10 @@ if (arg === "--status") {
     console.log(`fenix: handoff-id: ${rec.id}`);
     console.log(`fenix:   session: ${rec.session_name} · written: ${rec.created_at}` +
                 (rec.session_id ? ` · claude-session: ${rec.session_id}` : ""));
+    console.log(`fenix:   recover: node fenix.mjs --recover ${rec.id}`);
   }
   process.exit(0);
 }
 
-console.error("fenix: unknown arg (use --wake | --rise | --state | --status)");
+console.error("fenix: unknown arg (use --wake | --rise | --state | --status | --recover <id> | --compact)");
 process.exit(1);
