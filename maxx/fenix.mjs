@@ -54,6 +54,30 @@ function makeHandoffId(sid, tsMs, name) {
   const stamp = ts.slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
   return "fx-" + name + "-" + stamp + "-" + h;
 }
+// AUTO-PRUNE (Reif, 2026-08-26: "obviously, it should happen automatically").
+//
+// --compact existed but only ran when a human remembered to run it, which is the same
+// failure as having no truncation at all: measured 139 archived handoffs / 1.3MB before
+// anyone noticed. A checkpointing system truncates its log AS PART OF checkpointing --
+// it does not file a ticket asking to be tidied later. So every archive event prunes the
+// tail it just extended. Bounded by construction, no cron, no human.
+//
+// Best-effort and silent: pruning is housekeeping and must never break a wake or a rise.
+function autoPrune(keep) {
+  const K = Number.isFinite(keep) ? keep : parseInt(process.env.MAXX_FENIX_KEEP || "20", 10);
+  if (!(K >= 0)) return 0;
+  try {
+    const files = readdirSync(DIR)
+      .filter((f) => f.startsWith("handoff.consumed-"))
+      .map((f) => ({ f, m: statSync(path.join(DIR, f)).mtimeMs }))
+      .sort((a, b) => b.m - a.m)
+      .slice(K);
+    let n = 0;
+    for (const x of files) { try { unlinkSync(path.join(DIR, x.f)); n++; } catch {} }
+    return n;
+  } catch { return 0; }
+}
+
 function readHandoffId() {
   try { return JSON.parse(readFileSync(IDFILE, "utf8")); } catch { return null; }
 }
@@ -201,6 +225,7 @@ if (arg === "--wake") {
       const _arcId = readHandoffId();
       renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${_arcId && _arcId.id ? _arcId.id : new Date().toISOString().replace(/[:.]/g, "-")}.md`));
       try { writeFileSync(dpath, JSON.stringify({ archived_at: Date.now() })); } catch {}
+      autoPrune(); // truncate as part of checkpointing, not on a human's memory
       process.exit(0);
     }
     // MICRO-COMPACT: lead with the id, the one next action, and repo facts read RIGHT NOW,
@@ -371,7 +396,9 @@ if (arg === "--rise") {
   }
   const body = readFileSync(HANDOFF, "utf8");
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${ts}.md`)); // consume FIRST: the child's --wake hook must not double-inject
+  const _riseId = readHandoffId();
+  renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${_riseId && _riseId.id ? _riseId.id : ts}.md`)); // consume FIRST: the child's --wake hook must not double-inject
+  autoPrune(); // same truncation contract as the wake path
   writeFileSync(GEN_F, JSON.stringify({ gen: gen + 1, head }));
   const log = path.join(DIR, `rise-${ts}.log`);
   const fd = openSync(log, "a");
