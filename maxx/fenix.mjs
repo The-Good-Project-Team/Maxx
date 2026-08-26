@@ -17,11 +17,119 @@
  */
 import { readFileSync, writeFileSync, writeSync, renameSync, statSync, readdirSync, existsSync, openSync } from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const DIR = path.join(process.cwd(), ".fenix");
 const HANDOFF = path.join(DIR, "handoff.md");
 const MAX_AGE_H = 48; // a stale handoff is history, not context — never auto-inject old state
+
+const IDFILE = path.join(DIR, "handoff.id");
+
+// THE HANDOFF ID (Reif, 2026-08-26: "emit an id each time, a hash of the claude session id,
+// its time stamp and the name of the session").
+//
+// WHY a filename was not enough: ".fenix/handoff.md" is the same nine bytes every generation.
+// Asking "which handoff?" had no answer, so a respawn could not NAME what it was resuming and
+// the human could not point at one. An id must be stable for one handoff, different for the
+// next, and derivable from what the session already knows.
+//
+// Three inputs, hashed to a short token: claude session id (which conversation) + timestamp
+// (which moment) + session name (which repo). The session id ALONE is insufficient -- one
+// session writes many handoffs across a long day and they would collide.
+function sessionName() {
+  return path.basename(process.cwd()) || "session";
+}
+function claudeSessionId() {
+  // The SessionStart hook payload carries session_id; a manual CLI run does not. Fall back to
+  // the env, then to a marker -- an id that is coarse beats no id, and the timestamp still
+  // makes every handoff distinct.
+  return process.env.CLAUDE_SESSION_ID || process.env.MAXX_SESSION_ID || "";
+}
+function makeHandoffId(sid, tsMs, name) {
+  const ts = new Date(tsMs).toISOString();
+  const h = createHash("sha256").update([sid || "nosid", ts, name].join("|")).digest("hex").slice(0, 8);
+  const stamp = ts.slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+  return "fx-" + name + "-" + stamp + "-" + h;
+}
+function readHandoffId() {
+  try { return JSON.parse(readFileSync(IDFILE, "utf8")); } catch { return null; }
+}
+// Mint (or re-read) the id for the CURRENT pending handoff. Keyed on the handoff's mtime, so the
+// id is STABLE while that handoff stands and is reminted the instant a new one is written.
+function ensureHandoffId(sid) {
+  let mtime = 0;
+  try { mtime = statSync(HANDOFF).mtimeMs; } catch { return null; }
+  const prev = readHandoffId();
+  if (prev && prev.handoff_mtime === mtime && prev.id) return prev;
+  const name = sessionName();
+  const rec = {
+    id: makeHandoffId(sid || claudeSessionId(), mtime, name),
+    session_id: sid || claudeSessionId() || null,
+    session_name: name,
+    created_at: new Date(mtime).toISOString(),
+    handoff_mtime: mtime,
+  };
+  try { writeFileSync(IDFILE, JSON.stringify(rec, null, 2)); } catch {}
+  return rec;
+}
+
+// THE MICRO-COMPACT (Reif, same directive: "I dont like to have to have the agent spend 20
+// turns trying to remember what was done ... so its like a micro-compact").
+//
+// The measure of a handoff is TURNS-TO-PRODUCTIVE-WORK in the next session. A handoff that is
+// merely present still costs ~20 turns if the agent has to re-run git, re-read PRs and
+// re-derive where it was. So the wake injection leads with a compacted HEAD BLOCK -- id, the
+// one next action, and live repo facts read at WAKE time (not at write time, when they were
+// already going stale) -- before the prose body. First tool call should be real work.
+//
+// Facts are gathered at injection because a handoff written an hour ago may name a PR that has
+// since merged; stale facts asserted confidently are worse than no facts (the repo's own
+// verification standard). Everything here is cheap, local, and best-effort.
+function microCompact(rec) {
+  const sh = (cmd, args) => {
+    try {
+      return execFileSync(cmd, args, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 4000,
+      }).trim();
+    } catch { return ""; }
+  };
+  const L = [];
+  if (rec && rec.id) L.push("handoff-id: " + rec.id);
+  const inRepo = sh("git", ["rev-parse", "--is-inside-work-tree"]) === "true";
+  if (inRepo) {
+    const idRecState = existsSync(HANDOFF) ? readHandoffId() : null;
+  const branch = sh("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const head = sh("git", ["rev-parse", "--short", "HEAD"]);
+    const subj = sh("git", ["log", "-1", "--format=%s"]);
+    if (branch) L.push("branch: " + branch + " @ " + head + (subj ? " - " + subj : ""));
+    const dirty = sh("git", ["status", "--porcelain"]).split("\n").filter(Boolean);
+    if (dirty.length) L.push("uncommitted: " + dirty.length + " file(s)");
+    const up = sh("git", ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    if (up) {
+      const ahead = sh("git", ["rev-list", "--count", up + "..HEAD"]);
+      if (ahead && ahead !== "0") L.push("UNPUSHED: " + ahead + " commit(s)");
+    }
+    const prs = sh("gh", ["pr", "list", "--limit", "6", "--json", "number,title",
+                          "--jq", '.[] | "#\\(.number) \\(.title)"']);
+    L.push(prs ? "open PRs: " + prs.split("\n").filter(Boolean).join(" | ") : "open PRs: none");
+  }
+  return L;
+}
+// Pull the "In motion (do this first)" section out of the handoff body -- that is the single
+// line that decides the next session's first move, and it must not be buried under prose.
+function firstAction(body) {
+  const m = body.match(/##\s*In motion[^\n]*\n([\s\S]*?)(?:\n##\s|\s*$)/i);
+  if (!m) return "";
+  const line = m[1].split("\n").map((x) => x.trim())
+    .find((x) => x && !x.startsWith("<!--"));
+  if (!line) return "";
+  // Strip list bullets and markdown emphasis so the action reads as a sentence, not as
+  // half-eaten markup ("*Dispatch gh#3305" -- the leading ** of a bold run got clipped).
+  return line.replace(/^[-*+]\s+/, "").replace(/\*\*/g, "").replace(/^`|`$/g, "").slice(0, 400);
+}
 
 // Every fenix moment is a maxx event the owner wants in the dash tail — post it to the
 // tally's ops ring. Best-effort with a hard timeout: fenix must never hang or fail on network.
@@ -46,7 +154,15 @@ if (arg === "--wake") {
   // with NO handoff, say so (the observed first-run failure: user cleared without /fenix
   // first, then "continue" had nothing to continue from). Manual runs (TTY) stay quiet.
   let src = "";
-  try { if (!process.stdin.isTTY) src = (JSON.parse(readFileSync(0, "utf8") || "{}").source || ""); } catch {}
+  let sid = "";
+  try {
+    if (!process.stdin.isTTY) {
+      const payload = JSON.parse(readFileSync(0, "utf8") || "{}");
+      src = payload.source || "";
+      // session_id is what makes the handoff id traceable back to a real conversation.
+      sid = payload.session_id || payload.sessionId || "";
+    }
+  } catch {}
   // source:"resume" means Claude Code just replayed the FULL prior transcript — this is
   // not a fresh/light session, so the handoff brief is redundant (the resumed context
   // already has everything it would say) and stacking it on top only adds tokens to an
@@ -80,17 +196,27 @@ if (arg === "--wake") {
     // Past the grace window the thread has been picked up (or abandoned) — archive it
     // quietly rather than injecting stale state into an unrelated session days later.
     if (Date.now() - firstAt > GRACE_MIN * 60000) {
-      renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${new Date().toISOString().replace(/[:.]/g, "-")}.md`));
+      const _arcId = readHandoffId();
+      renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${_arcId && _arcId.id ? _arcId.id : new Date().toISOString().replace(/[:.]/g, "-")}.md`));
       try { writeFileSync(dpath, JSON.stringify({ archived_at: Date.now() })); } catch {}
       process.exit(0);
     }
+    // MICRO-COMPACT: lead with the id, the one next action, and repo facts read RIGHT NOW,
+    // so the next session's first tool call is work rather than archaeology.
+    const idRec = ensureHandoffId(sid);
+    const compactLines = microCompact(idRec);
+    const nextAction = firstAction(body);
+    if (nextAction) compactLines.push("NEXT: " + nextAction);
+    const compactBlock = compactLines.length
+      ? "```\n" + compactLines.join("\n") + "\n```\n\n"
+      : "";
     const text =
       `🔥 FENIX — this session rises from a cleared one. The handoff below is what was in motion ` +
       `(written ${Math.round(ageH * 60)}m ago).` +
       (nth > 1 ? ` (Also delivered to ${nth - 1} earlier session${nth > 2 ? "s" : ""} in the last ${GRACE_MIN}m — if that work is already underway elsewhere, say so instead of redoing it.)` : "") +
       ` Resume it now without being asked: ` +
       `state in one line what you are picking up, verify its claims against the working tree, ` +
-      `then continue that work.\n\n${body}\n`;
+      `then continue that work.\n\n${compactBlock}${body}\n`;
     // writeSync, not process.stdout.write: stdout is a PIPE here, so the async write returns
     // before the bytes land and the process.exit(0) below truncates whatever is still buffered.
     // Measured: a 320K handoff delivered exactly 65536 bytes (one pipe buffer) of invalid JSON.
@@ -362,7 +488,13 @@ if (arg === "--status") {
   if (!existsSync(DIR)) { console.log("fenix: no .fenix/ here — nothing pending."); process.exit(0); }
   const pending = existsSync(HANDOFF) ? `PENDING (${Math.round((Date.now() - statSync(HANDOFF).mtimeMs) / 60000)}m old)` : "none";
   const consumed = readdirSync(DIR).filter((f) => f.startsWith("handoff.consumed-")).length;
+  const rec = existsSync(HANDOFF) ? ensureHandoffId("") : readHandoffId();
   console.log(`fenix: pending handoff: ${pending} · consumed: ${consumed}`);
+  if (rec && rec.id) {
+    console.log(`fenix: handoff-id: ${rec.id}`);
+    console.log(`fenix:   session: ${rec.session_name} · written: ${rec.created_at}` +
+                (rec.session_id ? ` · claude-session: ${rec.session_id}` : ""));
+  }
   process.exit(0);
 }
 
