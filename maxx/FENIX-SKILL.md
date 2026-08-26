@@ -41,7 +41,10 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
    # fenix handoff — <one-line mission>
    Written: <ISO time> · by session: <what this session was doing>
 
-   <PASTE THE `--state` BLOCK HERE — branch, HEAD, dirty files, unpushed commits, open PRs>
+   > Do NOT paste branch / HEAD / dirty files / unpushed / open PRs into the handoff.
+   > The wake injection computes them FRESH at read time (the micro-compact block), so a
+   > handoff written an hour ago cannot assert a PR that has since merged. Facts written
+   > here go stale; facts read at wake cannot. Spend your words on WHY, decisions and traps.
 
    ## Carried forward
    - <what the LAST handoff asked for: done / still in motion / dropped because X>
@@ -121,7 +124,23 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
 
 4. Do NOT delete or edit the handoff after writing it — `fenix.mjs --wake` consumes
    it on next session start. `node ~/.claude/skills/maxx/fenix.mjs --status` shows
-   pending/consumed.
+   pending/consumed, plus the handoff's ID.
+
+5. **Every handoff has an ID** — `fx-<session>-<YYYYMMDD-HHMM>-<hash8>`, a hash over the
+   claude session id, the timestamp and the session name. Report it when you hand back, so
+   the human can name the thread they are resuming:
+
+   ```
+   node ~/.claude/skills/maxx/fenix.mjs --status              # the current id
+   node ~/.claude/skills/maxx/fenix.mjs --recover <id>        # print that handoff, live or archived
+   node ~/.claude/skills/maxx/fenix.mjs --compact [--list]    # bound the archive (keeps 20)
+   ```
+
+   Why an ID exists at all: a filename is the same nine bytes every generation, so "which
+   handoff?" had no answer. This follows the checkpoint+write-ahead-log split every crash
+   recovery system uses — recovery reads a small POINTER and resolves it, rather than
+   scanning history. `--recover` is that resolution; `--compact` is the truncation that
+   keeps recovery bounded (measured: 139 archived handoffs, 1.3MB, before it existed).
 
 ## Fenix yourself — do not wait to be asked
 
