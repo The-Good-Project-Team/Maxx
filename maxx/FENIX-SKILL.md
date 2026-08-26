@@ -133,14 +133,19 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
    ```
    node ~/.claude/skills/maxx/fenix.mjs --status              # the current id
    node ~/.claude/skills/maxx/fenix.mjs --recover <id>        # print that handoff, live or archived
-   node ~/.claude/skills/maxx/fenix.mjs --compact [--list]    # bound the archive (keeps 20)
+   node ~/.claude/skills/maxx/fenix.mjs --compact [--list]    # manual prune (rarely needed)
    ```
+
+   **Pruning is automatic** — every archive event trims the tail it just extended, so the
+   archive is bounded by construction (keeps 20; `MAXX_FENIX_KEEP` overrides). `--compact`
+   is only for changing the window or inspecting it with `--list`.
 
    Why an ID exists at all: a filename is the same nine bytes every generation, so "which
    handoff?" had no answer. This follows the checkpoint+write-ahead-log split every crash
    recovery system uses — recovery reads a small POINTER and resolves it, rather than
-   scanning history. `--recover` is that resolution; `--compact` is the truncation that
-   keeps recovery bounded (measured: 139 archived handoffs, 1.3MB, before it existed).
+   scanning history. `--recover` is that resolution; the auto-prune on archive is the truncation that
+   keeps recovery bounded (measured: 139 archived handoffs, 1.3MB, before it existed -- a
+   manual command nobody runs is the same as no truncation at all).
 
 ## Fenix yourself — do not wait to be asked
 
