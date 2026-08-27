@@ -122,6 +122,32 @@ test("watchdog advises /clear on a past-wall session that is actually burning", 
   assert.equal(autoAdvise(s, T + 60).length, 0, "cooldown suppresses repeat");
 });
 
+// THE BUG (2026-08-27): autoAdvise returned {session, name, week_pct}, and the ops-log line in
+// handler.mjs read a.ctx and a.rate — fields that never existed. Result: 36 of 92 ops in the
+// live ring read "advised /clear → philanthropy · ctx NaNk · NaNk/min". Every watchdog op the
+// service ever published was corrupt. The existing tests all stopped at "a directive fired" and
+// never looked at what got WRITTEN, which is the only part a human reads.
+test("watchdog advisory carries the numbers its op line prints — no NaN", () => {
+  const s = emptyStore();
+  const T = 1_800_000_000;
+  s.anchors.push({ ts: T - 60, five_pct: 0.2, week_pct: 0.3, five_reset: T + 3600, week_reset: T + 2 * 86400 });
+  for (let i = 0; i < 5; i++)
+    s.events.push({ surface: "laptop:a", root: "sess-hot", ts: T - 60 * i, billed: 20e6, ctx: 430e3, name: "hot session" });
+  const [a] = autoAdvise(s, T);
+  assert.ok(a, "no advisory fired");
+  assert.ok(Number.isFinite(a.ctx), `ctx must be a real number, got ${a.ctx}`);
+  assert.equal(a.past_wall, true, "a 430k session is past the fallback wall");
+
+  // Render the op line exactly as handler.mjs does, and assert the STRING is clean.
+  const line = `advised /clear → ${(a.name || a.session).slice(0, 32)}` +
+    (a.ctx ? ` · ctx ${Math.round(a.ctx / 1e3)}k` : "") +
+    (a.past_wall ? " · past wall" : "") +
+    (a.climb_x ? ` · ${a.climb_x}×/turn` : "") +
+    (a.week_pct != null ? ` · ${a.week_pct}% of week` : "");
+  assert.ok(!line.includes("NaN"), `watchdog op line published NaN: ${line}`);
+  assert.match(line, /ctx 430k/, `expected the real ctx in the op line: ${line}`);
+});
+
 test("watchdog wall scales with the session's own context window, not a flat 250k", () => {
   const s = emptyStore();
   const T = 1_800_000_000;

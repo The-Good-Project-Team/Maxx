@@ -685,7 +685,13 @@ export function autoAdvise(store, now) {
       const dir = store.directives.find((d) => d.id === r.id);
       if (dir) dir.auto = true;
       store.watched[t.session] = Math.round(now);
-      sent.push({ session: t.session, name: t.name || t.project || null, week_pct: t.week_pct });
+      // ctx and the climb multiplier are computed above and were being dropped on the floor;
+      // the ops-log line reads them, so every watchdog op published "ctx NaNk · NaNk/min".
+      sent.push({
+        session: t.session, name: t.name || t.project || null, week_pct: t.week_pct,
+        ctx: sessionCtx || null, wall: sessionWall || null, climb_x: climbX,
+        past_wall: pastWall, climbing,
+      });
     }
   }
   return sent;

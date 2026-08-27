@@ -2078,7 +2078,15 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     // fire while a session is burning: every interactive turn ships an emit.
     const advised = autoAdvise(s, now());
     for (const a of advised)
-      logOp(s, "watchdog", `advised /clear → ${(a.name || a.session).slice(0, 32)} · ctx ${Math.round(a.ctx / 1e3)}k · ${Math.round(a.rate / 1e3)}k/min`, now());
+      // Only print a figure we actually have. The old line read a.ctx and a.rate, neither of
+      // which autoAdvise ever returned, so 36 of 92 ops in the ring said "ctx NaNk · NaNk/min":
+      // an advisory to /clear justified by a number that does not exist reads as a broken meter,
+      // and a broken meter is ignored — which defeats the watchdog entirely.
+      logOp(s, "watchdog", `advised /clear → ${(a.name || a.session).slice(0, 32)}` +
+        (a.ctx ? ` · ctx ${Math.round(a.ctx / 1e3)}k` : "") +
+        (a.past_wall ? " · past wall" : "") +
+        (a.climb_x ? ` · ${a.climb_x}×/turn` : "") +
+        (a.week_pct != null ? ` · ${a.week_pct}% of week` : ""), now());
     await store.save(handle, s);
     return advised.length ? { ...res, advised: advised.length } : res;
   }
