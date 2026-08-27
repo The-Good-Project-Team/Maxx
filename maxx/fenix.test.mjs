@@ -1,13 +1,16 @@
-// The rise chain has to be able to WORK, and the handoff has to carry facts nobody had to
-// remember. Both were broken in ways that only showed up in production use:
+// The handoff has to carry facts nobody had to remember, and it has to be FINDABLE from
+// wherever the human is standing. Both were broken in ways that only showed up in real use:
 //
-//   · Every --rise this machine ever ran (6 logs, nonprofit-atlas/.fenix/) ended by asking for
-//     permission or refusing to continue. `.fenix/generation` still read {"gen":1} after weeks.
-//     The child spawned with NO --allowedTools, so a detached headless process hit its first
-//     `git status` and stopped, forever.
 //   · Of 98 real handoffs, ~35% carried the sections the skill asks for and 13% pasted any
 //     command output. The rest is prose remembered at 70-90% context — the worst moment for
 //     recall, about facts git already knows exactly.
+//   · Every LOOKUP was cwd-scoped, so `--status` run one directory over reported
+//     "pending handoff: none" while a live handoff sat on disk, and `--recover <id>` answered
+//     "no handoff matching" for an id that NAMES its own repo. Measured 2026-08-27 on
+//     fx-fleet-kit-20260827-0045-472fd7a4: the thread was declared lost while intact.
+//
+// (--rise, the self-spawning chain, was REMOVED 2026-08-27. It never worked: zero of six
+// generations on this machine ever reached generation 2. Its tests went with it.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -25,57 +28,6 @@ function repo() {
   const git = (...a) => run("git", ["-C", dir, ...a]);
   return { dir, git };
 }
-
-test("the flag list survives the trip through argv", () => {
-  // THE BUG THIS EXISTS FOR (2026-08-14): DEFAULT_RISE_FLAGS was a .join(" ") string that the
-  // spawn re-split on whitespace. Every grant containing a space -- Bash(git status:*),
-  // Bash(gh pr merge:*), Bash(python -m pytest:*) -- shattered, and the child received `-m` as a
-  // bare CLI flag and died in under a second:
-  //     $ cat .fenix/rise-...log
-  //     error: unknown option '-m'
-  // The other tests passed the whole time because they only checked the list CONTAINED the right
-  // tools. Containing them is not the same as being able to spawn with them.
-  // Ignore comment lines: this file documents the bug in prose, and the prose contains the
-  // very pattern being banned.
-  const src = readFileSync(FENIX, "utf8")
-    .split("\n").filter(l => !l.trimStart().startsWith("//")).join("\n");
-  assert.ok(!/const DEFAULT_RISE_FLAGS = \[[\s\S]*?\]\.join\(/.test(src),
-    "DEFAULT_RISE_FLAGS is joined into a string again -- spawning will shatter every " +
-    "multi-word grant and the child will die on `unknown option`");
-  const m = src.match(/const DEFAULT_RISE_FLAGS = \[([\s\S]*?)\n\];/);
-  assert.ok(m, "could not find the flag array");
-  const arr = eval("[" + m[1] + "]");
-  // Each entry must be ONE argv token. If any entry with a space is later re-split, the tokens
-  // after the first stop being tool patterns and start being flags the CLI does not know.
-  for (const entry of arr) {
-    if (entry.startsWith("--") || !entry.includes(" ")) continue;
-    assert.ok(/^Bash\(.*\)$/.test(entry),
-      `entry ${JSON.stringify(entry)} contains a space but is not a complete Bash(...) pattern`);
-  }
-  assert.ok(arr.some(e => e === "Bash(python -m pytest:*)"),
-    "the exact entry that produced `unknown option '-m'` is missing from the regression list");
-});
-
-test("rise grants the tools a headless session needs to finish a unit of work", () => {
-  const src = readFileSync(FENIX, "utf8");
-  const flags = src.slice(src.indexOf("const DEFAULT_RISE_FLAGS"), src.indexOf("// --rise:"));
-  // The exact commands the six dead rise logs were denied.
-  for (const tool of ["git status", "git commit", "git push", "git checkout",
-                      "gh pr create", "gh pr merge", "pytest"]) {
-    assert.ok(flags.includes(tool),
-      `a risen session cannot run '${tool}' — this is why the chain never reached generation 2`);
-  }
-});
-
-test("rise refuses the three things the next generation could not undo", () => {
-  const src = readFileSync(FENIX, "utf8");
-  const flags = src.slice(src.indexOf("const DEFAULT_RISE_FLAGS"), src.indexOf("// --rise:"));
-  const disallowed = flags.slice(flags.indexOf("--disallowedTools"));
-  // A bad merge is revertible. A rewritten history and a popped sibling stash are not.
-  for (const never of ["git push --force", "git push origin main", "git stash"]) {
-    assert.ok(disallowed.includes(never), `rise lost its guardrail against: ${never}`);
-  }
-});
 
 test("--wake skips injection on source:\"resume\" — a resume already carries full context", async () => {
   // 2026-08-21: context-governor fires on a resume's own inherited transcript bloat before
@@ -159,4 +111,78 @@ test("--state degrades honestly outside a git repo", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "fenix-nogit-"));
   const { stdout } = await run("node", [FENIX, "--state"], { cwd: dir });
   assert.match(stdout, /not a git repository/);
+});
+
+// GLOBAL LOOKUP (2026-08-27). The bug these exist for is not a crash — it is a confident
+// wrong answer. `--status` and `--recover` searched only $PWD/.fenix, so from any other
+// directory fenix reported a live handoff as absent. A human reading "pending: none" concludes
+// the thread was LOST and goes digging through transcripts for state that is intact on disk.
+//
+// Both tests run the command from a directory that is NOT the one holding the handoff — the
+// exact condition that failed. MAXX_FENIX_ROOTS points the scan at the tmp parent so the test
+// never depends on the real box's ~/Classified.
+test("--recover resolves a handoff id from a DIFFERENT directory", async () => {
+  const a = repo(); // holds the handoff
+  const b = repo(); // where we stand
+  mkdirSync(path.join(a.dir, ".fenix"), { recursive: true });
+  writeFileSync(path.join(a.dir, ".fenix", "handoff.md"), "# the thread\nbody that must come back\n");
+  // Mint the id the way a real write does.
+  await run("node", [FENIX, "--status", "--local"], { cwd: a.dir, env: { ...process.env, MAXX_FENIX_ROOTS: a.dir, MAXX_FENIX_ALLOW_TMP: "1" } });
+  const rec = JSON.parse(readFileSync(path.join(a.dir, ".fenix", "handoff.id"), "utf8"));
+  assert.ok(rec.id, "no handoff id was minted");
+
+  const { stdout } = await run("node", [FENIX, "--recover", rec.id], {
+    cwd: b.dir, // <-- standing somewhere else, which is what used to fail
+    env: { ...process.env, MAXX_FENIX_ROOTS: path.dirname(a.dir), MAXX_FENIX_ALLOW_TMP: "1" },
+  });
+  assert.match(stdout, /body that must come back/,
+    "--recover could not resolve an id from another directory — the pointer is not a pointer");
+});
+
+test("--recover takes a PARTIAL id, the way a human pastes one off a status line", async () => {
+  const a = repo(), b = repo();
+  mkdirSync(path.join(a.dir, ".fenix"), { recursive: true });
+  writeFileSync(path.join(a.dir, ".fenix", "handoff.md"), "# partial\nthe body\n");
+  const env = { ...process.env, MAXX_FENIX_ROOTS: path.dirname(a.dir), MAXX_FENIX_ALLOW_TMP: "1" };
+  await run("node", [FENIX, "--status", "--local"], { cwd: a.dir, env });
+  const { id } = JSON.parse(readFileSync(path.join(a.dir, ".fenix", "handoff.id"), "utf8"));
+  // The trailing hash alone — the shortest thing anyone would realistically paste.
+  const { stdout } = await run("node", [FENIX, "--recover", id.slice(-8)], { cwd: b.dir, env });
+  assert.match(stdout, /the body/, "a partial id resolved when archived but not while pending");
+});
+
+test("--status reports handoffs pending in OTHER directories", async () => {
+  const a = repo();
+  const b = repo();
+  mkdirSync(path.join(a.dir, ".fenix"), { recursive: true });
+  writeFileSync(path.join(a.dir, ".fenix", "handoff.md"), "# elsewhere\n");
+  const { stdout } = await run("node", [FENIX, "--status"], {
+    cwd: b.dir,
+    env: { ...process.env, MAXX_FENIX_ROOTS: path.dirname(a.dir), MAXX_FENIX_ALLOW_TMP: "1" },
+  });
+  assert.match(stdout, /pending handoff/,
+    "--status from another directory claimed nothing was pending while a handoff sat on disk");
+  assert.ok(stdout.includes(a.dir), "--status did not name the directory holding the handoff");
+});
+
+test("--status --local stays scoped to one directory", async () => {
+  const a = repo();
+  const b = repo();
+  mkdirSync(path.join(a.dir, ".fenix"), { recursive: true });
+  writeFileSync(path.join(a.dir, ".fenix", "handoff.md"), "# elsewhere\n");
+  const { stdout } = await run("node", [FENIX, "--status", "--local"], {
+    cwd: b.dir,
+    env: { ...process.env, MAXX_FENIX_ROOTS: path.dirname(a.dir), MAXX_FENIX_ALLOW_TMP: "1" },
+  });
+  assert.match(stdout, /no pending handoff here/,
+    "--local leaked handoffs from other directories");
+});
+
+// --rise is GONE. Nothing should reintroduce a self-spawning chain by accident: it burned
+// budget for weeks and never once produced a second generation.
+test("no rise chain survives in the source", () => {
+  const src = readFileSync(FENIX, "utf8");
+  assert.ok(!/arg === "--rise"/.test(src), "--rise came back");
+  assert.ok(!/DEFAULT_RISE_FLAGS/.test(src), "the rise flag list came back");
+  assert.ok(!/\bspawn\b/.test(src), "fenix spawns a child process again");
 });

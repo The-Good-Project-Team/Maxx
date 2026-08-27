@@ -1,6 +1,6 @@
 ---
 name: fenix
-description: "Burn down, rise with context — write a handoff of what's in motion, clear the session, auto-resume in the next one. Use when the user types /fenix, says 'fenix', or wants to clear context without losing the thread (high ctx%, context bloat, fresh start)."
+description: "Burn down, rise with context — write a handoff of what's in motion, clear the session, resume the thread in the next one. Use when the user types /fenix, says 'fenix', or wants to clear context without losing the thread (high ctx%, context bloat, fresh start)."
 trigger: /fenix
 ---
 
@@ -70,69 +70,51 @@ cannot resurrect a thread that was cleared bare. Handoffs are PER-DIRECTORY
 2. **Truth check** — every "Just landed" claim needs evidence you actually have.
    Unverified work goes under "In motion", never "landed".
 
-3. **RISE. This is the default and it needs no permission.** Run:
+3. **Hand back.** Say exactly:
 
-   ```
-   node ~/.claude/skills/maxx/fenix.mjs --rise
-   ```
+   `handoff written → .fenix/handoff.md · <id> · hit /clear, then send anything ("go") — it picks up from there.`
 
-   then **END YOUR TURN**. It consumes the handoff and spawns a detached headless
-   continuation — a fresh process is a fresh context by construction — logging to
-   `.fenix/rise-<ts>.log`. The continuation owns the work now; doing anything else in
-   this session defeats the rebirth.
+   Then **END YOUR TURN**. The handoff stays live for a grace window (default 20m,
+   `MAXX_WAKE_GRACE_MIN`) and is delivered to EVERY session started inside it, so a
+   `/clear` you walk away from no longer burns the thread; it archives once the window
+   passes.
 
-   **Why this is the default, and not "if unattended":** it used to be, and the numbers
-   are damning. Measured in `nonprofit-atlas/.fenix/`: **98 handoffs written, 6 rises
-   attempted.** Ninety-two fenix runs ended by telling Reif to hit `/clear` and type
-   "go" — homework, handed to the one person the whole mechanism exists to free. A
-   rebirth loop whose default branch waits on a human keystroke is not a loop.
+   **Never promise that `/clear` "resumes automatically."** It resumes on the next
+   keystroke. A SessionStart hook can only ADD CONTEXT — it cannot make a model take a
+   turn, and it cannot trigger `/clear` either (hooks talk through stdout/stderr/exit
+   codes only; they cannot invoke slash commands). Verified: a `/clear` at 16:48
+   injected the handoff correctly, then sat at zero assistant turns until abandoned.
 
-   Rising is also strictly better than the handback now: the risen child can commit,
-   push, open a PR and merge (see the flags below), so a unit of work can go from
-   handoff to landed with nobody watching. The `/clear` path cannot do that — a
-   SessionStart hook can only ADD CONTEXT, it cannot make a model take a turn.
-
-   **Only hand back instead when the next step genuinely needs the human** — a decision
-   only Reif can make, a credential only he can enter, or he asked to drive. Then say
-   exactly: `handoff written → .fenix/handoff.md · hit /clear, then send anything ("go")
-   — it picks up from there.` Never promise a `/clear` "resumes automatically": it
-   resumes on the next keystroke. (Verified: a `/clear` at 16:48 injected the handoff
-   correctly, then sat at zero assistant turns until abandoned.) For that path the
-   handoff stays live for a grace window (default 20m, `MAXX_WAKE_GRACE_MIN`) and is
-   delivered to EVERY session started inside it, so a `/clear` you walk away from no
-   longer burns the thread; it archives once the window passes.
-
-   `--rise` is a CHAIN, not a fork: every risen generation carries the standing
-   order to fenix again when its context passes ~70% or it must stop mid-mission —
-   so the loop sustains itself until `.fenix/DONE.md` appears. Brakes built in:
-   generation cap (`.fenix/generation`, default 5, `MAXX_RISE_MAX_GEN` overrides) — counted per
-   unit of work, not for the lifetime of the directory: the counter resets whenever `HEAD` moved
-   since the last rise, so the cap only trips after 5 consecutive rises that landed no commit
-   and the budget wall — at the 5h wall the rise self-schedules for right after
-   the window refills (detached sleeper, no crontab).
-
-   **A risen session can finish and LAND work** (Reif, 2026-08-14): git read/commit/push,
-   `gh pr create`/`merge`, and the test runners. It is refused exactly three things, because
-   the next generation cannot undo them — `git push --force`, `git push origin main` (main is
-   protected and deploys on merge; the PR path is what makes autonomy safe), and `git stash`
-   (one shared stack across every worktree of a repo). `MAXX_RISE_FLAGS` overrides the whole set.
-
-   This is not a tuning detail: before it, EVERY rise this machine ever ran died asking for
-   permission, and `.fenix/generation` never passed 1. The child had `acceptEdits` and no
-   `--allowedTools`, so it hit its first `git status` and stopped, with nobody to answer the
-   prompt. The standing order said "be a phoenix" and the flags made it impossible.
+   **`--rise` was REMOVED (2026-08-27, Reif: "stop the whole rise thing — it doesn't
+   work, remove it").** It spawned a detached headless continuation and was the default
+   for two weeks. It never once produced a second generation: zero of six rise attempts
+   on this machine reached generation 2, and `.fenix/generation` still read `{"gen":1}`
+   after weeks. Two separate root causes were found and fixed (missing `--allowedTools`,
+   then a shattered flag string) and the chain still did not sustain. Do not reintroduce
+   it; a test asserts it stays gone. If you want unattended continuation, run the
+   headless command yourself and watch it: `claude -p "$(cat .fenix/handoff.md)"`.
 
 4. Do NOT delete or edit the handoff after writing it — `fenix.mjs --wake` consumes
    it on next session start. `node ~/.claude/skills/maxx/fenix.mjs --status` shows
-   pending/consumed, plus the handoff's ID.
+   every pending handoff ON THE WHOLE BOX with its id and directory; `--local` narrows
+   it to here.
+
+   **Lookups are global; the handoff itself stays per-directory.** A session must wake
+   into its OWN thread, so `--wake` is cwd-scoped and always will be. But `--status` and
+   `--recover` search every fenix site (registry at `~/.claude/maxx/fenix-index.json`,
+   plus a scan — `MAXX_FENIX_ROOTS` overrides). This was a real failure, not a nicety:
+   cwd-scoped lookups reported `pending handoff: none` from one directory over while
+   `fx-fleet-kit-20260827-0045-472fd7a4` sat alive on disk, and `--recover` denied an id
+   that literally names its own repo. The thread was declared lost while intact.
 
 5. **Every handoff has an ID** — `fx-<session>-<YYYYMMDD-HHMM>-<hash8>`, a hash over the
    claude session id, the timestamp and the session name. Report it when you hand back, so
    the human can name the thread they are resuming:
 
    ```
-   node ~/.claude/skills/maxx/fenix.mjs --status              # the current id
-   node ~/.claude/skills/maxx/fenix.mjs --recover <id>        # print that handoff, live or archived
+   node ~/.claude/skills/maxx/fenix.mjs --status              # EVERY pending handoff on the box
+   node ~/.claude/skills/maxx/fenix.mjs --status --local      # just this directory, + its id
+   node ~/.claude/skills/maxx/fenix.mjs --recover <id>        # print that handoff, from ANY directory
    node ~/.claude/skills/maxx/fenix.mjs --compact [--list]    # manual prune (rarely needed)
    ```
 
@@ -159,10 +141,7 @@ Trigger it yourself on any of these:
 - your turn is ending with work still in motion;
 - a long task is about to start that deserves a clean context.
 
-Then run the sequence in step 3: write the handoff, `--rise`, end your turn. Rising is
-the default. Asking the human first is the thing you skip — a rebirth loop that needs
-permission to continue is not a loop, and 92 of the first 98 handoffs on this machine
-ended by handing Reif homework instead of rising.
-
-The only reason to stop and ask is that the NEXT step genuinely needs him: a decision
-only he can make, a credential only he can enter, or he said he wants to drive.
+Then run the sequence: write the handoff, report the id, end your turn. WRITING the
+handoff needs no permission — it is a save, not a decision. What follows is Reif's
+keystroke, and that is the honest shape of it: fenix preserves the thread, it does not
+continue the work by itself.

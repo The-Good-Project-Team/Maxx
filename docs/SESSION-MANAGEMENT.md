@@ -116,7 +116,7 @@ flowchart TD
   E --> F
   F --> G{rise?}
   G -- no --> H[advisory: ask the human to /clear]
-  G -- yes --> I["1. write .fenix/handoff.md<br/>2. fenix.mjs --rise<br/>3. END TURN"]
+  G -- yes --> I["1. write .fenix/handoff.md<br/>2. report the id<br/>3. END TURN — human /clear resumes it"]
   I --> J[successor starts with clean context]
 ```
 
@@ -134,7 +134,11 @@ can only inject text. So `rise` hands the session the one sequence it *can* run 
 
 1. Write `.fenix/handoff.md` — **the model writes this**, deliberately. Fenix's automatic
    fallback is a raw transcript tail, which is a much worse thing for a successor to wake up to.
-2. Run `fenix.mjs --rise` — consumes the handoff and spawns a new `claude` process. A new
+2. Report the handoff id and END the turn. The next session started in that directory
+   picks it up via the `--wake` SessionStart hook. **Nothing can clear a session but the
+   human**: hooks communicate through stdout/stderr/exit codes and cannot invoke a slash
+   command. `--rise`, which spawned a headless successor, was REMOVED 2026-08-27 — six
+   attempts on this machine, zero ever reached a second generation. The old text said: A new
    process is a fresh context by construction. Capped by a generation limit (default 5), and it
    *delays* rather than refuses when you are at the spend wall, sleeping until the window refills.
 3. **End the turn.** The rise starts a successor; it does not kill its parent. Keep working
@@ -160,7 +164,7 @@ addressed, and the fleet looks smaller than it is.
 | verdict flips to `stale`, everything blocks | no machine has read `/usage` in over 12h | open an interactive session on any linked machine |
 | budget reads richer than reality | a run gated but never emitted | always `maxx_emit` at the end of a run |
 | a cheap recurring job is blocked while the real burn was the conversation | `spend-guard` gating a marginally-free spawn on cumulative spend | space it ≥ `recurringMinIntervalSec` (600s) and it is exempt; raising `overGraceTokens` will not help |
-| a rise chain dies mid-mission at generation 5 | 5 rises in a row landed no commit | land the work in progress — the counter resets when `HEAD` moves — or raise `MAXX_RISE_MAX_GEN` |
+| `--status` says "no pending handoffs" but you know one exists | it is past 48h (`MAX_AGE_H`), so `--wake` skips it | `--status` marks it STALE and still lists it; `--recover <id>` prints it from anywhere |
 
 ## Reference
 
@@ -171,7 +175,8 @@ addressed, and the fleet looks smaller than it is.
 | directive poll, ungated tools | 60s per session | `maxx/gate.mjs` `POLL_EVERY_SEC` |
 | budget cache reused without a call | 60s | `maxx/gate.mjs` `CACHE_FRESH_SEC` |
 | cached verdict trusted while server is down | 600s, then fail-closed | `maxx/gate.mjs` `CACHE_GRACE_SEC` |
-| rise generation cap | 5 rises with nothing landed (`MAXX_RISE_MAX_GEN`); resets when `HEAD` moves | `maxx/fenix.mjs` |
+| handoff max age | 48h (`MAX_AGE_H`) — older handoffs never auto-inject | `maxx/fenix.mjs` |
+| fenix lookup roots | `~/Classified:~/Life:~:~/automations` (`MAXX_FENIX_ROOTS`) + `~/.claude/maxx/fenix-index.json` | `maxx/fenix.mjs` |
 | recurring-spawn exemption | runs ≥ 600s apart skip the spend gate (`recurringMinIntervalSec`) | `~/.claude/hooks/governor.json` |
 | paced-share burst allowance | `overGraceTokens`, currently 2M | `~/.claude/hooks/governor.json` |
 

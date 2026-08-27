@@ -9,20 +9,102 @@
  *                             handoff, print it (hook stdout becomes session context)
  *                             and mark it consumed — read=consume, exactly like the
  *                             maxx directive channel. Silent no-op otherwise.
- *   node fenix.mjs --status   Show pending/consumed handoffs for this directory.
- *   node fenix.mjs --recover <id>   Print the handoff with that id (live or archived).
+ *   node fenix.mjs --status [--local]   Every pending handoff on the box (--local: cwd only).
+ *   node fenix.mjs --recover <id>       Print the handoff with that id, from ANY directory.
  *   node fenix.mjs --compact [--list] [--keep N]   Bound the archive (default keep 20).
  *
- * Unattended continuation (the "cron" half): after /fenix you can also relaunch
- * headless — `claude -p "$(cat .fenix/handoff.md)"` — or let the next interactive
- * session in this directory pick it up automatically via --wake.
+ * A HANDOFF IS WRITTEN IN ONE DIRECTORY AND LOOKED FOR FROM ANOTHER (Reif, 2026-08-27:
+ * "make fenix global"). The handoff lives per-repo and that is correct — a session wakes
+ * into its OWN thread, so --wake stays cwd-scoped. But every LOOKUP was cwd-scoped too,
+ * and that silently lied: `--status` run from Maxx reported "pending: none · consumed: 4"
+ * while fx-fleet-kit-20260827-0045-472fd7a4 sat alive and pending in fleet-kit/.fenix/.
+ * `--recover` on that id answered "no handoff matching" from the wrong directory — for an
+ * id that literally NAMES its repo. A pointer you can only resolve while already standing
+ * on the thing it points at is not a pointer.
+ *
+ * So: every directory that writes a handoff registers itself in ~/.claude/maxx/fenix-index.json,
+ * and the read paths (--status, --recover) resolve across the whole index. The index is a
+ * CACHE, not the truth — the .fenix/ dirs are — so a miss falls back to a bounded scan and
+ * a stale entry is pruned on sight.
  */
-import { readFileSync, writeFileSync, writeSync, renameSync, statSync, readdirSync, existsSync, openSync, unlinkSync } from "node:fs";
-import { spawn, execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync, writeSync, renameSync, statSync, readdirSync, existsSync, openSync, unlinkSync, mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
 const DIR = path.join(process.cwd(), ".fenix");
+
+// THE FLEET INDEX — how a per-directory handoff becomes globally addressable.
+//
+// Registered on every write (--state) and every wake, because those are the two moments a
+// directory PROVES it is a live fenix site. Never registered by a read: looking for a handoff
+// must not create the impression you have one.
+const HOME = process.env.HOME || process.env.USERPROFILE || "";
+const INDEX = path.join(HOME, ".claude", "maxx", "fenix-index.json");
+
+function readIndex() {
+  try {
+    const j = JSON.parse(readFileSync(INDEX, "utf8"));
+    return Array.isArray(j?.dirs) ? j.dirs : [];
+  } catch { return []; }
+}
+// Best-effort and silent, like autoPrune: bookkeeping must never break a wake.
+// A fenix site is somewhere work LIVES. A temp directory is not — it is gone by morning, and
+// an index full of /T/fenix-test-* entries makes `--status` unreadable, which is the exact
+// failure this whole change exists to fix (observed: 24 "pending handoffs", 16 of them tests).
+function ephemeral(d) {
+  if (process.env.MAXX_FENIX_ALLOW_TMP === "1") return false; // tests build fixtures in tmpdirs
+  const t = (process.env.TMPDIR || "/tmp").replace(/\/$/, "");
+  const real = d.startsWith("/private") ? d : "/private" + d;
+  return d.startsWith(t) || real.startsWith("/private" + t.replace(/^\/private/, "")) ||
+         d.startsWith("/tmp/") || d.startsWith("/private/tmp/") || d.startsWith("/var/folders/") ||
+         d.startsWith("/private/var/folders/");
+}
+function registerDir(dir) {
+  try {
+    const d = dir || process.cwd();
+    if (ephemeral(d)) return; // never index a temp dir
+    if (!existsSync(path.join(d, ".fenix"))) return;
+    const dirs = readIndex();
+    if (dirs.includes(d)) return;
+    dirs.push(d);
+    mkdirSync(path.dirname(INDEX), { recursive: true });
+    writeFileSync(INDEX, JSON.stringify({ dirs: dirs.sort() }, null, 2));
+  } catch {}
+}
+// Every fenix site the box knows about. Index first (cheap, exact), then a bounded scan of the
+// usual roots so a directory that predates the index — or was written by another machine's
+// checkout — is still found. Prunes index entries whose .fenix/ is gone.
+function allFenixDirs() {
+  const seen = new Set();
+  const out = [];
+  const add = (d) => {
+    if (!d || seen.has(d)) return;
+    seen.add(d);
+    if (!ephemeral(d) && existsSync(path.join(d, ".fenix"))) out.push(d);
+  };
+  const indexed = readIndex();
+  for (const d of indexed) add(d);
+  // The scan is what makes the index a cache rather than a second source of truth.
+  const roots = (process.env.MAXX_FENIX_ROOTS || `${HOME}/Classified:${HOME}/Life:${HOME}:${HOME}/automations`)
+    .split(":").filter(Boolean);
+  for (const root of roots) {
+    add(root);
+    let kids = [];
+    try { kids = readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const k of kids) if (k.isDirectory() && !k.name.startsWith(".")) add(path.join(root, k.name));
+  }
+  add(process.cwd());
+  // Drop index entries that no longer exist; a recovery scan must not walk ghosts.
+  const live = out.slice();
+  if (indexed.some((d) => !live.includes(d))) {
+    try {
+      mkdirSync(path.dirname(INDEX), { recursive: true });
+      writeFileSync(INDEX, JSON.stringify({ dirs: live.sort() }, null, 2));
+    } catch {}
+  }
+  return out;
+}
 const HANDOFF = path.join(DIR, "handoff.md");
 const MAX_AGE_H = 48; // a stale handoff is history, not context — never auto-inject old state
 
@@ -62,7 +144,7 @@ function makeHandoffId(sid, tsMs, name) {
 // it does not file a ticket asking to be tidied later. So every archive event prunes the
 // tail it just extended. Bounded by construction, no cron, no human.
 //
-// Best-effort and silent: pruning is housekeeping and must never break a wake or a rise.
+// Best-effort and silent: pruning is housekeeping and must never break a wake.
 function autoPrune(keep) {
   const K = Number.isFinite(keep) ? keep : parseInt(process.env.MAXX_FENIX_KEEP || "20", 10);
   if (!(K >= 0)) return 0;
@@ -203,6 +285,7 @@ if (arg === "--wake") {
     const ageH = (Date.now() - st.mtimeMs) / 3600000;
     if (ageH > MAX_AGE_H) process.exit(0);
     const body = readFileSync(HANDOFF, "utf8");
+    registerDir(); // this directory is a live fenix site — make it globally findable
     // DELIVERY IS NOT USE. Archiving on the first read meant the handoff belonged to
     // whichever session started first — and a SessionStart hook cannot make the model
     // take a turn, so a /clear you glance at and walk away from consumed the thread
@@ -269,156 +352,6 @@ if (arg === "--wake") {
   process.exit(0);
 }
 
-// WHY A RISEN SESSION GETS TOOLS, AND WHY THIS LIST (2026-08-14).
-//
-// The rise chain did not work. Measured across every --rise this machine has ever run — six
-// logs in nonprofit-atlas/.fenix/ — ZERO reached a second generation, and `.fenix/generation`
-// still read `{"gen":1}` after weeks. Four of the six ended by ASKING FOR PERMISSION:
-//
-//     "Approve those (or run /config → allow gh + git), and I'll do the salvage..."
-//     "Bash(git checkout:*) Bash(git reset:*) Bash(git branch:*)"        ← the child listing
-//                                                                          what it was denied
-//
-// The cause was one line: the child spawned with `--permission-mode acceptEdits` and NO
-// --allowedTools. acceptEdits covers file edits; every git/gh/test command still prompts, and
-// a detached headless process has nobody to answer the prompt. So each generation woke up,
-// read its handoff, reached for `git status`, and stopped. The prompt told it to be a phoenix
-// while the flags made that impossible — the standing order and the permissions disagreed, and
-// the permissions won every time.
-//
-// Reif, 2026-08-14, asked for the full loop including merge. So: everything needed to take a
-// unit of work from handoff to landed — read the tree, run the tests, commit, push, open a PR,
-// and merge it through the same gates a human PR passes.
-//
-// The three exclusions are NOT timidity, they are the failure modes that cannot be undone by
-// the next generation:
-//   · `git push --force` / `--force-with-lease` — rewrites history a sibling session may hold.
-//   · `git push origin main` — main is protected and deploys on merge; the PR path exists so
-//     CI gates every change. A direct push skips the gate that makes autonomy safe.
-//   · `git stash` — refs/stash is ONE stack shared across every worktree of a repo. A headless
-//     chain popping a sibling's stash has already cost real recovery work (see
-//     nonprofit-atlas docs/ops/worktree-safety.md).
-// Merge is allowed and force-push is not, because a bad merge is revertible and a rewritten
-// history is not.
-//
-// Override with MAXX_RISE_FLAGS for a narrower or wider chain; this default is what makes the
-// loop self-sustaining rather than a well-documented way to generate permission requests.
-const DEFAULT_RISE_FLAGS = [
-  "--permission-mode", "acceptEdits",
-  "--allowedTools",
-  // read the world
-  "Bash(git status:*)", "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)",
-  "Bash(git branch:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git rev-parse:*)",
-  "Bash(git rev-list:*)", "Bash(git worktree:*)",
-  // change the world
-  "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git checkout:*)",
-  "Bash(git switch:*)", "Bash(git merge:*)", "Bash(git rebase:*)", "Bash(git revert:*)",
-  // ship it
-  "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
-  "Bash(gh pr checks:*)", "Bash(gh pr comment:*)", "Bash(gh pr edit:*)", "Bash(gh pr merge:*)",
-  "Bash(gh run list:*)", "Bash(gh run view:*)", "Bash(gh api:*)", "Bash(gh issue:*)",
-  // prove it
-  "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)",
-  "Bash(npm test:*)", "Bash(node --test:*)", "Bash(curl:*)",
-  "Read", "Grep", "Glob", "Edit", "Write",
-  "--disallowedTools",
-  "Bash(git push --force:*)", "Bash(git push --force-with-lease:*)",
-  "Bash(git push origin main:*)", "Bash(git stash:*)",
-];
-// AN ARRAY, NOT A JOINED STRING — and this cost a live generation to learn (2026-08-14).
-//
-// The first version of this list was `[...].join(" ")` and the spawn did `.split(/\s+/)`.
-// Almost every useful grant contains a space — `Bash(git status:*)`, `Bash(gh pr merge:*)`,
-// `Bash(python -m pytest:*)` — so the round trip shattered all of them into fragments, and the
-// child got `-m`, `--test:*)`, `--force:*)` as bare argv tokens. Observed, first real rise:
-//
-//     $ cat .fenix/rise-2026-08-14T17-41-55-419Z.log
-//     error: unknown option '-m'
-//
-// The child died in under a second, exactly like the six permission-blocked rises before it —
-// same symptom (no generation 2), completely different cause. The unit tests passed throughout
-// because they asserted the list CONTAINED the right tools; nothing asserted the list survives
-// the trip through argv. A flag list that cannot be spawned is not a flag list.
-//
-// MAXX_RISE_FLAGS (a string, from the environment) still splits on whitespace: a shell env var
-// has no other honest reading, and an override is a deliberate act. The DEFAULT never goes
-// through a string at all.
-
-// --rise: the SELF-SUSTAINING rebirth. /clear is a human keystroke the model can't press —
-// but a new process is a fresh context by construction. Each risen generation carries the
-// standing order to fenix AGAIN when its context gets heavy or its turn would end with work
-// in motion — so the chain continues until the mission is done or a brake trips:
-//   · generation cap (.fenix/generation, default 5, MAXX_RISE_MAX_GEN overrides) — counted PER
-//     UNIT OF WORK: the counter resets whenever HEAD moved since the last rise, so a chain that
-//     keeps landing commits never trips it; only a chain landing nothing does.
-//   · budget brake: at the 5h wall the rise is not refused but DELAYED — a detached sleeper
-//     re-runs --rise right after the window refills (the "cron" half, no crontab needed).
-// Child flags: --permission-mode acceptEdits by default; MAXX_RISE_FLAGS overrides.
-if (arg === "--rise") {
-  if (!existsSync(HANDOFF)) { console.error("fenix: no pending handoff to rise from."); process.exit(1); }
-  const GEN_F = path.join(DIR, "generation");
-  // The cap is a RUNAWAY brake, not a lifetime quota. Counting every rise a directory ever did
-  // kills the chain at generation 5 even when each generation landed clean work — punishing the
-  // healthy long-running case at exactly the moment continuity matters most. So the counter is
-  // scoped to a unit of work: it RESETS whenever HEAD moved (something landed) since the last
-  // rise. Cap now means "5 rises in a row that landed nothing", which is the actual runaway.
-  const head = (() => {
-    try { return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
-    catch { return ""; } // not a git repo → no landing signal, fall back to plain lifetime counting
-  })();
-  const prev = (() => {
-    try {
-      const v = JSON.parse(readFileSync(GEN_F, "utf8"));
-      return typeof v === "number" ? { gen: v, head: "" } : { gen: v.gen || 0, head: v.head || "" };
-    } catch { return { gen: 0, head: "" }; }
-  })();
-  const landed = Boolean(head && prev.head && head !== prev.head);
-  const gen = landed ? 0 : prev.gen;
-  if (landed) console.log(`fenix: work landed since last rise (${prev.head.slice(0, 7)} → ${head.slice(0, 7)}) — generation counter reset.`);
-  const maxGen = parseInt(process.env.MAXX_RISE_MAX_GEN || "5", 10);
-  if (gen >= maxGen) { console.error(`fenix: generation cap (${gen}/${maxGen} rises with NOTHING landed) — chain ends here. Commit progress and rise again, or rm .fenix/generation.`); process.exit(1); }
-  // budget brake — the maxx window cache knows if we're at the wall
-  const HOME = process.env.HOME || "";
-  let win = null, rl = null;
-  try { win = JSON.parse(readFileSync(path.join(HOME, ".maxx", "window.json"), "utf8")); } catch {}
-  try { rl = JSON.parse(readFileSync(path.join(HOME, ".maxx", "rl.json"), "utf8")); } catch {}
-  const atWall = win && (win.sessionToSpend === 0 || win.sessionOver > 0);
-  if (atWall && !process.env.MAXX_RISE_NOW) {
-    const resetAt = rl && rl.fiveResetAt ? rl.fiveResetAt * 1000 : Date.now() + 3600000;
-    const delaySec = Math.max(60, Math.round((resetAt - Date.now()) / 1000) + 120);
-    const self = process.argv[1];
-    const sleeper = spawn("sh", ["-c", `sleep ${delaySec} && MAXX_RISE_NOW=1 node "${self}" --rise`],
-      { cwd: process.cwd(), detached: true, stdio: "ignore" });
-    sleeper.unref();
-    console.log(`fenix: at the wall — rise scheduled in ${Math.round(delaySec / 60)}m (when the window refills). sleeper pid ${sleeper.pid}`);
-    await postOp("fenix:delayed", `${path.basename(process.cwd())} · at the wall, rise in ${Math.round(delaySec / 60)}m`);
-    process.exit(0);
-  }
-  const body = readFileSync(HANDOFF, "utf8");
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const _riseId = readHandoffId();
-  renameSync(HANDOFF, path.join(DIR, `handoff.consumed-${_riseId && _riseId.id ? _riseId.id : ts}.md`)); // consume FIRST: the child's --wake hook must not double-inject
-  autoPrune(); // same truncation contract as the wake path
-  writeFileSync(GEN_F, JSON.stringify({ gen: gen + 1, head }));
-  const log = path.join(DIR, `rise-${ts}.log`);
-  const fd = openSync(log, "a");
-  const flags = process.env.MAXX_RISE_FLAGS
-    ? process.env.MAXX_RISE_FLAGS.split(/\s+/).filter(Boolean)
-    : DEFAULT_RISE_FLAGS;
-  const prompt =
-    `🔥 FENIX RISE — generation ${gen + 1}/${maxGen}. You are the continuation of a cleared session. ` +
-    `Resume the handoff below; verify its claims against the working tree first.\n\n` +
-    `STANDING ORDER (this is what makes you a phoenix, not a fork): when your context passes ~70%, ` +
-    `or you must stop with work still in motion, run /fenix again — write .fenix/handoff.md exactly per ` +
-    `the fenix skill, then run \`node ${process.argv[1]} --rise\` and END your turn. The next generation ` +
-    `continues. If the mission is COMPLETE, write .fenix/DONE.md with the outcome instead and stop.\n\n${body}`;
-  const child = spawn("claude", ["-p", prompt, ...flags], { cwd: process.cwd(), detached: true, stdio: ["ignore", fd, fd] });
-  child.unref();
-  console.log(`fenix: risen — generation ${gen + 1}/${maxGen} · pid ${child.pid} · log ${log}`);
-  await postOp("fenix:risen", `${path.basename(process.cwd())} · generation ${gen + 1}/${maxGen}`);
-  process.exit(0);
-}
-
 // --state: the facts, gathered by MACHINE, for the model to paste into its handoff.
 //
 // WHY. A handoff is written at the worst possible moment for recall — 70-90% context, right
@@ -431,6 +364,7 @@ if (arg === "--rise") {
 // and it spends its remaining context on the part no tool can produce: WHY, what is next, and
 // which traps cost time. Deterministic, ~zero tokens, and it cannot misremember a SHA.
 if (arg === "--state") {
+  registerDir(); // --state precedes writing a handoff here; index it now
   const sh = (cmd, args) => {
     try {
       return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -527,19 +461,40 @@ if (arg === "--state") {
 if (arg === "--recover") {
   const want = (process.argv[3] || "").trim();
   if (!want) { console.error("fenix: --recover needs a handoff id (see --status)."); process.exit(1); }
-  if (!existsSync(DIR)) { console.error("fenix: no .fenix/ here."); process.exit(1); }
   const norm = (x) => x.replace(/^fx-/, "");
-  const live = readHandoffId();
-  if (live && live.id && norm(live.id) === norm(want) && existsSync(HANDOFF)) {
-    console.log(readFileSync(HANDOFF, "utf8"));
+  const w = norm(want);
+  // GLOBAL BY CONSTRUCTION. The id encodes its own repo (fx-<name>-<stamp>-<hash>), so refusing
+  // to look outside the cwd was refusing to read the pointer it was handed. Search every fenix
+  // site: live handoff first (a pending thread beats an archived one), then archives.
+  const dirs = allFenixDirs();
+  const tryLive = [];
+  const tryArc = [];
+  for (const d of dirs) {
+    const fdir = path.join(d, ".fenix");
+    const h = path.join(fdir, "handoff.md");
+    let id = null;
+    try { id = JSON.parse(readFileSync(path.join(fdir, "handoff.id"), "utf8")); } catch {}
+    // Substring, not equality: a human recovers by pasting part of an id off a --status line,
+    // and archives already matched that way. Exact-only on the LIVE handoff meant the same id
+    // resolved when archived and failed while pending — the case you actually hit.
+    if (id?.id && norm(id.id).includes(w) && existsSync(h)) {
+      let mt = 0; try { mt = statSync(h).mtimeMs; } catch {}
+      if (id.handoff_mtime === mt) tryLive.push({ file: h, dir: d, live: true });
+    }
+    let files = [];
+    try { files = readdirSync(fdir).filter((f) => f.startsWith("handoff.consumed-")); } catch { continue; }
+    for (const f of files) if (norm(f).includes(w)) tryArc.push({ file: path.join(fdir, f), dir: d, live: false });
+  }
+  const hits = [...tryLive, ...tryArc];
+  if (hits.length) {
+    const hit = hits[0];
+    // Say WHERE it came from on stderr, so piping the body to a file stays clean.
+    console.error(`fenix: ${hit.live ? "pending" : "archived"} handoff · ${hit.dir}`);
+    if (hits.length > 1) console.error(`fenix: ${hits.length - 1} other match${hits.length > 2 ? "es" : ""} (id prefix is ambiguous — pass more of it)`);
+    console.log(readFileSync(hit.file, "utf8"));
     process.exit(0);
   }
-  const direct = path.join(DIR, `handoff.consumed-${want.startsWith("fx-") ? want : "fx-" + want}.md`);
-  if (existsSync(direct)) { console.log(readFileSync(direct, "utf8")); process.exit(0); }
-  const hit = readdirSync(DIR)
-    .filter((f) => f.startsWith("handoff.consumed-") && norm(f).includes(norm(want)));
-  if (hit.length) { console.log(readFileSync(path.join(DIR, hit[0]), "utf8")); process.exit(0); }
-  console.error(`fenix: no handoff matching "${want}". Try --status, or --compact --list.`);
+  console.error(`fenix: no handoff matching "${want}" in ${dirs.length} fenix director${dirs.length === 1 ? "y" : "ies"}. Try --status, or --compact --list.`);
   process.exit(1);
 }
 
@@ -576,20 +531,63 @@ if (arg === "--compact") {
   process.exit(0);
 }
 
+// --status [--local]: what is pending, ACROSS THE BOX by default.
+//
+// WHY GLOBAL IS THE DEFAULT. The cwd-scoped version did not just omit information, it asserted
+// a falsehood: "pending handoff: none" is a claim about the world, and it was wrong every time
+// the thread you were looking for lived one directory over. The failure is silent and total —
+// you conclude the handoff was LOST and go hunting a transcript for a thread that is sitting
+// intact on disk. Measured 2026-08-27: 12 pending handoffs across the box, `--status` from
+// Maxx reported none of the other 11.
+//
+// So --status answers "where are my threads", the question a human standing anywhere actually
+// has. --local keeps the old one-directory view for a hook or a script that wants it.
 if (arg === "--status") {
-  if (!existsSync(DIR)) { console.log("fenix: no .fenix/ here — nothing pending."); process.exit(0); }
-  const pending = existsSync(HANDOFF) ? `PENDING (${Math.round((Date.now() - statSync(HANDOFF).mtimeMs) / 60000)}m old)` : "none";
-  const consumed = readdirSync(DIR).filter((f) => f.startsWith("handoff.consumed-")).length;
-  const rec = existsSync(HANDOFF) ? ensureHandoffId("") : readHandoffId();
-  console.log(`fenix: pending handoff: ${pending} · consumed: ${consumed}`);
-  if (rec && rec.id) {
-    console.log(`fenix: handoff-id: ${rec.id}`);
-    console.log(`fenix:   session: ${rec.session_name} · written: ${rec.created_at}` +
-                (rec.session_id ? ` · claude-session: ${rec.session_id}` : ""));
-    console.log(`fenix:   recover: node fenix.mjs --recover ${rec.id}`);
+  const localOnly = process.argv.includes("--local");
+  const dirs = localOnly ? [process.cwd()] : allFenixDirs();
+  let rows = [];
+  for (const d of dirs) {
+    const fdir = path.join(d, ".fenix");
+    const h = path.join(fdir, "handoff.md");
+    if (!existsSync(h)) continue;
+    let mt = 0;
+    try { mt = statSync(h).mtimeMs; } catch { continue; }
+    let id = null;
+    try { id = JSON.parse(readFileSync(path.join(fdir, "handoff.id"), "utf8")); } catch {}
+    // An id minted against an older handoff names the WRONG one — worse than no id.
+    if (id && id.handoff_mtime !== mt) id = null;
+    rows.push({ dir: d, ageMin: Math.round((Date.now() - mt) / 60000), id, stale: (Date.now() - mt) / 3600000 > MAX_AGE_H });
   }
+  rows.sort((a, b) => a.ageMin - b.ageMin);
+  // A STALE handoff (past MAX_AGE_H) will never auto-inject and is almost always an abandoned
+  // directory, not a thread. Listing them by default buried the two live handoffs under 14 dead
+  // ones — a fleet view that does not answer "what am I in the middle of" is not worth reading.
+  const stale = rows.filter((r) => r.stale);
+  const showAll = process.argv.includes("--all");
+  if (!showAll) rows = rows.filter((r) => !r.stale);
+  // The id is minted lazily, and a global listing must not mint ids for 16 directories. So the
+  // LOCAL view — the "what is my handoff called" question — is what ensures one exists.
+  if (localOnly && existsSync(HANDOFF)) {
+    const r = ensureHandoffId("");
+    if (r?.id && rows[0]) rows[0].id = r;
+  }
+  if (!rows.length) {
+    console.log((localOnly ? "fenix: no pending handoff here." : "fenix: no pending handoffs on this box.") +
+                (stale.length && !showAll ? ` (${stale.length} stale — --all to list)` : ""));
+    process.exit(0);
+  }
+  console.log(`fenix: ${rows.length} pending handoff${rows.length > 1 ? "s" : ""}${localOnly ? " (this directory)" : " (whole box — --local for just here)"}:`);
+  for (const r of rows) {
+    const age = r.ageMin < 90 ? `${r.ageMin}m` : `${Math.round(r.ageMin / 60)}h`;
+    // A handoff past MAX_AGE_H will never auto-inject — say so, or it reads as live.
+    const mark = r.stale ? " · STALE (past 48h, --wake will skip it)" : r.dir === process.cwd() ? " · here" : "";
+    console.log(`  ${age.padStart(4)} ago  ${r.id?.id || "(no id)"}${mark}`);
+    console.log(`            ${r.dir}`);
+  }
+  if (stale.length && !showAll) console.log(`fenix: + ${stale.length} stale (past 48h, will not auto-inject) — --all to list`);
+  console.log(`fenix: recover any of them from anywhere: node fenix.mjs --recover <id>`);
   process.exit(0);
 }
 
-console.error("fenix: unknown arg (use --wake | --rise | --state | --status | --recover <id> | --compact)");
+console.error("fenix: unknown arg (use --wake | --state | --status | --recover <id> | --compact)");
 process.exit(1);

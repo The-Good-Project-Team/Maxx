@@ -16,7 +16,7 @@ Reads only token/usage metadata — never prompt or message content.
 ```
 /maxx            # print the usage card
 /maxx turn       # what the LAST TURN cost: tokens + api calls (+ subagent burn), this session
-/maxx fenix      # burn down, rise with context: handoff → /clear → auto-resume (alias: /fenix)
+/maxx fenix      # burn down, rise with context: handoff → /clear → next session resumes (alias: /fenix)
 /maxx session    # session tokens: how much to burn this rolling 5h window (plain language)
 /maxx json       # print the raw stats payload (JSON)
 /maxx nazi       # hourly posture check: ranked token drains + one lever (for agents)
@@ -34,7 +34,7 @@ Reads only token/usage metadata — never prompt or message content.
 2. Run it:
    - Card:      `node ~/.claude/skills/maxx/tracker.mjs`
    - Turn:      `node ~/.claude/skills/maxx/tracker.mjs turn`   (when the user says `turn` / "what did that cost"; `--json` for machine form. Print the two lines verbatim in your reply so the receipt lands in the transcript.)
-   - Fenix:     when the user says `fenix`, follow `~/.claude/skills/fenix/SKILL.md` (write `.fenix/handoff.md`, then the human /clears — or `node ~/.claude/skills/maxx/fenix.mjs --rise` for an unattended headless continuation). fenix is a maxx subroute; /fenix is the same flow.
+   - Fenix:     when the user says `fenix`, follow `~/.claude/skills/fenix/SKILL.md` (write `.fenix/handoff.md`, report its id, then the human /clears — the next session in that directory resumes it). fenix is a maxx subroute; /fenix is the same flow.
    - Session:   `node ~/.claude/skills/maxx/tracker.mjs session`   (when the user says `session`)
    - Setup:     `node ~/.claude/skills/maxx/tracker.mjs setup`   (walks every account, links the ones not reporting, prints the week)
    - Switch:    `node ~/.claude/skills/maxx/tracker.mjs switch`   (the account with the most room left; prints only `export CLAUDE_CONFIG_DIR=…` when piped, so `eval "$(maxx switch)"` works)

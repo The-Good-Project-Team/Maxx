@@ -80,29 +80,29 @@ test("gate: an ungated tool polls at most once a minute per session", async () =
 
 // The whole point of rise: /clear is a keystroke no hook can send, so an unattended session
 // past the wall must be handed a sequence it can run itself — handoff first, then relaunch.
-test("gate: a rise directive hands over the renew sequence, not a note for the user", async () => {
+test("gate: a past-the-wall directive orders handoff-then-stop, not a note for the user", async () => {
   const srv = await directiveServer([{ action: "clear", rise: true, note: "ctx 613k is past the 250k wall" }]);
   try {
     const out = await hook(makeHome(), srv.url, { tool: "Edit", session: "s-past-wall" });
     const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
-    assert.match(ctx, /fenix\.mjs --rise/, "without the command there is nothing the session can actually do");
+    assert.doesNotMatch(ctx, /--rise/, "the rise chain was removed — it never reached a second generation");
     assert.match(ctx, /\.fenix\/handoff\.md/, "the model must write the handoff — fenix's fallback is a raw transcript tail");
-    assert.ok(ctx.indexOf(".fenix/handoff.md") < ctx.indexOf("--rise"), "handoff BEFORE relaunch, or the rise has nothing to carry");
+    assert.ok(ctx.indexOf(".fenix/handoff.md") < ctx.indexOf("END YOUR TURN"), "write the handoff BEFORE ending the turn, or the thread is lost");
     assert.doesNotMatch(ctx, /tell the user to \/clear/, "nobody is there to tell");
     assert.match(ctx, /ctx 613k is past the 250k wall/, "keep the reason");
     // the rise starts a successor, it does not kill this session — carrying on after it means
     // the fat context keeps billing AND two sessions run at once
     assert.match(ctx, /END YOUR TURN/, "without this the risen pair both keep burning");
-    assert.ok(ctx.indexOf("--rise") < ctx.indexOf("END YOUR TURN"), "end the turn AFTER the successor exists, not before");
+    assert.match(ctx, /END YOUR TURN/, "past the wall the session must STOP — every further turn re-bills the fat context");
   } finally { srv.close(); }
 });
 
-test("gate: a clear WITHOUT rise stays advisory — it never relaunches the session", async () => {
+test("gate: a clear WITHOUT rise stays advisory — no handoff for a merely pricey session", async () => {
   const srv = await directiveServer([{ action: "clear", note: "cost per turn is climbing" }]);
   try {
     const out = await hook(makeHome(), srv.url, { tool: "Edit", session: "s-climbing" });
     const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
-    assert.doesNotMatch(ctx, /--rise/, "renewing a session that is merely getting pricey throws away live context");
+    assert.doesNotMatch(ctx, /handoff\.md/, "a session that is merely getting pricey should not be told to hand off");
     assert.match(ctx, /tell the user to \/clear/);
   } finally { srv.close(); }
 });
