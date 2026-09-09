@@ -919,6 +919,12 @@ function main() {
     // every subagent opens a window of its own: 12 messages measured 781 turns.
     const t = turnCount(p.transcript_path, sid, total);
     if (t.turns > 0) put(1, 3, faint(DIM, t.turns + " turn" + (t.turns === 1 ? "" : "s")));
+    // What this chat has cost, as a share of the WEEK — the wall that actually ends a solo
+    // week. Turns say how many inferences; this says what they drained. Same weighted tokens
+    // the scanner sums, over the same anchored weekly cap the week row is measured against, so
+    // "chat 12% of week" and "week 70%" are one arithmetic. Hidden under 1%: noise, not news.
+    const chatWk = cap7s > 0 && t.weighted > 0 ? Math.round((t.weighted / cap7s) * 100) : 0;
+    if (chatWk >= 1) put(1, 4, faint(DIM, chatWk + "% of week"));
   }
 
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──

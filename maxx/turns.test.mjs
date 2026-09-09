@@ -110,3 +110,27 @@ test("state written by the old message-counting version is recounted, not inheri
   assert.equal(r.msgs, 2, "both messages, and a number — not NaN");
   assert.equal(r.turns, 4, "recounted from the top as inferences, not resumed from a message count");
 });
+
+// What the chat has COST, in the scanner's own quota-weighted tokens (weighUsage): the number the
+// bar divides by the weekly cap to say "this chat is 12% of your week".
+test("weighs every deduped inference, root and agents alike", () => {
+  const { home, opts } = fresh();
+  const tp = rootSession(home, "s7");                      // 4 × (10 + 5·5) = 140
+  const subs = path.join(home, "proj", "s7", "subagents");
+  mkdirSync(subs, { recursive: true });
+  writeFileSync(path.join(subs, "agent-ccc.jsonl"),
+    ["c1", "c1", "c2"].map(agentInference).join("\n") + "\n");  // streamed dup, then one more: 2 × (90 + 4·5) = 220
+  assert.equal(turnCount(tp, "s7", 50_000, opts).weighted, 360);
+});
+
+test("a compact restarts turns but keeps what the chat has already cost", () => {
+  const { home, opts } = fresh();
+  const tp = rootSession(home, "s8");
+  assert.equal(turnCount(tp, "s8", 100_000, opts).weighted, 140);
+  appendFileSync(tp, inference("req-5", []) + "\n");
+  const after = turnCount(tp, "s8", 20_000, opts);          // context collapsed — /compact
+  assert.equal(after.turns, 0);
+  assert.equal(after.weighted, 140, "spend survives the compact — it was billed, the window resetting does not refund it");
+  appendFileSync(tp, inference("req-6", []) + "\n");
+  assert.equal(turnCount(tp, "s8", 25_000, opts).weighted, 175, "and keeps growing from there");
+});

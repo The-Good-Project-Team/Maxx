@@ -21,6 +21,7 @@
 import { statSync, openSync, readSync, closeSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { weighUsage } from "./limit.mjs";
 
 const readJSON = (p, d) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return d; } };
 
@@ -62,7 +63,9 @@ function scan(file, st) {
     }
     if (r.message && r.message.usage) {
       const rid = r.requestId || r.uuid || null;
-      if (rid !== st.rid) { st.n++; st.rid = rid; }
+      // w: what the inference cost in quota-weighted tokens — the scanner's own formula, so the
+      // chat's share of the week and the week's own gauge are the same arithmetic.
+      if (rid !== st.rid) { st.n++; st.rid = rid; st.w = (st.w || 0) + weighUsage(r.message.usage, r.message.model || ""); }
     }
   }
   st.off = t.off;
@@ -93,40 +96,45 @@ export function agentFiles(tp, sid, now = Date.now()) {
 }
 
 /**
- * @returns {{msgs:number, turns:number}} msgs = what you sent, turns = inferences it cost,
- * root plus every agent it spawned.
+ * @returns {{msgs:number, turns:number, weighted:number}} msgs = what you sent, turns = inferences
+ * it cost, root plus every agent it spawned; weighted = those inferences in quota-weighted tokens.
  */
 export function turnCount(tp, sid, ctxNow, opts = {}) {
   const home = opts.home || homedir();
   const p = path.join(home, ".maxx", "turns.json");
   const db = readJSON(p, {});
   const key = sid || "unknown";
-  let cur = db[key] || { off: 0, n: 0, msgs: 0, ctx: 0, rid: null, subs: {} };
+  let cur = db[key] || { off: 0, n: 0, msgs: 0, ctx: 0, rid: null, w: 0, subs: {} };
   // A state file written before turns meant inferences holds a MESSAGE count in `n` and no
   // `msgs` at all. Carrying it forward would print the old number under the new label and
   // NaN the new one, so an entry that predates the shape is recounted from the top.
   if (typeof cur.msgs !== "number") cur = { off: 0, n: 0, msgs: 0, ctx: cur.ctx || 0, rid: null, subs: {} };
   if (!cur.subs) cur.subs = {};
-  if (!tp) return { msgs: cur.msgs || 0, turns: cur.n || 0 };
+  if (!tp) return { msgs: cur.msgs || 0, turns: cur.n || 0, weighted: cur.w || 0 };
   // /clear and /compact collapse the context, and this sits beside the context reading, so it
   // restarts with it: "72 turns" next to a freshly emptied window would be a lie about both.
   // The tell is the context itself halving — Claude Code keeps the session id across a compact.
   if (ctxNow > 0 && cur.ctx > 0 && ctxNow < cur.ctx * 0.5) {
     let size = 0; try { size = statSync(tp).size; } catch {}
-    cur = { off: size, n: 0, msgs: 0, ctx: 0, rid: null, subs: {} };
+    // The SPEND does not restart: it was billed, and the window emptying does not refund it. Agent
+    // files keep their offsets for the same reason — re-reading them would bill their turns twice.
+    const subs = {};
+    for (const [f, st] of Object.entries(cur.subs)) subs[f] = { ...st, n: 0 };
+    cur = { off: size, n: 0, msgs: 0, ctx: 0, rid: null, w: cur.w || 0, subs };
   }
   if (ctxNow > 0) cur.ctx = ctxNow;
   scan(tp, cur);
-  let turns = cur.n;
+  let turns = cur.n, weighted = cur.w || 0;
   for (const f of agentFiles(tp, sid, opts.now)) {
-    const st = cur.subs[f] || { off: 0, n: 0, msgs: 0, rid: null };
+    const st = cur.subs[f] || { off: 0, n: 0, msgs: 0, rid: null, w: 0 };
     scan(f, st);
     cur.subs[f] = st;
     turns += st.n;                                     // agent msgs are harness prompts, not yours
+    weighted += st.w || 0;
   }
   db[key] = cur;
   const keys = Object.keys(db);                        // don't grow forever
   if (keys.length > 12) for (const k of keys.slice(0, keys.length - 12)) delete db[k];
   try { writeFileSync(p, JSON.stringify(db)); } catch {}
-  return { msgs: cur.msgs, turns };
+  return { msgs: cur.msgs, turns, weighted };
 }
