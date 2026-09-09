@@ -872,7 +872,7 @@ function main() {
   // The second half stays dim with its rule: a qualifier must never outweigh what it qualifies.
   const pair = (label, used, line, opts) => {
     const o = opts || {};
-    const n = used + (line == null ? "%" : "");
+    const n = used + (line == null || o.bare ? "%" : "");
     // FOUR steps, so the reading says how much room is left and not merely whether you have run
     // out. Green is the state you are in for most of a window and it should look like it; ink is
     // the quiet warning that the standard is close; amber is past it; red is the wall.
@@ -904,7 +904,7 @@ function main() {
     // Ink, not green: green beside a red reading would say "you're fine" and "you're done" in the
     // same breath. The standard is a reference, not a verdict — the verdict is x's job alone.
     return (label ? faint(DIM, label + " ") : "") + head
-      + (line == null ? "" : faint(DIM, "/") + fg(DIM, line + "%"));
+      + (line == null || o.bare ? "" : faint(DIM, "/") + fg(DIM, line + "%"));
   };
 
   // ── who ── RANK 0, never drops. Ten cells, and without them a narrow pane cannot tell you
@@ -927,18 +927,14 @@ function main() {
     // told you the unit, not what runs out. Costs one cell, and the turn count beside it now reads
     // as what it is: how many turns this chat has taken.
     put(1, 0, pair("chat", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
-    // every wall ends with the thing it is measured against: the chat has turns, the session has
-    // a clock, the week has days. Same slot, same voice, so the three read as one grammar.
-    // ONE number, and it is the inference count — not the message count, which is the one
-    // reading in a session that does not multiply. Every tool call is another inference and
-    // every subagent opens a window of its own: 12 messages measured 781 turns.
-    const t = turnsNow;
-    if (t.turns > 0) put(1, 3, faint(DIM, t.turns + " turn" + (t.turns === 1 ? "" : "s")));
-    // What this chat has cost, as a share of the WEEK, over its line: one session's paced share
-    // (scored above). Turns say how many inferences; this says what they drained, and the pair
-    // says whether that is more than a chat's claim. Same weighted tokens the scanner sums, over
-    // the same anchored cap the week row is measured against. Hidden under 1%: noise, not news.
-    if (chatWk >= 1 && chatLine > 0) put(1, 4, pair("", chatWk, chatLine, { over: chatWk > chatLine }) + faint(DIM, " of week"));
+    // every wall ends with the thing it is measured against: the session has a clock, the week
+    // has days, and the chat has what it COST — its spend as a share of the week, the wall that
+    // actually ends a solo week. Turns used to sit here; they said how many inferences, and this
+    // says what they drained, which is the number the week answers to. The reading is coloured
+    // against its line — one session's paced share, scored above — and the line itself is not
+    // printed: the row is "chat x/y z", one pair and one trailer, and the verdict is in the ink.
+    // Hidden under 1%: noise, not news.
+    if (chatWk >= 1 && chatLine > 0) put(1, 3, pair("", chatWk, chatLine, { over: chatWk > chatLine, bare: true }) + faint(DIM, " of week"));
   }
 
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──
