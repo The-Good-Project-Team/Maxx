@@ -211,7 +211,7 @@ function localHandoff(session) {
   try { mkdirSync(DIR, { recursive: true }); writeFileSync(HANDOFF, JSON.stringify(told)); } catch {}
   const why = [
     `chat at ${c.pct}% of its line`,
-    overShare ? `spent ${c.sharePct}% of the week against a ${c.shareLine}% share` : null,
+    overShare ? `spent ${c.sharePct}% of the week since its last compact, against a ${c.shareLine}% share` : null,
     overCtx ? `context ${c.ctxPct}% against the ${c.ctxLine}% hand-off line` : null,
   ].filter(Boolean).join("; ");
   log(`local handoff session=${session} ${why}`);

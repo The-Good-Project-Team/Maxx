@@ -769,7 +769,10 @@ function main() {
   const ctxSize = cw_.context_window_size || 0;
   const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
   const turnsNow = turnCount(p.transcript_path, sid, total);
-  const chatWkRaw = cap7s > 0 && turnsNow.weighted > 0 ? (turnsNow.weighted / cap7s) * 100 : 0;
+  // epoch, not the whole chat: spend since the last compact is what the context now in the window
+  // has cost, and the only spend a hand-off can still do anything about. Sunk spend is not a
+  // reason to refresh: a chat that just compacted is cheap again, whatever it cost before.
+  const chatWkRaw = cap7s > 0 && turnsNow.epoch > 0 ? (turnsNow.epoch / cap7s) * 100 : 0;
   const chatWk = Math.round(chatWkRaw);
   const chatLine = cap7s > 0 ? 5 : 0;                            // 1/20 of the week, in %
   // ONE number for the chat: how far along it is toward whichever of its two lines it will hit
@@ -781,7 +784,7 @@ function main() {
   const chatsPrev = (readJSON(MAXX("status.json"), {}).chats) || {};
   const chats = {};
   for (const [k, v] of Object.entries(chatsPrev)) if (Date.now() - (v.ts || 0) < 3600_000) chats[k] = v;
-  if (sid) chats[sid] = { ts: Date.now(), pct: chatPct, ctxPct: Math.round(ctxPct), ctxLine, sharePct: chatWk, shareLine: chatLine, weighted: Math.round(turnsNow.weighted) };
+  if (sid) chats[sid] = { ts: Date.now(), pct: chatPct, ctxPct: Math.round(ctxPct), ctxLine, sharePct: chatWk, shareLine: chatLine, weighted: Math.round(turnsNow.weighted), epoch: Math.round(turnsNow.epoch) };
   const status = {
     ts: Date.now(), account: sessAccount, model: fam, ctxPct: Math.round(ctxPct), cachePct: Math.round(cache * 100), chats,
     costUsd: Math.round(usd * 100) / 100, sessions: mine,

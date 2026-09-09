@@ -133,8 +133,12 @@ Behind the tunnel — the server itself:
 - **Laptop:** `~/.maxx/config.json` → `logsUrl=https://luckymachines.co/maxxbudget`,
   matching `secret`. Continuous ship via launchd agent `co.meetmaxx.emit`
   (`emit.mjs --watch`, logs `~/.maxx/emit.log`).
-- **Redeploy after a code change:** push to `maxx-budget`, then on lucky
-  `git -C /home/agent/maxxbudget pull && systemctl --user restart maxx-tally`.
+- **Redeploy after a code change (current, 2026-09):** the server is the `maxx` podman
+  container on the **dino** box (`ssh dino`), built from `~/Classified/dino/maxx/`
+  (docker-compose.yml + Containerfile, context `../../Maxx`, tracks `main`). Push main, then:
+  `ssh dino 'export PATH=$HOME/.local/bin:$PATH; cd ~/Classified/Maxx && git pull --ff-only origin main; cd ~/Classified/dino/maxx; export MAXX_GIT_SHA=$(git -C ../../Maxx rev-parse HEAD); podman-compose build && podman-compose down && podman-compose up -d'`
+  then `curl -s https://api.meetmaxx.co/api/version` must equal the pushed SHA. The
+  lucky `maxx-tally` systemd recipe around this line is dead: do not look on lucky.
 - **Durable:** systemd user unit `maxx-tally.service` supervises the server
   (auto-restarts, survives reboot) — do NOT kill the pid or start a lucky job
   for it; the unit respawns in seconds and a second copy just hits EADDRINUSE.

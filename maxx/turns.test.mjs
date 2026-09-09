@@ -120,7 +120,9 @@ test("weighs every deduped inference, root and agents alike", () => {
   mkdirSync(subs, { recursive: true });
   writeFileSync(path.join(subs, "agent-ccc.jsonl"),
     ["c1", "c1", "c2"].map(agentInference).join("\n") + "\n");  // streamed dup, then one more: 2 × (90 + 4·5) = 220
-  assert.equal(turnCount(tp, "s7", 50_000, opts).weighted, 360);
+  const r = turnCount(tp, "s7", 50_000, opts);
+  assert.equal(r.weighted, 360);
+  assert.equal(r.epoch, 360, "no compact yet: the epoch is the whole chat, agents included");
 });
 
 test("a compact restarts turns but keeps what the chat has already cost", () => {
@@ -131,6 +133,9 @@ test("a compact restarts turns but keeps what the chat has already cost", () => 
   const after = turnCount(tp, "s8", 20_000, opts);          // context collapsed — /compact
   assert.equal(after.turns, 0);
   assert.equal(after.weighted, 140, "spend survives the compact — it was billed, the window resetting does not refund it");
+  assert.equal(after.epoch, 0, "but the EPOCH restarts: the context now in the window has cost nothing yet");
   appendFileSync(tp, inference("req-6", []) + "\n");
-  assert.equal(turnCount(tp, "s8", 25_000, opts).weighted, 175, "and keeps growing from there");
+  const more = turnCount(tp, "s8", 25_000, opts);
+  assert.equal(more.weighted, 175, "and keeps growing from there");
+  assert.equal(more.epoch, 35, "epoch counts only what came after the compact");
 });

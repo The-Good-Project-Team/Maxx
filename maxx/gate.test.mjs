@@ -228,7 +228,7 @@ test("gate: a chat past its share of the week is ordered to hand off, locally", 
     const ctx = j.hookSpecificOutput.additionalContext;
     assert.match(ctx, /\.fenix\/handoff\.md/);
     assert.match(ctx, /chat at 100% of its line/, "say how far along, in the bar's own words");
-    assert.match(ctx, /spent 9% of the week/, "and which line it is");
+    assert.match(ctx, /spent 9% of the week since its last compact/, "and which line it is");
     assert.equal(j.hookSpecificOutput.permissionDecision, undefined, "advice, never a denial");
     // said once: the next tool call in the same session stays silent
     assert.equal(await hook(home, srv.url, { tool: "Edit", session: "s-fat" }), "", "nagged on the next call");
@@ -252,6 +252,6 @@ test("gate: the handoff order carries even with the gate switched off", async ()
     chatStanding(home, "s-off", { pct: 100, ctxPct: 10, ctxLine: 35, sharePct: 4, shareLine: 3 });
     const out = await hook(home, srv.url, { tool: "Edit", session: "s-off" });
     assert.ok(out, "gate OFF swallowed the handoff — OFF means never deny, not never advise");
-    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /spent 4% of the week against a 3% share/);
+    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /spent 4% of the week since its last compact, against a 3% share/);
   } finally { srv.close(); }
 });
