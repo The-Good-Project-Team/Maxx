@@ -113,3 +113,20 @@ test("emit: anchor only attaches to the account that observed it", () => {
   assert.ok(byHandle.hb.anchor, "the observing account keeps its anchor (from its suffixed rl file)");
   assert.equal(byHandle.hb.anchor.five_pct, 0.05);
 });
+
+// A container's hostname() churns per run; MAXX_HOST pins the stamp so the install (and the
+// surface filed under it) survives across ticks — the dino bug (1,712 surfaces / 1,713 emits).
+test("emit: MAXX_HOST pins the host stamp — a config stamped with it keeps its installId", () => {
+  const home = makeHome({
+    accounts: { [A]: { handle: "ha", secret: "sa" } },
+    install: { installId: "3b1cc3c3-boxed", host: "dino" },
+  });
+  const out = execFileSync("node", [EMIT, "--json"], {
+    env: { ...process.env, HOME: home, MAXX_HOST: "dino", MAXX_SURFACE: "dino:ha" }, encoding: "utf8" });
+  const envs = JSON.parse(out.slice(out.indexOf("[")));
+  const cfg = readCfg(home);
+  assert.equal(cfg.installId, "3b1cc3c3-boxed", "a pinned host must not re-mint the install");
+  assert.equal(cfg.host, "dino");
+  assert.equal(envs[0].install_id, "3b1cc3c3-boxed");
+  assert.equal(envs[0].surface, "dino:ha", "MAXX_SURFACE names the surface outright");
+});

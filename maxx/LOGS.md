@@ -34,7 +34,7 @@ content. The emitter enforces this by construction (it reads only `usage` blocks
 ```jsonc
 {
   "v": 1,
-  "surface": "laptop:3b1cc3c3" | "cloud:<routine-or-session>",
+  "surface": "laptop:3b1cc3c3" | "dino:tgp" | "cloud:<routine-or-session>",   // MAXX_SURFACE overrides; MAXX_HOST pins the install stamp inside a container
   "install_id": "<uuid or env id>",
   "handle": "reif",
   "emitted_at": "<ISO>",

@@ -201,8 +201,12 @@ const secret = cfg.secret || "";
 // board can neither attribute burn nor address a directive. Stamp the host: a mismatch
 // means this config was copied, so mint a fresh install. A config with an id but no
 // host predates the stamp — adopt it, don't churn the surface it already reports under.
+// MAXX_HOST: inside a `podman run --rm` container hostname() is a fresh random id on every
+// tick, so the stamp never matches and a NEW install is minted per emit — dino filed 1,712
+// surfaces in 1,713 emits (2026-09-08), and the board saw 1,712 one-shot laptops instead of
+// one box. A wrapper that runs emit in a container passes the box's real name here.
 function bindInstall(c) {
-  const host = hostname();
+  const host = process.env.MAXX_HOST || hostname();
   if (c.installId && c.host === host) return c.installId;
   const id = c.installId && !c.host ? c.installId : randomUUID();
   c.installId = id;
@@ -212,7 +216,9 @@ function bindInstall(c) {
 }
 const installId = bindInstall(cfg);
 const base = (process.env.MAXX_LOGS_URL || cfg.logsUrl || "https://api.meetmaxx.co").replace(/\/$/, "");
-const surface = cfg.surface || `laptop:${installId.slice(0, 8)}`;
+// MAXX_SURFACE names the surface outright (e.g. dino:tgp) — a headless box is not a laptop,
+// and the board's per-surface split is only as honest as this label.
+const surface = process.env.MAXX_SURFACE || cfg.surface || `laptop:${installId.slice(0, 8)}`;
 
 // The signed-in Claude account — Claude Code only works logged in, so this identity is always
 // there to key off. Stamped on signup + every envelope; timelines are per account, never global.

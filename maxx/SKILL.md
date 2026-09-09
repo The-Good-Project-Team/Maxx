@@ -1,6 +1,6 @@
 ---
 name: maxx
-description: "Show your Claude Code token stats — total tokens, tokens/day, cache-hit rate, and streak — parsed from ~/.claude/projects. Use when the user types /maxx or asks about their Claude Code usage, token count, cache-hit rate, or streak."
+description: "Show your Claude Code token stats — total tokens, tokens/day, cache-hit rate, and streak — parsed from every Claude login root on the box (~/.claude, ~/.claude-*). Use when the user types /maxx or asks about their Claude Code usage, token count, cache-hit rate, or streak."
 trigger: /maxx
 ---
 
@@ -49,6 +49,8 @@ Reads only token/usage metadata — never prompt or message content.
    `agents` answers "what's using all the tokens" with names, not a count. Every
    session log nests: a root session at `<project>/<ROOT>.jsonl` owns everything
    under `<project>/<ROOT>/subagents/**` (subagent spawns AND workflow fan-outs).
+   It walks EVERY login root on the box (~/.claude + each ~/.claude-<account>) and tags each
+   row `project@account` — burn follows the login, and one root is not the week.
    A 300-agent workflow is ONE root's burn. agents.mjs rolls all descendants up to
    their root, labels it with the human title (customTitle > aiTitle > agentName)
    and git branch, ranks by billed tokens over the window, and flags 🔴 anything

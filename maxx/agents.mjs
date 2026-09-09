@@ -27,21 +27,37 @@
  *   node maxx/agents.mjs --children         — also list each root's live descendants
  *   node maxx/agents.mjs --cloud FILE       — merge cloud routines from a RemoteTrigger-list JSON
  *   node maxx/agents.mjs --json             — machine payload (local roots + buckets + cloud)
- *   node maxx/agents.mjs --dir PATH         — override projects dir
+ *   node maxx/agents.mjs --dir PATH         — override: read ONE projects dir instead of every login root
  *
  * Agent-readable: first stdout line is a single `MAXX_AGENTS …` record (grep it).
  * On-box: reads only usage/token metadata + titles locally; cloud data is
  * whatever the orchestrator already fetched. Sends nothing itself.
  */
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream, readFileSync, readdirSync, existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import path from "node:path";
 
 const HOME = homedir();
-const DEFAULT_DIR = path.join(HOME, ".claude", "projects");
 const LIVE_SEC = 5 * 60;
+
+// Every Claude login root on this box: ~/.claude plus each ~/.claude-<account>. Burn follows
+// the login, so a board that reads one root reports that root as the whole — the laptop showed
+// 306M for a week that was 2.6B (2026-09-08), 92% of it under ~/.claude-gmail.
+function loginRoots() {
+  const out = [];
+  try {
+    for (const e of readdirSync(HOME, { withFileTypes: true })) {
+      if (!e.isDirectory() || !/^\.claude(-|$)/.test(e.name)) continue;
+      const p = path.join(HOME, e.name, "projects");
+      if (existsSync(p)) out.push(p);
+    }
+  } catch {}
+  return out.length ? out : [path.join(HOME, ".claude", "projects")];
+}
+// ~/.claude → "main", ~/.claude-gmail → "gmail": the login a root's burn counts against.
+const acctOf = (dir) => path.basename(path.dirname(dir)).replace(/^\.claude-?/, "") || "main";
 
 // Cumulative recency buckets: "billed in the last N seconds". A token 5s old
 // counts in every bucket. This is burn velocity — the allocator's core signal.
@@ -57,14 +73,14 @@ const emptyBuckets = () => Object.fromEntries(BUCKETS.map((b) => [b.key, 0]));
 const addBuckets = (into, from) => { for (const b of BUCKETS) into[b.key] += from[b.key]; };
 
 function parseArgs(argv) {
-  const out = { dir: DEFAULT_DIR, mins: 120, json: false, children: false, cloud: null };
+  const out = { dirs: loginRoots(), mins: 120, json: false, children: false, cloud: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json" || a === "json") out.json = true;
     else if (a === "--children" || a === "children") out.children = true;
     else if (a === "--mins") out.mins = Number(argv[++i]) || 120;
     else if (a === "--cloud") out.cloud = argv[++i];
-    else if (a === "--dir") out.dir = argv[++i];
+    else if (a === "--dir") out.dirs = [argv[++i]];
   }
   return out;
 }
@@ -102,6 +118,7 @@ async function ingest(file, cutoffSec, nowSec) {
   let tok = 0, out = 0, turns = 0, last = 0;
   let custom = null, ai = null, agent = null, branch = null, cwd = null;
   const buckets = emptyBuckets();
+  const seen = new Set(); // one usage row per request — streaming logs the same turn once per content block (tracker/emit dedupe the same way)
   const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line || line[0] !== "{") continue;
@@ -112,6 +129,8 @@ async function ingest(file, cutoffSec, nowSec) {
     if (rec.agentName) agent = rec.agentName;
     if (rec.gitBranch) branch = rec.gitBranch;
     if (rec.cwd) cwd = rec.cwd;
+    const rid = rec.requestId || rec.uuid;
+    if (rid) { if (seen.has(rid)) continue; seen.add(rid); }
     const u = rec?.message?.usage || rec?.usage;
     const ts = rec?.timestamp;
     if (!u || !ts) continue;
@@ -189,6 +208,8 @@ const projShort = (p) => p.replace(/^-Users-reify-(Classified-)?/, "").replace(/
 // Per-root label: short project name, or the session's cwd when there's no real
 // project dir (a `claude` run from `/` shows up as project "-" → "?").
 const projLabel = (r) => { const s = projShort(r.project); return s === "?" ? (r.cwd || "?") : s; };
+// "philanthropy@gmail": which login this root's burn counts against — one box, many quotas.
+const acctLabel = (r) => `${projLabel(r)}@${r.acct}`;
 // HH:MM (UTC) from an ISO stamp, for compact schedule display.
 const hhmm = (iso) => (iso ? iso.slice(11, 16) : "—");
 
@@ -197,18 +218,17 @@ const nowSec = Date.now() / 1000;
 const cutoffSec = nowSec - args.mins * 60;
 const liveSince = nowSec - LIVE_SEC;
 
-const files = await recentFiles(args.dir, cutoffSec * 1000);
-
-// aggregate into ROOT sessions
+// aggregate into ROOT sessions, across every login root
 const roots = new Map();
-for (const f of files) {
+for (const dir of args.dirs) for (const f of await recentFiles(dir, cutoffSec * 1000)) {
   const s = await ingest(f, cutoffSec, nowSec);
   if (!s.tok) continue;
-  const c = classify(args.dir, f);
-  const key = `${c.project}/${c.root}`;
+  const c = classify(dir, f);
+  const acct = acctOf(dir);
+  const key = `${acct}/${c.project}/${c.root}`;
   let r = roots.get(key);
   if (!r) {
-    r = { key, project: c.project, root: c.root, billed: 0, out: 0, own: 0, sub: 0, wf: 0,
+    r = { key, dir, acct, project: c.project, root: c.root, billed: 0, out: 0, own: 0, sub: 0, wf: 0,
           nSub: 0, nWf: 0, live: 0, last: 0, name: null, branch: null, cwd: null,
           buckets: emptyBuckets(), children: [] };
     roots.set(key, r);
@@ -228,7 +248,7 @@ for (const f of files) {
 for (const r of roots.values()) {
   if (r.name && r.branch) continue;
   try {
-    const m = await readMeta(path.join(args.dir, r.project, r.root + ".jsonl"));
+    const m = await readMeta(path.join(r.dir, r.project, r.root + ".jsonl"));
     r.name = r.name || m.name;
     r.branch = r.branch || m.branch;
     r.cwd = r.cwd || m.cwd;
@@ -251,10 +271,10 @@ if (args.cloud) {
 const cloudOn = cloud.filter((c) => c.enabled).length;
 
 // ── agent-readable first line ───────────────────────────────────────────────
-const label = (r) => `${projLabel(r)}${r.name ? ":" + r.name.slice(0, 32) : ""}`;
+const label = (r) => `${acctLabel(r)}${r.name ? ":" + r.name.slice(0, 32) : ""}`;
 const top = ranked.slice(0, 4).map((r) => `${label(r).replace(/\s+/g, "_")}=${fmt(r.billed)}`).join(" ");
 const vel = BUCKETS.map((b) => `${b.label}=${fmt(totBuckets[b.key])}`).join(" ");
-console.log(`MAXX_AGENTS window=${args.mins}m billed=${fmt(totBilled)} output=${fmt(totOut)} roots=${ranked.length} live_roots=${liveRoots.length} cloud=${cloud.length} cloud_on=${cloudOn} velocity=[${vel}] top=[${top}]`);
+console.log(`MAXX_AGENTS window=${args.mins}m logins=${args.dirs.length} billed=${fmt(totBilled)} output=${fmt(totOut)} roots=${ranked.length} live_roots=${liveRoots.length} cloud=${cloud.length} cloud_on=${cloudOn} velocity=[${vel}] top=[${top}]`);
 
 if (args.json) {
   console.log(JSON.stringify({
@@ -262,7 +282,7 @@ if (args.json) {
     totalBilled: totBilled, totalOutput: totOut, rootCount: ranked.length, liveRoots: liveRoots.length,
     velocity: totBuckets,
     local: ranked.map((r) => ({
-      key: r.key, project: projLabel(r), name: r.name, branch: r.branch,
+      key: r.key, account: r.acct, project: projLabel(r), name: r.name, branch: r.branch,
       billed: r.billed, output: r.out, live: r.live, agoMin: Math.round((nowSec - r.last) / 60),
       buckets: r.buckets,
       breakdown: { own: r.own, subagents: r.sub, workflow: r.wf, nSub: r.nSub, nWf: r.nWf },
@@ -276,7 +296,7 @@ if (args.json) {
 // ── local board ─────────────────────────────────────────────────────────────
 const colW = 7;
 const velHead = BUCKETS.map((b) => pad(b.label, colW)).join("");
-console.log(`\n  maxx agents — the whole board  ·  last ${args.mins}m  ·  local roots + cloud routines\n`);
+console.log(`\n  maxx agents — the whole board  ·  last ${args.mins}m  ·  ${args.dirs.length} login root${args.dirs.length === 1 ? "" : "s"} (${args.dirs.map(acctOf).join(", ")}) + cloud routines\n`);
 console.log(`  LOCAL — who's burning (rolled up to root session)`);
 console.log(`  ${" ".repeat(2)} ${pad("billed", colW)}  ${pad("state", 8)}  ${velHead}  who`);
 for (const r of ranked) {
@@ -288,7 +308,7 @@ for (const r of ranked) {
   if (r.wf) parts.push(`wf ${fmt(r.wf)}×${r.nWf}`);
   const bd = parts.length ? `  (own ${fmt(r.own)} · ${parts.join(" · ")})` : "";
   const velCols = BUCKETS.map((b) => pad(dash(r.buckets[b.key]), colW)).join("");
-  console.log(`  ${flag} ${pad(fmt(r.billed), colW)}  ${pad(state, 8)}  ${velCols}  ${projLabel(r)} — ${nm}${bd}`);
+  console.log(`  ${flag} ${pad(fmt(r.billed), colW)}  ${pad(state, 8)}  ${velCols}  ${acctLabel(r)} — ${nm}${bd}`);
   console.log(`     ${" ".repeat(colW)}  ${" ".repeat(8)}  ${" ".repeat(colW * BUCKETS.length)}  ${r.root.slice(0, 8)}${r.branch ? "  @" + r.branch : ""}`);
   if (args.children && r.children.length) {
     for (const c of r.children.sort((a, b) => b.billed - a.billed).slice(0, 8)) {
