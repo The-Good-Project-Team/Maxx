@@ -755,8 +755,25 @@ function main() {
   sStat.rawUsed = rawUsedFixed;
   sStat.rawUsedPct = haveQuota ? Math.round(quota * 1000) / 10 : 0; // % of the ACTUAL fixed 5h window (= /usage)
   sStat.rawHeadroom = Math.max(0, (cap5s || 0) - rawUsedFixed);     // tokens left before the 5h wall
+  // ── the chat's standing, scored here so status.json can carry it to the gate hook ──
+  // Two lines, and the chat is over when it is past EITHER:
+  //   context — the hand-off line below (75% of the window or 350k, whichever binds), because
+  //             past it every turn re-bills a context that a fresh start would not carry;
+  //   spend   — one session's paced share of the week (realMax ÷ cap7). A chat that has drained
+  //             more than a session's share is eating the sessions after it. That share is the
+  //             SAME standard the session row is measured against, so "chat 9/3% of week" and
+  //             "session 40%" are one grammar: a chat should fit in a session.
+  const ctxSize = cw_.context_window_size || 0;
+  const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
+  const turnsNow = turnCount(p.transcript_path, sid, total);
+  const chatWk = cap7s > 0 && turnsNow.weighted > 0 ? Math.round((turnsNow.weighted / cap7s) * 100) : 0;
+  const chatLine = cap7s > 0 && realMax > 0 ? Math.max(1, Math.round((realMax / cap7s) * 100)) : 0;
+  const chatsPrev = (readJSON(MAXX("status.json"), {}).chats) || {};
+  const chats = {};
+  for (const [k, v] of Object.entries(chatsPrev)) if (Date.now() - (v.ts || 0) < 3600_000) chats[k] = v;
+  if (sid) chats[sid] = { ts: Date.now(), ctxPct: Math.round(ctxPct), ctxLine, sharePct: chatWk, shareLine: chatLine, weighted: Math.round(turnsNow.weighted) };
   const status = {
-    ts: Date.now(), account: sessAccount, model: fam, ctxPct: Math.round(ctxPct), cachePct: Math.round(cache * 100),
+    ts: Date.now(), account: sessAccount, model: fam, ctxPct: Math.round(ctxPct), cachePct: Math.round(cache * 100), chats,
     costUsd: Math.round(usd * 100) / 100, sessions: mine,
     // session.cap = realMax (weekly-derived sustainable budget), NOT Anthropic's raw 5h cap.
     session: sStat, weekly: wStat,
@@ -886,7 +903,7 @@ function main() {
     //
     // Ink, not green: green beside a red reading would say "you're fine" and "you're done" in the
     // same breath. The standard is a reference, not a verdict — the verdict is x's job alone.
-    return faint(DIM, label + " ") + head
+    return (label ? faint(DIM, label + " ") : "") + head
       + (line == null ? "" : faint(DIM, "/") + fg(DIM, line + "%"));
   };
 
@@ -903,9 +920,7 @@ function main() {
   // it is whichever of two arrives first — the same pair of thresholds this codebase already used:
   //   75% of the window, and 350k tokens (on a 1M window 75% is 750k, long past the point where
   //   starting fresh beats carrying it). A 200k window binds on the percentage, a 1M on the tokens.
-  const ctxSize = cw_.context_window_size || 0;
   const ctxUsed = Math.round(ctxPct);
-  const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
   if (ctxUsed > 0) {
     // "chat", not "ctx" — the other three walls are named after the THING being spent (session,
     // week), and this one is the conversation you are in. "ctx" is jargon for the same noun; it
@@ -917,14 +932,13 @@ function main() {
     // ONE number, and it is the inference count — not the message count, which is the one
     // reading in a session that does not multiply. Every tool call is another inference and
     // every subagent opens a window of its own: 12 messages measured 781 turns.
-    const t = turnCount(p.transcript_path, sid, total);
+    const t = turnsNow;
     if (t.turns > 0) put(1, 3, faint(DIM, t.turns + " turn" + (t.turns === 1 ? "" : "s")));
-    // What this chat has cost, as a share of the WEEK — the wall that actually ends a solo
-    // week. Turns say how many inferences; this says what they drained. Same weighted tokens
-    // the scanner sums, over the same anchored weekly cap the week row is measured against, so
-    // "chat 12% of week" and "week 70%" are one arithmetic. Hidden under 1%: noise, not news.
-    const chatWk = cap7s > 0 && t.weighted > 0 ? Math.round((t.weighted / cap7s) * 100) : 0;
-    if (chatWk >= 1) put(1, 4, faint(DIM, chatWk + "% of week"));
+    // What this chat has cost, as a share of the WEEK, over its line: one session's paced share
+    // (scored above). Turns say how many inferences; this says what they drained, and the pair
+    // says whether that is more than a chat's claim. Same weighted tokens the scanner sums, over
+    // the same anchored cap the week row is measured against. Hidden under 1%: noise, not news.
+    if (chatWk >= 1 && chatLine > 0) put(1, 4, pair("", chatWk, chatLine, { over: chatWk > chatLine }) + faint(DIM, " of week"));
   }
 
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──

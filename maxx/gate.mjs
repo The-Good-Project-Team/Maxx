@@ -44,6 +44,9 @@ const GATE = path.join(DIR, "gate.json");
 const SUF = process.env.CLAUDE_CONFIG_DIR ? "-" + path.basename(process.env.CLAUDE_CONFIG_DIR).replace(/^\.claude-?/, "") : "";
 const CACHE = path.join(DIR, `gate-cache${SUF}.json`);
 const POLL = path.join(DIR, `directive-poll${SUF}.json`);
+const STATUS = path.join(DIR, `status${SUF}.json`);        // the statusline's tick: per-chat standing lives in .chats
+const HANDOFF = path.join(DIR, `handoff-told${SUF}.json`); // session → when it was last ordered to hand off
+const HANDOFF_EVERY_SEC = 30 * 60;  // a chat past its line is told once, then left alone for half an hour
 const POLL_EVERY_SEC = 60;        // an ungated tool call polls for directives at most this often
 const LOG = path.join(DIR, "gate.log");
 const CACHE_FRESH_SEC = 60;       // reuse a verdict this fresh without a network call
@@ -178,12 +181,52 @@ try { hook = JSON.parse(input); } catch { process.exit(0); }   // not a hook cal
 const tool = hook.tool_name || "";
 const gated = GATED.test(tool);
 
+const riseText = (note) =>
+  `MAXX DIRECTIVE — THIS CHAT IS PAST ITS LINE${note ? ` (${note})` : ""}. ` +
+  `Every turn from here re-bills your whole context, so do not start new work. ` +
+  `Finish only the step in flight, then PRESERVE THE THREAD, in this order: ` +
+  `(1) write .fenix/handoff.md exactly per ~/.claude/skills/fenix/SKILL.md — what is in motion, ` +
+  `decisions made, the next concrete step; (2) tell the user its id and that /clear picks it ` +
+  `up; (3) END YOUR TURN — do not keep working here, every further turn re-bills this fat ` +
+  `context. You cannot clear yourself: /clear is a human keystroke and no hook can send it.`;
+// The LOCAL trigger for the same order. The statusline scores every chat against two lines —
+// context vs the hand-off line, and spend vs one session's paced share of the week — and writes
+// the standing to status.json each tick. Past either line, this chat is told to hand off, once
+// per half hour: the point is one clear instruction at the right moment, not a nag on every
+// tool call (each of which would re-bill the very context it is warning about).
+function localHandoff(session) {
+  if (!session) return null;
+  const c = readJSON(STATUS, {}).chats?.[session];
+  if (!c || Date.now() - (c.ts || 0) > 10 * 60 * 1000) return null;   // stale tick → unknown, not over
+  const overCtx = c.ctxLine > 0 && c.ctxPct >= c.ctxLine;
+  const overShare = c.shareLine > 0 && c.sharePct >= c.shareLine;
+  if (!overCtx && !overShare) return null;
+  const told = readJSON(HANDOFF, {});
+  const now = Date.now() / 1000;
+  if (now - (told[session] || 0) < HANDOFF_EVERY_SEC) return null;
+  for (const [sid, at] of Object.entries(told)) if (now - at > 24 * 3600) delete told[sid];
+  told[session] = now;
+  try { mkdirSync(DIR, { recursive: true }); writeFileSync(HANDOFF, JSON.stringify(told)); } catch {}
+  const why = [
+    overShare ? `this chat has spent ${c.sharePct}% of the week, past its ${c.shareLine}% share` : null,
+    overCtx ? `context ${c.ctxPct}% is past the ${c.ctxLine}% hand-off line` : null,
+  ].filter(Boolean).join("; ");
+  log(`local handoff session=${session} ${why}`);
+  return riseText(why);
+}
+// Advice, not a verdict: the handoff order carries even when the gate is OFF or this box has no
+// maxx account — neither has anything to do with whether THIS chat is past its line.
+const sayHandoff = (session) => {
+  const h = localHandoff(session);
+  if (h) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: h } }));
+};
 if (!pol.enabled) {
   // overturned — allow, already noted at overturn time; keep a local trace
   if (gated) log(`allow (gate OFF${gate.overturn ? `, overturn: ${gate.overturn.reason}` : ""}) tool=${tool}`);
+  sayHandoff(hook.session_id);
   process.exit(0);
 }
-if (!cfg.handle || !cfg.secret) process.exit(0);                // no maxx account on this box → not our call
+if (!cfg.handle || !cfg.secret) { sayHandoff(hook.session_id); process.exit(0); } // no maxx account → not our call, but still our chat
 
 // A session that only edits and runs commands never spawns a gated tool, so gating the
 // directive fetch on those alone left the loudest sessions — the ones grinding a build past
@@ -233,16 +276,10 @@ const clearDir = dirs.find((d) => d.action === "clear");
 // yourself". Promising self-renewal it could not deliver is how the thread got lost.
 const clearCtx = clearDir
   ? clearDir.rise
-    ? `MAXX DIRECTIVE — PAST THE CONTEXT WALL${clearDir.note ? ` (${clearDir.note})` : ""}. ` +
-      `Every turn from here re-bills your whole context, so do not start new work. ` +
-      `Finish only the step in flight, then PRESERVE THE THREAD, in this order: ` +
-      `(1) write .fenix/handoff.md exactly per ~/.claude/skills/fenix/SKILL.md — what is in motion, ` +
-      `decisions made, the next concrete step; (2) tell the user its id and that /clear picks it ` +
-      `up; (3) END YOUR TURN — do not keep working here, every further turn re-bills this fat ` +
-      `context. You cannot clear yourself: /clear is a human keystroke and no hook can send it.`
+    ? riseText(clearDir.note)
     : `MAXX DIRECTIVE (orchestrator asks): /clear this session${clearDir.note ? ` — ${clearDir.note}` : ""}. ` +
       `Finish the immediate step cheaply, then tell the user to /clear (or /compact) before continuing.`
-  : null;
+  : localHandoff(hook.session_id);
 
 // Ungated tool: no spend to weigh, so the only thing to carry is the advisory. Never deny here —
 // a pause still lands on the gated path, where the expensive work it means to stop actually is.
