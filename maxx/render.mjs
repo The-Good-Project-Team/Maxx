@@ -389,6 +389,7 @@ function modelFamily(name = "") {
   if (l.includes("opus")) return "Opus";
   if (l.includes("haiku")) return "Haiku";
   if (l.includes("sonnet")) return "Sonnet";
+  if (l.includes("fable") || l.includes("mythos")) return "Fable";   // same map as emit.mjs
   return [...name].slice(0, 8).join("");
 }
 

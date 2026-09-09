@@ -159,3 +159,24 @@ test("render: the session reading is Anthropic's 5h %, not our paced-share ratio
   assert.ok(w, "no week reading in the bar");
   assert.equal(Number(w[1]), 22, "week reading must equal stdin's seven_day used_percentage");
 });
+
+// "Fable 5.1" fell through to the 8-glyph cut and printed "fable 5." — a family that reads as a
+// typo. Every family on the bar is its name alone; the version is inferable from what you typed.
+test("render: fable is a family, not an 8-glyph cut", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
+  mkdirSync(path.join(home, ".maxx"), { recursive: true });
+  const stdin = JSON.stringify({
+    session_id: "fam",
+    rate_limits: {
+      five_hour: { used_percentage: 26, resets_at: Math.floor(Date.now() / 1000) + 3600 },
+      seven_day: { used_percentage: 22, resets_at: in6d },
+    },
+    context_window: { used_percentage: 10, context_window_size: 1000000 },
+    model: { display_name: "Fable 5.1" },
+  });
+  const env = { ...process.env, HOME: home, COLUMNS: "200" };
+  const bar = execFileSync("node", [path.join(HERE, "render.mjs")], { input: stdin, env, encoding: "utf8" })
+    .replace(/\x1b\[[0-9;:]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+  assert.match(bar, /\bfable +│/, `expected "fable" in the bar: ${JSON.stringify(bar)}`);
+  assert.doesNotMatch(bar, /fable 5\./);
+});
