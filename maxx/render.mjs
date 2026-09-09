@@ -173,6 +173,7 @@ const fg = (c, s) => paint(c, s);
 //   curly   the hard wall. A red squiggle is the one piece of terminal typography every reader
 //           already knows means "this is wrong", borrowed straight from a spell-checker.
 const bold  = (c, s) => paint(c, s, "1");
+const blink = (c, s) => paint(c, s, "1;5");   // SGR 5: the one reading that must not be glanced past
 const faint = (c, s) => paint(c, s, "2");
 function ital(fgHex, s) { return paint(fgHex, s, "3"); }
 // Curly underline (SGR 4:3) and underline COLOUR (SGR 58) are colon/extended params that older
@@ -759,19 +760,27 @@ function main() {
   // Two lines, and the chat is over when it is past EITHER:
   //   context — the hand-off line below (75% of the window or 350k, whichever binds), because
   //             past it every turn re-bills a context that a fresh start would not carry;
-  //   spend   — one session's paced share of the week (realMax ÷ cap7). A chat that has drained
-  //             more than a session's share is eating the sessions after it. That share is the
-  //             SAME standard the session row is measured against, so "chat 9/3% of week" and
-  //             "session 40%" are one grammar: a chat should fit in a session.
+  //   spend   — one twentieth of the week's cap. A chat is one of many in a week, and one that
+  //             has drained a twentieth of the whole week is a big chat by any pace. FIXED, not
+  //             the paced share: the paced share shrinks as the week is spent (a 1% share at 70%
+  //             in), and against it every chat read 100 by its fortieth turn — pacing is the
+  //             session and week rows' job, and this row's job is only "is THIS chat too big".
   const ctxSize = cw_.context_window_size || 0;
   const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
   const turnsNow = turnCount(p.transcript_path, sid, total);
-  const chatWk = cap7s > 0 && turnsNow.weighted > 0 ? Math.round((turnsNow.weighted / cap7s) * 100) : 0;
-  const chatLine = cap7s > 0 && realMax > 0 ? Math.max(1, Math.round((realMax / cap7s) * 100)) : 0;
+  const chatWkRaw = cap7s > 0 && turnsNow.weighted > 0 ? (turnsNow.weighted / cap7s) * 100 : 0;
+  const chatWk = Math.round(chatWkRaw);
+  const chatLine = cap7s > 0 ? 5 : 0;                            // 1/20 of the week, in %
+  // ONE number for the chat: how far along it is toward whichever of its two lines it will hit
+  // first, out of 100. 100 is the line — the point where this chat should already have handed
+  // off — and the ink says how close: amber from 71, red from 85, blinking red from 90.
+  const chatPct = Math.min(100, Math.round(100 * Math.max(
+    ctxLine > 0 ? ctxPct / ctxLine : 0,
+    chatLine > 0 ? chatWkRaw / chatLine : 0)));   // unrounded: 1.2% of the week against 5 is 25, not 20
   const chatsPrev = (readJSON(MAXX("status.json"), {}).chats) || {};
   const chats = {};
   for (const [k, v] of Object.entries(chatsPrev)) if (Date.now() - (v.ts || 0) < 3600_000) chats[k] = v;
-  if (sid) chats[sid] = { ts: Date.now(), ctxPct: Math.round(ctxPct), ctxLine, sharePct: chatWk, shareLine: chatLine, weighted: Math.round(turnsNow.weighted) };
+  if (sid) chats[sid] = { ts: Date.now(), pct: chatPct, ctxPct: Math.round(ctxPct), ctxLine, sharePct: chatWk, shareLine: chatLine, weighted: Math.round(turnsNow.weighted) };
   const status = {
     ts: Date.now(), account: sessAccount, model: fam, ctxPct: Math.round(ctxPct), cachePct: Math.round(cache * 100), chats,
     costUsd: Math.round(usd * 100) / 100, sessions: mine,
@@ -915,26 +924,20 @@ function main() {
   put(0, 6, faint(DIM, fam.toLowerCase()));
 
   // ── chat — the first wall, and the only one whose reset you own ──
-  // The hard wall is auto-compact: it fires mid-task, costs a full re-read, and picks its own cut.
-  // The line is where to hand off deliberately instead (/fenix, or /compact at a clean stop), and
-  // it is whichever of two arrives first — the same pair of thresholds this codebase already used:
-  //   75% of the window, and 350k tokens (on a 1M window 75% is 750k, long past the point where
-  //   starting fresh beats carrying it). A 200k window binds on the percentage, a 1M on the tokens.
-  const ctxUsed = Math.round(ctxPct);
-  if (ctxUsed > 0) {
-    // "chat", not "ctx" — the other three walls are named after the THING being spent (session,
-    // week), and this one is the conversation you are in. "ctx" is jargon for the same noun; it
-    // told you the unit, not what runs out. Costs one cell, and the turn count beside it now reads
-    // as what it is: how many turns this chat has taken.
-    put(1, 0, pair("chat", ctxUsed, ctxLine, { over: ctxUsed > ctxLine, wall: ctxUsed >= 90 }));
-    // every wall ends with the thing it is measured against: the session has a clock, the week
-    // has days, and the chat has what it COST — its spend as a share of the week, the wall that
-    // actually ends a solo week. Turns used to sit here; they said how many inferences, and this
-    // says what they drained, which is the number the week answers to. The reading is coloured
-    // against its line — one session's paced share, scored above — and the line itself is not
-    // printed: the row is "chat x/y z", one pair and one trailer, and the verdict is in the ink.
-    // Hidden under 1%: noise, not news.
-    if (chatWk >= 1 && chatLine > 0) put(1, 3, pair("", chatWk, chatLine, { over: chatWk > chatLine, bare: true }) + faint(DIM, " of week"));
+  // One reading, out of 100. The chat has two lines — the context hand-off line (75% of the
+  // window or 350k, whichever binds: past it every turn re-bills a context a fresh start would
+  // not carry) and its spend share of the week (a twentieth of the week's cap: past it, this is
+  // a big chat by any pace). Both are scored above, and this is how far along the chat is
+  // toward whichever it reaches first. No pair, no trailer: the standard is folded into the
+  // number (100 = the line), and the verdict is in the ink — amber from 71, red from 85, and
+  // blinking red from 90, the one reading on the bar that must not be glanced past.
+  if (chatPct > 0) {
+    const n = chatPct + "%";
+    const head = chatPct >= 90 ? blink(RED, n)
+      : chatPct >= 85 ? fg(RED, n)
+      : chatPct >= 71 ? fg(AMBER, n)
+      : fg(GREEN, n);
+    put(1, 0, faint(DIM, "chat ") + head);
   }
 
   // ── session — the wall you can act on in the next ten minutes, so it carries the bold ──

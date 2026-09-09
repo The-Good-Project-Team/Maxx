@@ -125,7 +125,8 @@ test("render: the first wall is labelled chat, not ctx", () => {
   const env = { ...process.env, HOME: home, COLUMNS: "200" };
   const bar = execFileSync("node", [path.join(HERE, "render.mjs")], { input: stdin, env, encoding: "utf8" })
     .replace(/\x1b\[[0-9;:]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
-  assert.match(bar, /chat 10\/35%/, `expected "chat 10/35%" in the bar: ${JSON.stringify(bar)}`);
+  // one reading out of 100: context 10% against the 35% hand-off line = 29
+  assert.match(bar, /chat 29%/, `expected "chat 29%" in the bar: ${JSON.stringify(bar)}`);
   assert.doesNotMatch(bar, /\bctx\b/, "the old jargon label must be gone");
 });
 

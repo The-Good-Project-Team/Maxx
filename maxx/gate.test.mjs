@@ -221,24 +221,25 @@ test("gate: a chat past its share of the week is ordered to hand off, locally", 
   const srv = await directiveServer([]);
   try {
     const home = makeHome();
-    chatStanding(home, "s-fat", { ctxPct: 40, ctxLine: 35, sharePct: 9, shareLine: 3 });
+    chatStanding(home, "s-fat", { pct: 100, ctxPct: 40, ctxLine: 35, sharePct: 9, shareLine: 3 });
     const out = await hook(home, srv.url, { tool: "Edit", session: "s-fat" });
     assert.ok(out, "nothing delivered — the chat is past both lines and nobody said so");
     const j = JSON.parse(out);
     const ctx = j.hookSpecificOutput.additionalContext;
     assert.match(ctx, /\.fenix\/handoff\.md/);
-    assert.match(ctx, /9% of the week/, "say how far past, in the bar's own words");
+    assert.match(ctx, /chat at 100% of its line/, "say how far along, in the bar's own words");
+    assert.match(ctx, /spent 9% of the week/, "and which line it is");
     assert.equal(j.hookSpecificOutput.permissionDecision, undefined, "advice, never a denial");
     // said once: the next tool call in the same session stays silent
     assert.equal(await hook(home, srv.url, { tool: "Edit", session: "s-fat" }), "", "nagged on the next call");
   } finally { srv.close(); }
 });
 
-test("gate: a chat under both lines hears nothing", async () => {
+test("gate: a chat under 89 hears nothing", async () => {
   const srv = await directiveServer([]);
   try {
     const home = makeHome();
-    chatStanding(home, "s-lean", { ctxPct: 20, ctxLine: 35, sharePct: 1, shareLine: 3 });
+    chatStanding(home, "s-lean", { pct: 88, ctxPct: 20, ctxLine: 35, sharePct: 1, shareLine: 3 });
     assert.equal(await hook(home, srv.url, { tool: "Edit", session: "s-lean" }), "");
   } finally { srv.close(); }
 });
@@ -248,9 +249,9 @@ test("gate: the handoff order carries even with the gate switched off", async ()
   try {
     const home = makeHome();
     writeFileSync(path.join(home, ".maxx", "gate.json"), JSON.stringify({ enabled: false }));
-    chatStanding(home, "s-off", { ctxPct: 10, ctxLine: 35, sharePct: 4, shareLine: 3 });
+    chatStanding(home, "s-off", { pct: 100, ctxPct: 10, ctxLine: 35, sharePct: 4, shareLine: 3 });
     const out = await hook(home, srv.url, { tool: "Edit", session: "s-off" });
     assert.ok(out, "gate OFF swallowed the handoff — OFF means never deny, not never advise");
-    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /4% of the week, past its 3% share/);
+    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /spent 4% of the week against a 3% share/);
   } finally { srv.close(); }
 });
