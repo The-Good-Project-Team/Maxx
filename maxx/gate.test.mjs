@@ -1,7 +1,7 @@
-// The directive channel has to reach the sessions that actually run away — and those are
-// rarely the ones spawning agents. A builder grinding a single file past the context wall
-// calls Edit and Bash all day and never touches a gated tool, so delivery cannot be tied to
-// the gated path alone. These cover that: ungated tools carry the advisory, cheaply.
+// The budget gate: it denies expensive tool calls on ANTHROPIC's numbers, never on ours.
+// maxx counts, Anthropic limits — a counter that invents its own wall is a limit nobody
+// agreed to, and these tests pin that rule.
+//
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -15,22 +15,6 @@ import path from "node:path";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GATE = path.join(HERE, "gate.mjs");
 
-// A stand-in tally that hands out one clear directive and counts who asked.
-function directiveServer(directives) {
-  const hits = [];
-  const srv = createServer((req, res) => {
-    hits.push(req.url);
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ directives }));
-  });
-  return new Promise((resolve) => {
-    srv.listen(0, "127.0.0.1", () => resolve({
-      url: `http://127.0.0.1:${srv.address().port}`,
-      hits,
-      close: () => srv.close(),
-    }));
-  });
-}
 
 function makeHome() {
   const home = mkdtempSync(path.join(tmpdir(), "maxx-gate-"));
@@ -53,59 +37,8 @@ async function hook(home, url, { tool, session }) {
   return (await child).stdout.trim();
 }
 
-test("gate: a clear directive reaches a session whose only tool is an ungated one", async () => {
-  const srv = await directiveServer([{ action: "clear", note: "ctx 613k" }]);
-  try {
-    const out = await hook(makeHome(), srv.url, { tool: "Edit", session: "s-grinder" });
-    assert.ok(out, "ungated tool delivered nothing — the directive never reaches this session");
-    const j = JSON.parse(out);
-    assert.equal(j.hookSpecificOutput.hookEventName, "PreToolUse");
-    assert.match(j.hookSpecificOutput.additionalContext, /\/clear this session/);
-    assert.match(j.hookSpecificOutput.additionalContext, /ctx 613k/, "the note must survive");
-    assert.equal(j.hookSpecificOutput.permissionDecision, undefined, "an ungated tool must never be denied");
-  } finally { srv.close(); }
-});
-
-test("gate: an ungated tool polls at most once a minute per session", async () => {
-  const srv = await directiveServer([]);
-  try {
-    const home = makeHome();
-    for (let i = 0; i < 3; i++) await hook(home, srv.url, { tool: "Edit", session: "s-chatty" });
-    assert.equal(srv.hits.length, 1, `polled ${srv.hits.length}× — a per-tool-call fetch is too hot`);
-    // a DIFFERENT session must not be silenced by its neighbour's poll
-    await hook(home, srv.url, { tool: "Edit", session: "s-other" });
-    assert.equal(srv.hits.length, 2, "one session's poll suppressed another's");
-  } finally { srv.close(); }
-});
 
 // The whole point of rise: /clear is a keystroke no hook can send, so an unattended session
-// past the wall must be handed a sequence it can run itself — handoff first, then relaunch.
-test("gate: a past-the-wall directive orders handoff-then-stop, not a note for the user", async () => {
-  const srv = await directiveServer([{ action: "clear", rise: true, note: "ctx 613k is past the 250k wall" }]);
-  try {
-    const out = await hook(makeHome(), srv.url, { tool: "Edit", session: "s-past-wall" });
-    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
-    assert.doesNotMatch(ctx, /--rise/, "the rise chain was removed — it never reached a second generation");
-    assert.match(ctx, /\.fenix\/handoff\.md/, "the model must write the handoff — fenix's fallback is a raw transcript tail");
-    assert.ok(ctx.indexOf(".fenix/handoff.md") < ctx.indexOf("END YOUR TURN"), "write the handoff BEFORE ending the turn, or the thread is lost");
-    assert.doesNotMatch(ctx, /tell the user to \/clear/, "nobody is there to tell");
-    assert.match(ctx, /ctx 613k is past the 250k wall/, "keep the reason");
-    // the rise starts a successor, it does not kill this session — carrying on after it means
-    // the fat context keeps billing AND two sessions run at once
-    assert.match(ctx, /END YOUR TURN/, "without this the risen pair both keep burning");
-    assert.match(ctx, /END YOUR TURN/, "past the wall the session must STOP — every further turn re-bills the fat context");
-  } finally { srv.close(); }
-});
-
-test("gate: a clear WITHOUT rise stays advisory — no handoff for a merely pricey session", async () => {
-  const srv = await directiveServer([{ action: "clear", note: "cost per turn is climbing" }]);
-  try {
-    const out = await hook(makeHome(), srv.url, { tool: "Edit", session: "s-climbing" });
-    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
-    assert.doesNotMatch(ctx, /handoff\.md/, "a session that is merely getting pricey should not be told to hand off");
-    assert.match(ctx, /tell the user to \/clear/);
-  } finally { srv.close(); }
-});
 
 // Fail-closed is the point of a budget gate, but the denial is the only thing the customer
 // sees during an outage. If it does not name a way out it reads as "maxx broke my agents".
@@ -118,12 +51,6 @@ test("gate: an unreachable tally denies with a message the customer can act on",
   assert.match(reason, /gate\.mjs/, "name the command, not just the flag");
 });
 
-test("gate: no directive pending → ungated tool stays silent", async () => {
-  const srv = await directiveServer([]);
-  try {
-    assert.equal(await hook(makeHome(), srv.url, { tool: "Edit", session: "s-quiet" }), "");
-  } finally { srv.close(); }
-});
 
 
 // ---------------------------------------------------------------------------
@@ -138,7 +65,7 @@ test("gate: no directive pending → ungated tool stays silent", async () => {
 function budgetServer(budget) {
   const srv = createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(req.url.includes("/budget") ? budget : { directives: [] }));
+    res.end(JSON.stringify(budget));
   });
   return new Promise((resolve) => {
     srv.listen(0, "127.0.0.1", () => resolve({
@@ -208,50 +135,3 @@ test("gate: with no live Anthropic reading, nothing may wall the account", async
   } finally { srv.close(); }
 });
 
-// The local handoff: no orchestrator needed. The statusline writes each chat's standing
-// (context vs its line, spend vs one session's share of the week) into status.json; a chat
-// past either line gets the same handoff-then-stop order the rise directive carries — once,
-// not on every tool call, and never as a denial.
-function chatStanding(home, sid, chat) {
-  writeFileSync(path.join(home, ".maxx", "status.json"),
-    JSON.stringify({ ts: Date.now(), chats: { [sid]: { ts: Date.now(), ...chat } } }));
-}
-
-test("gate: a chat past its share of the week is ordered to hand off, locally", async () => {
-  const srv = await directiveServer([]);
-  try {
-    const home = makeHome();
-    chatStanding(home, "s-fat", { pct: 100, ctxPct: 40, ctxLine: 35, sharePct: 9, shareLine: 3 });
-    const out = await hook(home, srv.url, { tool: "Edit", session: "s-fat" });
-    assert.ok(out, "nothing delivered — the chat is past both lines and nobody said so");
-    const j = JSON.parse(out);
-    const ctx = j.hookSpecificOutput.additionalContext;
-    assert.match(ctx, /\.fenix\/handoff\.md/);
-    assert.match(ctx, /chat at 100% of its line/, "say how far along, in the bar's own words");
-    assert.match(ctx, /spent 9% of the week since its last compact/, "and which line it is");
-    assert.equal(j.hookSpecificOutput.permissionDecision, undefined, "advice, never a denial");
-    // said once: the next tool call in the same session stays silent
-    assert.equal(await hook(home, srv.url, { tool: "Edit", session: "s-fat" }), "", "nagged on the next call");
-  } finally { srv.close(); }
-});
-
-test("gate: a chat under 89 hears nothing", async () => {
-  const srv = await directiveServer([]);
-  try {
-    const home = makeHome();
-    chatStanding(home, "s-lean", { pct: 88, ctxPct: 20, ctxLine: 35, sharePct: 1, shareLine: 3 });
-    assert.equal(await hook(home, srv.url, { tool: "Edit", session: "s-lean" }), "");
-  } finally { srv.close(); }
-});
-
-test("gate: the handoff order carries even with the gate switched off", async () => {
-  const srv = await directiveServer([]);
-  try {
-    const home = makeHome();
-    writeFileSync(path.join(home, ".maxx", "gate.json"), JSON.stringify({ enabled: false }));
-    chatStanding(home, "s-off", { pct: 100, ctxPct: 10, ctxLine: 35, sharePct: 4, shareLine: 3 });
-    const out = await hook(home, srv.url, { tool: "Edit", session: "s-off" });
-    assert.ok(out, "gate OFF swallowed the handoff — OFF means never deny, not never advise");
-    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /spent 4% of the week since its last compact, against a 3% share/);
-  } finally { srv.close(); }
-});

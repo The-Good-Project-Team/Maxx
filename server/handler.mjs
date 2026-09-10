@@ -19,7 +19,7 @@
  * The Netlify function and a local node http server are both thin wrappers.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { applyEnvelope, computeBudget, transitionEvents, addDirective, pendingDirectives, logOp, autoAdvise, anchorAgeSec, ANCHOR_TRUST_SEC, MAX_FEED_EVENTS, MAX_PUBLIC_FEED_EVENTS } from "./tally.mjs";
+import { applyEnvelope, computeBudget, transitionEvents, logOp, anchorAgeSec, ANCHOR_TRUST_SEC, MAX_FEED_EVENTS, MAX_PUBLIC_FEED_EVENTS } from "./tally.mjs";
 import { resolveSettings, DEFAULTS } from "./settings.mjs";
 import { ACCOUNTS_KEY, accountId, accountOf, handlesFor, linkHandle, pick } from "./account.mjs";
 import { probeAnchor } from "./probe.mjs";
@@ -87,26 +87,6 @@ const TOOLS = [
         lease_id: { type: "string", description: "The lease_id maxx_reserve returned" },
       },
       required: ["lease_id"],
-    },
-  },
-  {
-    name: "maxx_directive",
-    description:
-      "Send a command to a specific live session (or '*' broadcast) through the fleet command plane. " +
-      "Actions: pause (deny that session's expensive tool calls until ttl or resume — use to throttle a runaway or protect budget), " +
-      "resume (lift pauses), clear (advise the session to /clear — injected as context when its context is bloated). " +
-      "Target sessions come from maxx_budget top_burners or the feed. Delivery + consumption are audited in the feed.",
-    inputSchema: {
-      type: "object", additionalProperties: false,
-      properties: {
-        handle: { type: "string" },
-        session: { type: "string", description: "Target session id, or '*' for all" },
-        action: { type: "string", enum: ["clear", "pause", "resume"] },
-        note: { type: "string", description: "Why — shown to the target session" },
-        ttl_sec: { type: "integer", description: "Directive lifetime (default 3600, max 86400)" },
-        surface: { type: "string", description: "Optional surface filter, e.g. laptop:abc123" },
-      },
-      required: ["session", "action"],
     },
   },
 ];
@@ -606,11 +586,6 @@ function renderSettings(h, s, b) {
    <div class="pdcell${pd.over ? " over" : ""}"><span class="pdk">usable</span><span class="pdv">${num(pd.per_diem_usable_pct)}<span class="pdu">/day</span></span></div>
    ${set.per_diem_granularity === "hour" ? `<div class="pdcell${pd.over ? " over" : ""}"><span class="pdk">hourly</span><span class="pdv">${num(pd.per_diem_hourly_pct)}<span class="pdu">/hr</span></span></div>` : ""}
    ${pd.over ? '<div class="pdflag">over per-diem — advice only, no call is blocked</div>' : ""}`;
-  const burners = (b.top_burners || []).filter((a) => a.tokens_1h > 0);
-  const fleetRows = burners.map((a) => `
-   <tr><td><b>${esc(a.name || a.project || (a.session || "").slice(0, 8))}</b> <span class="mono">${esc((a.session || "").slice(0, 8))}</span></td>
-   <td class="mono">${esc(a.surface)}</td><td class="num">${a.rate_5m > 0 ? Math.round(a.rate_5m / 1000) + "k/5m" : "idle"}</td>
-   <td class="act"><button data-s="${esc(a.session)}" data-a="pause">pause</button><button data-s="${esc(a.session)}" data-a="resume">resume</button><button data-s="${esc(a.session)}" data-a="clear">clear</button></td></tr>`).join("");
   const hookRows = (s.webhooks || []).map((w) => `
    <tr><td class="mono">${esc(w.url)}</td><td>${esc(w.format || "json")}</td>
    <td class="act"><button data-del="${esc(w.url)}">remove</button></td></tr>`).join("");
@@ -693,13 +668,6 @@ td{border-bottom-color:#222b40}
  </div>
  ${tabsHtml(h, "settings", true)}
 
- <h2>Fleet control <span class="sub">— live sessions (last hour); directives deliver on the session's next gate poll</span></h2>
- <table><thead><tr><th>Session</th><th>Surface</th><th style="text-align:right">Rate</th><th></th></tr></thead>
- <tbody id="fleet">${fleetRows || '<tr><td colspan="4" class="empty">nothing burning in the last hour</td></tr>'}</tbody>
- <tbody><tr><td><b>ALL SESSIONS</b> <span class="mono">broadcast</span></td><td></td><td></td>
-  <td class="act"><button data-s="*" data-a="pause">pause all</button><button data-s="*" data-a="resume">resume all</button></td></tr></tbody></table>
- <span class="flash" id="fleetFlash"></span>
-
  <h2>Budget <span class="sub">— what is left of the week, divided by the days left. Advice, never a gate: nothing here can stop a call, only Anthropic can</span></h2>
  <div class="perdiem" id="perdiem">${perDiemStrip}</div>
  <div class="row br"><label>Weekly max <span class="hint2">ceiling on Anthropic's real weekly window, all accounts</span></label><input id="wmax" value="${esc(pd.weekly_max_pct)}" size="6"> <span class="unit">% of week</span></div>
@@ -734,7 +702,7 @@ td{border-bottom-color:#222b40}
  <table><thead><tr><th>URL</th><th>Format</th><th></th></tr></thead>
  <tbody id="hooks">${hookRows || '<tr><td colspan="3" class="empty">none registered</td></tr>'}</tbody></table>
  <div class="row"><input id="hookUrl" placeholder="https://…" size="46"><input id="hookFmt" placeholder="json | dash" size="10"><button class="primary" id="hookAdd">Add</button><span class="flash" id="hookFlash"></span></div>
- <div class="note">Directives, thresholds and webhooks act account-wide for @${h}. Session/project names on this page never appear publicly.</div>
+ <div class="note">Thresholds and webhooks act account-wide for @${h}. Session/project names on this page never appear publicly.</div>
 </div>
 <script>
 if(location.search)history.replaceState(null,'',location.pathname);
@@ -743,10 +711,6 @@ if(location.search)history.replaceState(null,'',location.pathname);
   var post=function(path,body){return fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})})};
   document.addEventListener('click',function(ev){
     var b=ev.target;
-    if(b.dataset&&b.dataset.s&&b.dataset.a){
-      post('/api/u/${h}/directive',{session:b.dataset.s,action:b.dataset.a,note:'from settings'}).then(function(r){
-        flash('fleetFlash',r.ok,r.ok?b.dataset.a+' sent':'failed: '+(r.j.error||''));});
-    }
     if(b.dataset&&b.dataset.del){
       fetch('/api/u/${h}/webhooks',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({url:b.dataset.del})})
         .then(function(r){if(r.ok)location.reload();else flash('hookFlash',false,'failed');});
@@ -2074,21 +2038,8 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
     const s = await store.load(handle);
     const res = applyEnvelope(s, env || {}, now());
     settle(handle, s);
-    // Watchdog runs on the ingest path because that is the one thing guaranteed to
-    // fire while a session is burning: every interactive turn ships an emit.
-    const advised = autoAdvise(s, now());
-    for (const a of advised)
-      // Only print a figure we actually have. The old line read a.ctx and a.rate, neither of
-      // which autoAdvise ever returned, so 36 of 92 ops in the ring said "ctx NaNk · NaNk/min":
-      // an advisory to /clear justified by a number that does not exist reads as a broken meter,
-      // and a broken meter is ignored — which defeats the watchdog entirely.
-      logOp(s, "watchdog", `advised /clear → ${(a.name || a.session).slice(0, 32)}` +
-        (a.ctx ? ` · ctx ${Math.round(a.ctx / 1e3)}k` : "") +
-        (a.past_wall ? " · past wall" : "") +
-        (a.climb_x ? ` · ${a.climb_x}×/turn` : "") +
-        (a.week_pct != null ? ` · ${a.week_pct}% of week` : ""), now());
     await store.save(handle, s);
-    return advised.length ? { ...res, advised: advised.length } : res;
+    return res;
   }
   // Pull-on-miss: the anchor is a cache of Anthropic's limit state that the laptop
   // normally PUSHES. When the push is missing (asleep, off, account switched) the
@@ -2933,35 +2884,8 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       await store.save(h, s);
       return json(200, { ok: true, config: s.config, probe: !!s.probe });
     }
-    // ---- directive channel: queue a command / agent-side consume ----
-    m = p.match(/^\/api\/u\/([^/]+)\/directive$/);
-    if (m && method === "POST") {
-      const h = decodeURIComponent(m[1]);
-      if (!(await mutAuthed(h, headers, url))) return json(401, { error: "unauthorized" });
-      let b; try { b = JSON.parse(body || "{}"); } catch { return json(400, { error: "bad json" }); }
-      const s = await store.load(h);
-      const res = addDirective(s, b, now());
-      if (res.ok) { logOp(s, "directive", `${b.action} → ${b.session}${b.note ? ` · ${b.note}` : ""}`, now()); await store.save(h, s); }
-      return json(res.ok ? 200 : 400, res);
-    }
-    m = p.match(/^\/api\/u\/([^/]+)\/directives$/);
-    if (m && method === "GET") {
-      const h = decodeURIComponent(m[1]);
-      if (!(await authed(h, tokenOf(headers, url)))) return json(401, { error: "unauthorized" });
-      const session = url.searchParams.get("session") || "";
-      if (!session) return json(400, { error: "session query param required" });
-      const peek = url.searchParams.get("peek") === "1";
-      const s = await store.load(h);
-      const directives = pendingDirectives(s, { session, surface: url.searchParams.get("surface"), peek }, now());
-      if (!peek) {
-        // delivery is the intervention moment — log it so the cockpit can show it
-        if (directives.length) logOp(s, "directive:delivered", `${directives.map((d) => d.action).join(",")} → ${session.slice(0, 8)}`, now());
-        await store.save(h, s);
-      }
-      return json(200, { directives });
-    }
     // Ops ring (newest first) — everything on the tally besides emits: MCP gate
-    // checks, reserves, directives, auth events. Owner read (cookie ok).
+    // checks, reserves, auth events. Owner read (cookie ok).
     m = p.match(/^\/api\/u\/([^/]+)\/ops$/);
     if (m && method === "GET") {
       const h = decodeURIComponent(m[1]);
@@ -3123,12 +3047,6 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
           }
           if (name === "maxx_release") {
             return rpcOk(id, { content: [{ type: "text", text: JSON.stringify(await release(h, args)) }] });
-          }
-          if (name === "maxx_directive") {
-            const s = await store.load(h);
-            const res = addDirective(s, args, now());
-            if (res.ok) { logOp(s, "directive", `${args.action} → ${args.session}`, now()); await store.save(h, s); }
-            return rpcOk(id, { content: [{ type: "text", text: JSON.stringify(res) }] });
           }
           return rpcOk(id, { isError: true, content: [{ type: "text", text: `unknown tool ${name}` }] });
         } catch (e) {
