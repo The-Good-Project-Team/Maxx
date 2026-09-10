@@ -67,6 +67,15 @@ test("plausibleReset boundary: ≤8d passes, >8d is a sentinel", () => {
 // ── window start anchoring ────────────────────────────────────────────────────
 // Regression: an account created 2026-09-10T10:23Z showed "week 2/65%" because the week
 // start was computed as resets_at−7d = Sep 6 — four days before the account existed.
+//
+// Why a FIRST window can be shorter than 7d (this looked wrong and isn't): rl-history shows
+// a mature account rolling over at exactly 7.000d intervals, always on the same hour boundary
+// (reiftauati@gmail.com: 13:00:00Z every Tue, Jul 28 → Sep 15, unbroken). A newly created
+// account does NOT get a full week first — its opening window is a PARTIAL one that ends at
+// the next schedule boundary (here Sun 07:00:00Z, 2.86d after a Thu 10:23Z creation). So
+// `resets_at − 7d` is doubly wrong for a young account: it predates the account AND assumes
+// a full-length window the account never had. Creation is the true start; the short span is
+// real, and dividing by it is what makes 2%-used read as 15% elapsed instead of 65%.
 const WK = 7 * 24 * 3600;
 const BORN = Date.parse("2026-09-10T10:23:18Z") / 1000;   // Anthropic accountCreatedAt
 const RESET = 1789282800;                                  // observed seven_day.resets_at
