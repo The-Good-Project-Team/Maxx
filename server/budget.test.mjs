@@ -85,6 +85,27 @@ test("week_elapsed_pct is floored at account creation for a young account", () =
   assert.ok(b.week_elapsed_pct < 20, "a 10h-old account cannot be most of the way through its week");
 });
 
+// The gap that shipped: computeBudget read anchor.account_created, but applyEnvelope built the
+// stored anchor field-by-field and never copied it — so the floor was dead in production while
+// every unit test (which handed computeBudget an anchor directly) passed. Test the REAL path.
+test("applyEnvelope carries account_created from the emitted anchor into the store", () => {
+  const s = emptyStore();
+  const born = new Date((T - 10 * H) * 1000).toISOString();
+  applyEnvelope(s, {
+    v: 1, surface: "laptop:a", handle: "h", emitted_at: new Date(T * 1000).toISOString(),
+    cursor: "1", sessions: [{ surface: "laptop:a", root: "r1", ts: T - 600, billed: 1e6 }],
+    anchor: {
+      five_pct: 0.05, week_pct: 0.02,
+      five_reset: T + 4 * H, week_reset: T + 58 * H,
+      account_created: born, observed_at: new Date(T * 1000).toISOString(),
+    },
+  }, T);
+  const a = s.anchors[s.anchors.length - 1];
+  assert.equal(a.account_created, born, "ingest must persist it or the floor is dead");
+  // and it must actually reach the reading
+  assert.equal(computeBudget(s, T).week_elapsed_pct, 14.7);
+});
+
 // The floor must not touch a mature account: its window really did open 7 days before reset.
 test("an account older than the window keeps the plain 7d span", () => {
   const s = emptyStore();

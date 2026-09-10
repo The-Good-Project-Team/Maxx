@@ -171,6 +171,10 @@ export function applyEnvelope(store, env, now = Math.floor(Date.now() / 1000)) {
       week_pct: env.anchor.week_pct,
       five_reset: env.anchor.five_reset,
       week_reset: env.anchor.week_reset,
+      // Anthropic's accountCreatedAt, when the emitter knows it. computeBudget floors the
+      // week's start here: a window cannot have opened before the account did, and
+      // `week_reset − 7d` invents a start that predates a young account.
+      account_created: env.anchor.account_created || null,
       // statusline passthrough (its units) — number-sanitized, everything optional
       sl: env.anchor.sl && Number(env.anchor.sl.week_cap) > 0 ? {
         five_used: Number(env.anchor.sl.five_used) || 0,
