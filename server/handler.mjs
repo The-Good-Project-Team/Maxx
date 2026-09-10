@@ -561,9 +561,9 @@ document.getElementById('cmd').addEventListener('click',function(){
 </body></html>`;
 }
 
-// Owner settings — the control surface: fleet directives (pause/resume/clear per live
-// session), runaway thresholds, webhooks. Mutations ride the auth cookie + same-origin
-// Origin header (see mutAuthed); nothing here is reachable without the owner secret.
+// Owner settings — the control surface: runaway thresholds, webhooks. Mutations ride
+// the auth cookie + same-origin Origin header (see mutAuthed); nothing here is
+// reachable without the owner secret.
 function renderSettings(h, s, b) {
   const esc = (x) => String(x == null ? "" : x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const cfg = s.config || {};
@@ -1070,13 +1070,13 @@ ${TABS_CSS}
 .bar.hot .track{border-right:5px solid #d23b3b}
 .bar.hot .fill{background:linear-gradient(90deg,#f2b8b5,#d23b3b)}
 .bar .fill{position:absolute;top:0;bottom:0;left:0;background:linear-gradient(90deg,#9be3b0,#4fbe7e 55%,#159a52);border-radius:5px}
-.bar .num{color:var(--ink-2);white-space:nowrap}
+.bar .num{color:var(--ink-2);white-space:normal;overflow-wrap:anywhere}
 .bar .num b{color:var(--ink);font-weight:700}
 .bar .num .good{color:var(--green);font-weight:700}
 .bar .num .bad{color:var(--red);font-weight:700}
 .klabel{font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--ink-3);font-family:var(--mono)}
 .warns{margin-top:12px;display:flex;flex-direction:column;gap:7px;font-family:var(--mono);font-size:12.5px}
-.walert{padding:8px 13px;border-radius:9px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.walert{padding:8px 13px;border-radius:9px;line-height:1.5;overflow-wrap:anywhere}
 .walert b{font-weight:700}
 .walert.red{background:#fdeeee;color:#b02f2f}
 .walert.amber{background:#fdf6e7;color:#8f660e}
@@ -1089,6 +1089,14 @@ ${TABS_CSS}
    a viewport media query never fires and three 42px numerals got cropped by the overflow
    clip below. auto-fit drops it to 2-up, then 1-up, wherever it is. The 1px gap over a
    --line background draws the dividers, so they stay right however the tiles wrap. */
+.verdictline{margin-top:22px;padding:20px 22px;border:1px solid var(--line);border-radius:16px;background:var(--card)}
+.verdictline.ok{border-color:rgba(45,160,90,.45);background:linear-gradient(180deg,rgba(45,160,90,.10),transparent)}
+.verdictline.over{border-color:rgba(210,59,59,.5);background:linear-gradient(180deg,rgba(210,59,59,.12),transparent)}
+.verdictline .vhead{font-size:26px;font-weight:650;letter-spacing:-.02em;line-height:1.15}
+.verdictline.ok .vhead{color:var(--green)}
+.verdictline.over .vhead{color:var(--red)}
+.verdictline .vsub{margin-top:7px;font-size:14px;color:var(--ink-25);line-height:1.5;max-width:70ch}
+@media(max-width:560px){.verdictline .vhead{font-size:21px}}
 .trio{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;margin-top:20px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
 .trio>div{padding:18px 22px;background:var(--card);min-width:0}
 .trio .big{display:flex;align-items:baseline;gap:7px;margin-top:9px;font-family:var(--mono)}
@@ -1132,8 +1140,6 @@ td.mono{font-family:var(--mono);font-size:12.5px;color:var(--ink-25)}
 td.num,th.num{text-align:right}
 td b{font-weight:700}
 .cmeta{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:3px;letter-spacing:0}
-/* a directive hangs under the channel it is waiting on, indented and quieter than the row above */
-tr.dirrow td{background:#faf8f2;border-bottom:1px solid #f0f1f6;padding-left:22px;font-size:12px;line-height:1.5}
 .empty{color:var(--ink-3);padding:10px;font-size:13.5px}
 .foot{margin-top:22px;border-top:1px solid #e7e9f0;padding-top:14px;color:var(--ink-3);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .foot .lt{font-family:var(--mono)}
@@ -1201,15 +1207,28 @@ td{border-bottom-color:#222b40}
  </div>
  ${tabsHtml(h, "overview", owner)}
 
+ <!-- THE VERDICT. maxx answers one question — can I keep spending at this rate and still
+      make the week — so that answer is the biggest thing on the page, in plain words, before
+      any bar or chart. Everything below it is the evidence for it. -->
+ <div class="verdictline" id="verdictline">
+  <div class="vhead" id="vhead">—</div>
+  <div class="vsub" id="vsub">waiting for a reading…</div>
+ </div>
+
  <div class="bars" id="bars"></div>
 
  <div class="warns" id="warns"></div>
 
  <div class="trio">
   <div>
-   <div class="klabel">NET / MIN</div>
+   <div class="klabel">BURN / HR</div>
    <div class="big"><span class="v" id="netV">—</span><span class="u" id="netU"></span></div>
    <div class="sub" id="netSub"></div>
+  </div>
+  <div>
+   <div class="klabel">SUSTAINABLE / HR</div>
+   <div class="big"><span class="v" id="susV" style="font-size:38px">—</span></div>
+   <div class="sub" id="susSub"></div>
   </div>
   <div>
    <div class="klabel">WEEK LEFT</div>
@@ -1220,11 +1239,6 @@ td{border-bottom-color:#222b40}
    <div class="klabel">THIS SESSION</div>
    <div class="big"><span class="v" id="runV" style="font-size:38px">—</span></div>
    <div class="sub" id="runSub"></div>
-  </div>
-  <div>
-   <div class="klabel">SURFACES</div>
-   <div class="big"><span class="v" id="surfV" style="font-size:38px">—</span></div>
-   <div class="sub" id="surfSub"></div>
   </div>
  </div>
 
@@ -1259,7 +1273,7 @@ td{border-bottom-color:#222b40}
  </div>
 </div>
 <div class="term">
- <div class="thead"><span class="dot"></span> activity — live <span style="text-transform:none;letter-spacing:0;font-weight:400">· emits + mcp + directives + auth</span></div>
+ <div class="thead"><span class="dot"></span> activity — live <span style="text-transform:none;letter-spacing:0;font-weight:400">· emits + mcp + auth</span></div>
  <div class="insight" id="insight"></div>
  <div class="lines" id="term"><div class="ln d">listening…</div></div>
 </div>
@@ -1398,14 +1412,48 @@ if(location.search)history.replaceState(null,'',location.pathname);
       runSub.textContent=(leftInBlock>=0?'left in this block\\'s share':'past this block\\'s share')+
         (b.session_used_pct!=null?' · 5h window at '+b.session_used_pct+'%':'');
     }else{runV.textContent='—';runV.style.color='var(--ink)';runSub.textContent='no reading yet';}
-    // SURFACES: how many machines and cloud agents are pouring into this one tally — the
-    // count IS the product claim, and it is the one number no per-machine /usage can show.
-    var surfV=document.getElementById('surfV'),surfSub=document.getElementById('surfSub');
-    // "directive" is the bookkeeping channel the orchestrator writes through, not a machine
-    var sf=(b.surfaces||[]).filter(function(s){return (s.surface||'')!=='directive'});
-    var nCloud=sf.filter(function(s){return /^cloud/.test(s.surface||'')}).length;
-    surfV.textContent=sf.length;surfV.style.color='var(--ink)';
-    surfSub.textContent=sf.length?(sf.length-nCloud)+' machine'+(sf.length-nCloud===1?'':'s')+' · '+nCloud+' cloud':'none reporting';
+    // SUSTAINABLE: the rate that exactly spends the week by its reset. The pair (burn,
+    // sustainable) is the whole product — everything else on this page is evidence for it.
+    var susV=document.getElementById('susV'),susSub=document.getElementById('susSub');
+    if(sus==null){susV.textContent='—';susV.style.color='var(--ink)';susSub.textContent='no reading yet';}
+    else{
+      susV.textContent=sus.toFixed(2)+'%';susV.style.color='var(--ink)';
+      susSub.textContent=burn!=null
+        ?(burn<=sus?'you have '+(sus-burn).toFixed(2)+'%/hr of headroom':'you are '+(burn-sus).toFixed(2)+'%/hr over')
+        :'spend at most this to make the week';
+    }
+
+    // THE VERDICT, in words. A rate pair is only actionable once it says what happens if
+    // nothing changes, so this converts (burn, sustainable, week-left) into one sentence and
+    // one hour count: keep this up and the week ends at X.
+    var vhead=document.getElementById('vhead'),vsub=document.getElementById('vsub');
+    var vl=document.getElementById('verdictline');
+    var weekLeftPct=weekUsedPct!=null?100-weekUsedPct:null;
+    vl.className='verdictline';
+    if(burn==null||sus==null||weekLeftPct==null){
+      vhead.textContent='No reading yet';
+      vsub.textContent='Open an interactive Claude Code session on a linked machine to anchor the week.';
+    }else if(burn<=0.001){
+      vl.className='verdictline ok';
+      vhead.textContent='Idle — nothing burning';
+      vsub.textContent=weekLeftPct.toFixed(1)+'% of the week left'+(b.week_reset_in_sec!=null?', resets '+ago(b.week_reset_in_sec):'')+'.';
+    }else if(burn<=sus){
+      vl.className='verdictline ok';
+      vhead.textContent='On pace — the week holds';
+      vsub.textContent='Burning '+burn.toFixed(2)+'%/hr against '+sus.toFixed(2)+'%/hr sustainable. '+
+        'You could spend '+(sus-burn).toFixed(2)+'%/hr more and still make it.';
+    }else{
+      // hours until the remaining week is gone at the CURRENT rate — the actionable number
+      var hrs=burn>0?weekLeftPct/burn:null;
+      var when=hrs!=null?new Date(Date.now()+hrs*3600*1000):null;
+      vl.className='verdictline over';
+      vhead.textContent='Over pace — the week ends early';
+      vsub.textContent='Burning '+burn.toFixed(2)+'%/hr against '+sus.toFixed(2)+'%/hr sustainable. '+
+        (hrs!=null?'At this rate you are out in '+(hrs<48?hrs.toFixed(1)+'h':(hrs/24).toFixed(1)+'d')+
+          ' ('+when.toLocaleString(undefined,{weekday:'short',hour:'numeric'})+')'+
+          (b.week_reset_in_sec!=null?', '+ago(b.week_reset_in_sec)+' before the reset.':'.')
+        :'')+' Cut to '+sus.toFixed(2)+'%/hr to make it.';
+    }
   }
 
   function renderAll(){
@@ -1617,30 +1665,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
     });
     var rows=Object.keys(by).map(function(k){return by[k]}).sort(function(a,b2){return b2.b5-a.b5});
     var max=Math.max.apply(null,[1].concat(rows.map(function(c){return c.b5})));
-    // orders waiting on each channel, shown WITH the channel — a directive nobody
-    // can see is a directive nobody acts on
-    var dirs=b.pending_directives||[],placed={};
-    var dirRow=function(d){
-      var mark=d.action==='pause'?'⏸':d.action==='clear'?'⌫':'▶';
-      return '<tr class="dirrow"><td colspan="5" class="mono">'+
-        '<span style="color:'+(d.action==='pause'?'var(--red)':'var(--amber, #d08a2a)')+'">'+mark+' '+esc(d.action)+'</span>'+
-        ' <span style="color:var(--ink-3)">→ '+esc(d.session==='*'?'all sessions':d.session.slice(0,8))+
-        (d.auto?' · auto':'')+(d.delivered?' · delivered':' · waiting')+'</span>'+
-        (d.note?'<br><span style="color:var(--ink-3)">'+esc(d.note)+'</span>':'')+'</td></tr>';
-    };
-    // Exactly ONE home per directive. An exact "surface · project" match wins; a bare
-    // surface (what top_burners gives the watchdog) falls to the busiest channel on that
-    // machine — rows are billed-sorted, so find() picks it. Without this a bare surface
-    // matched every project on the box and one order rendered three times.
-    var assign={};
-    dirs.forEach(function(d){
-      if(!d.surface)return;
-      var exact=rows.filter(function(c){return c.surface===d.surface})[0];
-      var pre=exact||rows.filter(function(c){return c.surface.indexOf(d.surface+' · ')===0})[0];
-      if(pre){assign[d.id]=pre.surface;placed[d.id]=1;}
-    });
     var body=rows.map(function(c){
-      var mine=dirs.filter(function(d){return assign[d.id]===c.surface});
       // live-state sub-line: turn · last-turn cost · context, ctx colored as the danger
       // rail (red past the 250k /fenix wall, amber past 120k) — same thresholds the feed uses.
       var meta='';
@@ -1654,14 +1679,9 @@ if(location.search)history.replaceState(null,'',location.pathname);
         '<td>'+(c.last?ago(Math.max(0,t-c.last))+' ago':'—')+'</td>'+
         '<td class="num">'+(c.h1>0?'<b>+'+hum(c.h1)+'</b>':'idle')+'</td>'+
         '<td class="num">'+hum(c.b5)+'</td>'+
-        '<td><div style="height:8px;border-radius:4px;background:#5b52e8;opacity:.65;width:'+Math.max(2,Math.round(c.b5/max*100))+'%"></div></td></tr>'+
-        mine.map(dirRow).join('');
+        '<td><div style="height:8px;border-radius:4px;background:#5b52e8;opacity:.65;width:'+Math.max(2,Math.round(c.b5/max*100))+'%"></div></td></tr>';
     }).join('');
-    // broadcasts and anything we could not pin to a channel still have to be visible
-    var loose=dirs.filter(function(d){return !placed[d.id]});
-    document.getElementById('channels').innerHTML=(body||loose.length)
-      ? body+loose.map(dirRow).join('')
-      : '<tr><td colspan="5" class="empty">no channels yet</td></tr>';
+    document.getElementById('channels').innerHTML=body||'<tr><td colspan="5" class="empty">no channels yet</td></tr>';
   }
 
   // right pane: emits (green) + ops (amber) merged chronologically, viewer-local times
@@ -2815,7 +2835,6 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
           ...b,
           top_burners: (b.top_burners || []).map((t) => ({ ...t, surface: a.surface(t.surface), session: a.root(t.session), project: null, name: null })),
           surfaces: [...merged].map(([surface, billed_5h]) => ({ surface, billed_5h })),
-          pending_directives: [],
           public: true,
         }),
       };

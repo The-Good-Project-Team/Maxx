@@ -332,8 +332,18 @@ export function computeBudget(store, now) {
   // the SPEND is. Positive = ahead of pace. Elapsed needs a LIVE reset — without one, or with
   // a sentinel far-future reset, elapsed collapses toward 0 and the mark lands sign-flipped,
   // so suppress it rather than draw it in the wrong place.
+  // The span is week_reset − 7d for any account older than the window. For a YOUNGER one that
+  // start is fiction: it predates the account. Anthropic opens a new account on a PARTIAL first
+  // window that ends at the next schedule boundary (observed: a 2026-09-10T10:23Z account whose
+  // first reset was 2026-09-13T07:00Z — 2.86d, not 7), so the honest denominator is
+  // now−created over reset−created. Unfloored, that account read 65% elapsed against a true 15%.
+  const bornSec = a && a.account_created ? Date.parse(a.account_created) / 1000 : 0;
+  const elapsedFrom = Number.isFinite(bornSec) && bornSec > 0
+    ? Math.max(wr - WEEK, bornSec)
+    : wr - WEEK;
+  const elapsedSpan = Math.max(1, wr - elapsedFrom);
   const weekElapsed = wr > now && wr - now <= 8 * 24 * 3600
-    ? Math.min(1, Math.max(0, 1 - (wr - now) / WEEK))
+    ? Math.min(1, Math.max(0, (now - elapsedFrom) / elapsedSpan))
     : null;
   const weekElapsedPct = weekElapsed != null ? Math.round(weekElapsed * 1000) / 10 : null;
   const weekBankPct = weekElapsedPct != null && weekPctReal != null

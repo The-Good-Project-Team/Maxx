@@ -65,6 +65,39 @@ test("week_bank_pct is clock-elapsed minus spend-used, + when under pace", () =>
   assert.equal(b.week_bank_pct, 32.9, "42.9% of the clock spent, 10% of the week used ⇒ 32.9 ahead");
 });
 
+// A young account's week did not start 7 days before its reset — it started when the account
+// did. Anthropic opens a new account on a PARTIAL first window ending at the next schedule
+// boundary. Unfloored, `week_reset − 7d` invents a start that predates the account and the
+// bar reads far more of the week elapsed than has actually passed.
+test("week_elapsed_pct is floored at account creation for a young account", () => {
+  const s = emptyStore();
+  const born = T - 10 * H;            // account created 10h ago
+  const reset = T + 58 * H;           // its first reset is 58h out (a 68h partial window)
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 1e6 });
+  s.anchors.push({
+    ts: T - 600, five_pct: 0.05, week_pct: 0.02,
+    five_reset: T + 4 * H, week_reset: reset,
+    account_created: new Date(born * 1000).toISOString(),
+  });
+  const b = computeBudget(s, T);
+  // 10h into a 68h window = 14.7%. Without the floor: (7d − 58h)/7d = 65.5%.
+  assert.equal(b.week_elapsed_pct, 14.7, "elapsed must divide by the window the account actually had");
+  assert.ok(b.week_elapsed_pct < 20, "a 10h-old account cannot be most of the way through its week");
+});
+
+// The floor must not touch a mature account: its window really did open 7 days before reset.
+test("an account older than the window keeps the plain 7d span", () => {
+  const s = emptyStore();
+  s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 100e6 });
+  s.anchors.push({
+    ts: T - 600, five_pct: 0.1, week_pct: 0.1,
+    five_reset: T + 4 * H, week_reset: T + 4 * 86400,
+    account_created: new Date((T - 90 * 86400) * 1000).toISOString(),
+  });
+  const b = computeBudget(s, T);
+  assert.equal(b.week_elapsed_pct, 42.9, "90d-old account: unchanged 3/7 of the week");
+});
+
 test("week_bank_pct goes negative once spend outruns the clock", () => {
   const s = emptyStore();
   s.events.push({ surface: "laptop:a", root: "r1", ts: T - 600, billed: 800e6 });
