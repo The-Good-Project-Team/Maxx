@@ -1303,7 +1303,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
 
   // Context trajectory from the feed — the useful signal in the emitter lane. Each
   // batch carries ctx; grouping by session and sloping the recent tail gives ctx
-  // GROWTH per turn and turns-to-wall (/fenix at the session's own wall). A /clear drops
+  // GROWTH per turn and turns-to-wall (/clear at the session's own wall). A /clear drops
   // ctx → the tail slope resets, so a freshly-cleared session reads as holding, not
   // climbing. Also returns prev-ctx per batch so the tail can annotate growth inline.
   function ctxTrends(){
@@ -1587,8 +1587,8 @@ if(location.search)history.replaceState(null,'',location.pathname);
       var nm=esc((x.name||x.project||'').slice(0,18));
       var climb=x.vel>0?' · +'+hum(x.vel)+'/t':'';
       var ttw=isFinite(x.ttw)?' · →'+Math.round(x.ttw)+'t':'';
-      if(x.ctx>x.wall)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+' · past wall · <b>/fenix</b>'});
-      else if(x.vel>0&&x.ttw<15)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+climb+ttw+' · <b>/fenix</b>'});
+      if(x.ctx>x.wall)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+' · past wall · <b>/clear</b>'});
+      else if(x.vel>0&&x.ttw<15)warns.push({s:'red',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+climb+ttw+' · <b>/clear</b>'});
       else if(x.vel>0&&x.ctx>120e3)warns.push({s:'amber',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+climb+ttw});
       else if(x.ctx>200e3)warns.push({s:'amber',t:'ctx <b>'+hum(x.ctx)+'</b> '+nm+' · holding'});
     });
@@ -1610,7 +1610,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
         cause=' — <b>'+esc(lead.name||lead.project||(lead.session||'').slice(0,8))+'</b> '+hum(lrate)+'/min'+
               (share>=15?' ('+share+'%)':'')+
               (lead.ctx?' at ctx'+hum(lead.ctx):'')+
-              (lead.ctx>ctxWallFor(lead.context_window_size)?' · past wall · <b>/fenix</b> it':'');
+              (lead.ctx>ctxWallFor(lead.context_window_size)?' · past wall · <b>/clear</b> it':'');
         if(hot[1]&&hot[1].rate_5m/5>=wBurn*0.15)
           cause+=', then <b>'+esc(hot[1].name||hot[1].project||'session')+'</b> '+hum(hot[1].rate_5m/5)+'/min'+
                  (hot[1].ctx>ctxWallFor(hot[1].context_window_size)?' (also past wall)':'');
@@ -1624,7 +1624,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
 
     // deterministic advisory: worst live session by ctx, with the numbers that justify
     // the action (every turn re-bills ~ctx) and the action itself, thresholded:
-    // >250k ctx → run /fenix NOW · 120-250k → consider /clear soon
+    // >250k ctx → /clear NOW · 120-250k → consider /clear soon
     var ins=document.getElementById('insight');
     var lines=[];
     // the single most-urgent context session, as a headline over the tail (the
@@ -1634,7 +1634,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
       var sev=urgent.ctx>urgent.wall||(urgent.vel>0&&urgent.ttw<15);
       lines.push((sev?'⚠ ':'· ')+'<b>'+esc((urgent.name||urgent.project||'').slice(0,40))+'</b> ctx '+hum(urgent.ctx)+
         (urgent.vel>0?' · +'+hum(urgent.vel)+'/turn'+(isFinite(urgent.ttw)?' · ~'+Math.round(urgent.ttw)+' turns to wall':''):'')+
-        ' → '+(sev?'<b>/fenix now</b>':'/clear soon'));
+        ' → '+(sev?'<b>/clear now</b>':'/clear soon'));
     }
     var errs=h1.reduce(function(a,e){return a+(e.errors||0)},0);
     if(errs>0)lines.push('⚠ <b>'+errs+' error'+(errs===1?'':'s')+'</b> last hour (rate-limit / API) — the wall is pushing back');
@@ -1667,7 +1667,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
     var max=Math.max.apply(null,[1].concat(rows.map(function(c){return c.b5})));
     var body=rows.map(function(c){
       // live-state sub-line: turn · last-turn cost · context, ctx colored as the danger
-      // rail (red past the 250k /fenix wall, amber past 120k) — same thresholds the feed uses.
+      // rail (red past the 250k hand-off wall, amber past 120k) — same thresholds the feed uses.
       var meta='';
       if(c.turn||c.ctx){
         var cc=c.ctx>250e3?'var(--red, #d23b3b)':c.ctx>120e3?'#d08a2a':'var(--ink-3)';
@@ -1731,7 +1731,7 @@ if(location.search)history.replaceState(null,'',location.pathname);
       if(e.tool_calls)extra.push(e.tool_calls+'tc');
       var cxCls=e.ctx>250e3?'cx hot':e.ctx>120e3?'cx warn':'cx';
       // ctx delta from this session's previous batch — growth per batch, right in
-      // the lane. ▲ grew (amber), ▼ dropped = a /clear or /fenix reset (green).
+      // the lane. ▲ grew (amber), ▼ dropped = a /clear reset (green).
       var pc=(window.__ctxPrev||{})[e.ts+'|'+keyOfEv(e)];
       var dc=pc!=null?e.ctx-pc:0;
       var dStr=Math.abs(dc)>=1000?' <span style="color:'+(dc>0?'#e0a13a':'#4ade80')+'">'+(dc>0?'▲':'▼')+hum(Math.abs(dc))+'</span>':'';
@@ -2916,7 +2916,7 @@ export function createHandler({ store, secretFor = () => null, fallbackSecret = 
       return json(200, { ops: (s.ops || []).slice(-n).reverse() });
     }
 
-    // Client-side maxx events (fenix, skills, local tooling) land in the same ops
+    // Client-side maxx events (skills, local tooling) land in the same ops
     // ring the server-side actions use, so the dash tail shows them. Mutation auth.
     m = p.match(/^\/api\/u\/([^/]+)\/op$/);
     if (m && method === "POST") {
