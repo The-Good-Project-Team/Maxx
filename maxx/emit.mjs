@@ -523,9 +523,16 @@ async function runOnce({ quiet = false } = {}) {
     if (!rl || !rl.ts || (Date.now() - rl.ts) / 1000 >= ANCHOR_MAX_AGE_SEC || (rl.quota == null && rl.week == null)) return null;
     if (rl.account && root.uuid && rl.account !== root.uuid) return null;
     if (!rl.account && !root.isDefault) return null; // unstamped legacy anchor: default root only
+    // account_created is Anthropic's own accountCreatedAt, carried through window.json. The
+    // server needs it to floor week-elapsed: a week window cannot have opened before the
+    // account did, and `week_reset − 7d` invents a start that predates a young account (an
+    // account born 2026-09-10 read "65% elapsed" against a true 15%). Absent → server keeps
+    // the plain 7d span, which is right for any account older than the window.
+    const win = readJSON(path.join(HOME, ".maxx", `window${suf}.json`), null);
     const anchor = {
       five_pct: rl.quota ?? null, week_pct: rl.week ?? null,
       five_reset: rl.fiveResetAt ?? null, week_reset: rl.weekResetAt ?? null,
+      account_created: win && win.accountCreatedAt ? iso(win.accountCreatedAt / 1000) : null,
       observed_at: iso(rl.ts / 1000),
     };
     // Statusline passthrough: ship the bar's OWN computed numbers (its units) so every

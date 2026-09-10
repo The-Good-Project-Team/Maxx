@@ -94,16 +94,15 @@ function blockShare(anchor, weekBilled, weekReset, fiveBilled, now) {
 export function emptyStore() {
   // webhooks: [{url, secret, headers, format}] · leases: [{id, tokens, expires, label}]
   // signal: last-notified state for transition webhooks · config: per-handle overrides
-  // directives: [{id, session, surface, action, note, rise, created, expires, delivered_to}]
   // connector_tokens: [{id, token, label, created, revoked}] — the scoped credential the
   // claude.ai connector URL carries, so the account secret never has to travel in a query string
   // lifetime_base: billed total of events that compaction has already dropped, so the
   // lifetime odometer survives retention (see compact()).
-  return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, directives: [], ops: [], connector_tokens: [], lifetime_base: 0 };
+  return { events: [], anchors: [], seen: {}, webhooks: [], leases: [], signal: null, config: {}, ops: [], connector_tokens: [], lifetime_base: 0 };
 }
 
 // Ops ring: everything that happens ON the tally besides emits — MCP budget checks,
-// reserve leases, directives, auth events. Capped so it can never bloat the store.
+// reserve leases, auth events. Capped so it can never bloat the store.
 export function logOp(store, op, detail = "", now) {
   store.ops = store.ops || [];
   store.ops.push({ ts: Math.round(now), op, d: String(detail).slice(0, 120) });
@@ -333,8 +332,18 @@ export function computeBudget(store, now) {
   // the SPEND is. Positive = ahead of pace. Elapsed needs a LIVE reset — without one, or with
   // a sentinel far-future reset, elapsed collapses toward 0 and the mark lands sign-flipped,
   // so suppress it rather than draw it in the wrong place.
+  // The span is week_reset − 7d for any account older than the window. For a YOUNGER one that
+  // start is fiction: it predates the account. Anthropic opens a new account on a PARTIAL first
+  // window that ends at the next schedule boundary (observed: a 2026-09-10T10:23Z account whose
+  // first reset was 2026-09-13T07:00Z — 2.86d, not 7), so the honest denominator is
+  // now−created over reset−created. Unfloored, that account read 65% elapsed against a true 15%.
+  const bornSec = a && a.account_created ? Date.parse(a.account_created) / 1000 : 0;
+  const elapsedFrom = Number.isFinite(bornSec) && bornSec > 0
+    ? Math.max(wr - WEEK, bornSec)
+    : wr - WEEK;
+  const elapsedSpan = Math.max(1, wr - elapsedFrom);
   const weekElapsed = wr > now && wr - now <= 8 * 24 * 3600
-    ? Math.min(1, Math.max(0, 1 - (wr - now) / WEEK))
+    ? Math.min(1, Math.max(0, (now - elapsedFrom) / elapsedSpan))
     : null;
   const weekElapsedPct = weekElapsed != null ? Math.round(weekElapsed * 1000) / 10 : null;
   const weekBankPct = weekElapsedPct != null && weekPctReal != null
@@ -500,15 +509,6 @@ export function computeBudget(store, now) {
     settings,
     top_burners: topBurners,
     verdict, fresh,
-    // what is queued FOR each channel, so the dash can show a channel and the orders
-    // waiting on it in the same place instead of burying them in the feed
-    pending_directives: (store.directives || [])
-      .filter((d) => d.expires > now)
-      .map((d) => ({
-        id: d.id, session: d.session, surface: d.surface || null, action: d.action,
-        note: d.note || null, auto: !!d.auto, expires: d.expires,
-        delivered: (d.delivered_to || []).length,
-      })),
     anchor_age_sec: Number.isFinite(anchorAge) ? Math.round(anchorAge) : null,
     stored_at: new Date(now * 1000).toISOString(),
     // THE ODOMETER, and the only counts that survive. These are not budget readings and must
@@ -550,175 +550,6 @@ export function computeBudget(store, now) {
       return head;
     })(),
   };
-}
-
-// ---- directive channel: orchestrator → specific session commands ----------
-// Actions: clear (advise /clear — injected as context, one-shot per session),
-// pause (deny expensive tools until ttl/resume — sticky, re-delivered every
-// read), resume (lifts pending pauses immediately, never queued).
-// session "*" = broadcast. Every create/delivery lands in the feed as a
-// billed:0 event (visible in maxx watch, never counted — same as gate notes).
-
-const feedNote = (store, root, text, now) =>
-  store.events.push({ surface: "directive", root, ts: now, billed: 0, name: text });
-
-const pruneDirectives = (store, now) => {
-  store.directives = (store.directives || []).filter((d) => d.expires > now);
-};
-
-export function addDirective(store, d, now) {
-  const session = String(d.session || "").trim();
-  const action = String(d.action || "");
-  if (!session) return { ok: false, error: "session required ('*' = broadcast)" };
-  if (!/^(clear|pause|resume)$/.test(action)) return { ok: false, error: "action must be clear|pause|resume" };
-  pruneDirectives(store, now);
-  if (action === "resume") {
-    const before = store.directives.length;
-    store.directives = store.directives.filter(
-      (x) => !(x.action === "pause" && (session === "*" || x.session === session)),
-    );
-    const lifted = before - store.directives.length;
-    feedNote(store, session, `▶ resume — ${lifted} pause${lifted === 1 ? "" : "s"} lifted`, now);
-    return { ok: true, action, lifted };
-  }
-  const ttl = Math.min(Math.max(Number(d.ttl_sec) || 3600, 60), 24 * 3600);
-  const dir = {
-    id: `d${Math.round(now)}-${(store.directives.length + 1).toString(36)}`,
-    session, surface: d.surface || null, action, note: d.note || null,
-    // rise = "advising a /clear is not enough here". An unattended session has no human to
-    // press the key, so the gate escalates this one to a handoff-then-relaunch instead.
-    rise: !!d.rise,
-    created: Math.round(now), expires: Math.round(now + ttl), delivered_to: [],
-  };
-  store.directives.push(dir);
-  feedNote(store, session, `⌘ ${action}→${session === "*" ? "all" : session.slice(0, 8)}${dir.note ? `: ${dir.note}` : ""}`, now);
-  return { ok: true, id: dir.id, action, session, expires: dir.expires };
-}
-
-// ---- watchdog: the one place maxx acts without being asked ----------------
-// A session past the context wall re-bills its entire context every turn, so a
-// 450k-context session costs ~450k before it does any work. That is how a 10x
-// pace burn happens with nobody noticing. The dash paints it red, but only for
-// someone already looking at the dash.
-//
-// This queues a `clear` directive against the offending session, which gate.mjs
-// delivers as injected context on that session's next tool call. Advisory only:
-// it never pauses or denies, because interrupting a working session on a
-// heuristic is a worse failure than overspending.
-// Per-session wall: whichever of 75% of the model's real context window or 350k tokens
-// comes first (same rule the statusline and dashboard use) — a 1M-window session is not
-// "past the wall" at the same 250k mark that ends a 200k-window one. Falls back to the
-// flat 250k mark only for sessions whose events predate context_window_size on the wire.
-const CTX_WALL_FALLBACK = 250e3;
-const ctxWallFor = (cws) => (cws ? Math.min(cws * 0.75, 350e3) : CTX_WALL_FALLBACK);
-const WATCH_COOLDOWN = 30 * 60; // never nag the same session more than twice an hour
-const kf = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`);
-
-// Cost per TURN for one session, and whether it is climbing. Every emit record
-// carries billed + turns, so this is free. Rising cost/turn is the leading signal:
-// it climbs continuously as the context grows, whereas "past the 250k wall" only
-// trips once you are already paying full freight on every turn.
-function perTurnSlope(store, root, now) {
-  const pts = store.events
-    .filter((e) => e.root === root && e.turns > 0 && e.billed > 0 && e.ts > now - 45 * 60)
-    .sort((a, b) => a.ts - b.ts)
-    .map((e) => e.billed / e.turns);
-  if (pts.length < 6) return null;
-  const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
-  const last3 = avg(pts.slice(-3)), prev3 = avg(pts.slice(-6, -3));
-  return { last3, prev3, rising: prev3 > 0 && last3 > prev3 * 1.5 };
-}
-
-export function autoAdvise(store, now) {
-  const b = computeBudget(store, now);
-  // Everything published is a percentage now, so the trigger is one too: burning at 3× the
-  // rate the week can sustain. Same comparison as before, on a scale that is Anthropic's
-  // rather than our own cache-weighted ledger's.
-  const pace = b.sustainable_pct_per_hour;
-  if (!pace || pace <= 0) return [];
-  if (!(b.burn_pct_per_hour >= 3 * pace)) return []; // not hot enough to interrupt anyone over
-  pruneDirectives(store, now);
-  store.watched = store.watched || {};
-  // Context size stays an internal signal — it is the thing being diagnosed, not a budget
-  // reading — but it never reaches the payload or the note as a raw count.
-  const ctxOf = (session) => {
-    let ts = 0, ctx = 0, cws = 0;
-    for (const e of store.events) if (e.root === session && e.ts >= ts && e.ctx) { ts = e.ts; ctx = e.ctx; cws = e.context_window_size || 0; }
-    return { ctx, wall: ctxWallFor(cws) };
-  };
-  const sent = [];
-  for (const t of b.top_burners || []) {
-    if (!t.session || !(t.five_pct > 0)) continue;   // must actually be burning right now
-    const slope = perTurnSlope(store, t.session, now);
-    const { ctx: sessionCtx, wall: sessionWall } = ctxOf(t.session);
-    const pastWall = sessionCtx > sessionWall;
-    // climbing catches it on the way UP; past-wall is the backstop for a session that
-    // was already fat when we started watching it
-    const climbing = !!(slope && slope.rising && slope.last3 >= 150e3);
-    if (!pastWall && !climbing) continue;
-    const last = store.watched[t.session];
-    if (last && now - last < WATCH_COOLDOWN) continue;
-    // Multipliers, not counts: "1.9× more per turn" is both truer to what we can measure and
-    // easier to act on than a token figure in a unit nobody is billed in.
-    const climbX = slope && slope.prev3 > 0 ? Math.round((slope.last3 / slope.prev3) * 10) / 10 : null;
-    const why = climbing
-      ? `cost per turn is climbing — ${climbX != null ? `${climbX}×` : "sharply up"} over the last 6 turns` +
-        (pastWall ? ", and the context is past the compaction wall" : "")
-      : "the context is past the compaction wall";
-    const r = addDirective(store, {
-      session: t.session,
-      // full channel key when we know the project, so the dash pins it exactly instead
-      // of falling back to "busiest channel on that machine"
-      surface: t.surface ? (t.project ? `${t.surface} · ${t.project}` : t.surface) : null,
-      action: "clear",
-      // Past the wall every turn re-bills the whole context, so waiting for a human to press
-      // /clear costs the most exactly when nobody is watching. Climbing-but-under-wall stays
-      // advisory — there is still room to finish the thought.
-      rise: pastWall,
-      note:
-        `${why}. This session is taking ${t.week_pct != null ? `${t.week_pct}% of your week` : "a large share of your week"} ` +
-        `while the account burns at ${b.burn_pct_per_hour}%/hr against a sustainable ${pace}%/hr — ` +
-        `every turn re-bills the whole context`,
-      ttl_sec: 3600,
-    }, now);
-    if (r.ok) {
-      const dir = store.directives.find((d) => d.id === r.id);
-      if (dir) dir.auto = true;
-      store.watched[t.session] = Math.round(now);
-      // ctx and the climb multiplier are computed above and were being dropped on the floor;
-      // the ops-log line reads them, so every watchdog op published "ctx NaNk · NaNk/min".
-      sent.push({
-        session: t.session, name: t.name || t.project || null, week_pct: t.week_pct,
-        ctx: sessionCtx || null, wall: sessionWall || null, climb_x: climbX,
-        past_wall: pastWall, climbing,
-      });
-    }
-  }
-  return sent;
-}
-
-/**
- * Directives pending for one session; reading IS consuming (unless peek).
- * clear → delivered once per session; pause → sticky until expiry/resume.
- */
-export function pendingDirectives(store, { session, surface = null, peek = false }, now) {
-  pruneDirectives(store, now);
-  const hits = store.directives.filter(
-    (d) =>
-      (d.session === "*" || d.session === session) &&
-      (!d.surface || !surface || d.surface === surface) &&
-      !(d.action === "clear" && (d.delivered_to || []).includes(session)),
-  );
-  if (!peek)
-    for (const d of hits) {
-      d.delivered_to = d.delivered_to || [];
-      if (!d.delivered_to.includes(session)) {
-        d.delivered_to.push(session);
-        feedNote(store, d.session, `✓ ${d.action} delivered→${String(session).slice(0, 8)}`, now);
-      }
-    }
-  return hits.map(({ id, session: s, surface: sf, action, note, rise, created, expires }) =>
-    ({ id, session: s, surface: sf, action, note, rise: !!rise, created, expires }));
 }
 
 // #3 runaway detection — sessions burning ≥ rate for ≥ sustain minutes.

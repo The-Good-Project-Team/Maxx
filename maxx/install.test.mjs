@@ -37,7 +37,7 @@ test("install wires every hook to an ABSOLUTE node — hooks run without the use
   const cmds = [
     s.statusLine.command,
     ...s.hooks.PreToolUse.flatMap((e) => e.hooks.map((h) => h.command)),
-    ...s.hooks.SessionStart.flatMap((e) => e.hooks.map((h) => h.command)),
+    ...(s.hooks.SessionStart || []).flatMap((e) => e.hooks.map((h) => h.command)),
   ];
   for (const c of cmds) {
     assert.doesNotMatch(c, /^node\s/, `"${c}" relies on PATH — under nvm/fnm a hook shell has no node`);
@@ -77,7 +77,7 @@ test("existing settings and other tools' hooks survive the install", () => {
   assert.equal(s.model, "opus", "unrelated top-level settings must be preserved");
   assert.deepEqual(s.permissions, { allow: ["Bash(ls:*)"] });
   const pre = s.hooks.PreToolUse.flatMap((e) => e.hooks.map((h) => h.command));
-  const start = s.hooks.SessionStart.flatMap((e) => e.hooks.map((h) => h.command));
+  const start = (s.hooks.SessionStart || []).flatMap((e) => e.hooks.map((h) => h.command));
   assert.ok(pre.includes("/usr/bin/true"), "another tool's PreToolUse hook was dropped");
   assert.ok(start.includes("/opt/other/tool --wake"), "another tool's SessionStart hook was dropped");
   assert.ok(pre.some((c) => c.includes("gate.mjs")), "maxx's own gate hook is missing");
@@ -89,9 +89,31 @@ test("re-running the installer does not stack duplicate maxx hooks", () => {
   run(home);
   const s = JSON.parse(readFileSync(settingsPath(home), "utf8"));
   const count = (needle) =>
-    [...s.hooks.PreToolUse, ...s.hooks.SessionStart]
+    [...s.hooks.PreToolUse, ...(s.hooks.SessionStart || [])]
       .flatMap((e) => e.hooks.map((h) => h.command))
       .filter((c) => c.includes(needle)).length;
   assert.equal(count("gate.mjs"), 1, "upgrading must replace maxx's hook, not append another");
-  assert.equal(count("fenix.mjs"), 1);
+  assert.equal(count("fenix.mjs"), 0, "fenix moved to its own repo — maxx installs no fenix hook");
+});
+
+// Upgrading FROM a maxx that shipped fenix: the old SessionStart hook points at
+// $SKILLDIR/fenix.mjs, a file this version no longer installs. Left in place it fails on
+// every session start, so the installer strips its own stale hook — and only its own.
+test("upgrading strips the fenix hook a previous maxx left behind", () => {
+  const home = freshHome();
+  const p = settingsPath(home);
+  mkdirSync(path.dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify({
+    hooks: {
+      SessionStart: [
+        { hooks: [{ type: "command", command: `node ${home}/.claude/skills/maxx/fenix.mjs --wake` }] },
+        { hooks: [{ type: "command", command: "/opt/other/tool --wake" }] },
+      ],
+    },
+  }));
+  run(home);
+  const s = JSON.parse(readFileSync(p, "utf8"));
+  const start = (s.hooks.SessionStart || []).flatMap((e) => e.hooks.map((h) => h.command));
+  assert.ok(!start.some((c) => c.includes("fenix.mjs")), "stale maxx fenix hook must be removed");
+  assert.ok(start.includes("/opt/other/tool --wake"), "another tool's SessionStart hook must survive");
 });

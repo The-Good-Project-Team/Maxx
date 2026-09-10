@@ -11,6 +11,17 @@ individual session reading "within limits" right up to the point it isn't.
 maxx counts real spend across every machine and every agent, prices it per model, and answers one
 question: **how much can this session safely spend right now.**
 
+It answers it as a rate. Your burn in %/hr against the %/hr that exactly spends the week by its
+reset — and when you are over, the hour you run out:
+
+> **Over pace — the week ends early**
+> Burning 13.00%/hr against 0.44%/hr sustainable. At this rate you are out in 1.7h (Thu 6 PM),
+> 2d before the reset. Cut to 0.44%/hr to make it.
+
+**maxx counts. Anthropic limits.** Nothing here can deny you work — a counter that can deny is a
+limit nobody agreed to. The only things that stop a call are Anthropic's own 5h and weekly
+windows, and they enforce themselves by rejecting it.
+
 ## For agents
 
 Give any agent an MCP connector and it can check its own budget before it burns it, on its own —
@@ -42,7 +53,6 @@ curl -X POST https://api.meetmaxx.co/api/signup -H "Content-Type: application/js
 | `maxx_budget` | Read live pacing: `verdict` (`ok` / `over` / `calibrating` / …), how much of this 5h block is spent vs. advised, whether you're on pace for the week. |
 | `maxx_emit` | Report this session's usage back to the tally. |
 | `maxx_reserve` / `maxx_release` | Hold a slice of budget before fanning out concurrent agents, release it when done — stops sibling agents from double-spending the same window. |
-| `maxx_directive` | Pause, resume, or nudge a specific live session to `/clear` — fleet-wide remote control. |
 
 **The rule: maxx counts, Anthropic limits.** Nothing `maxx_budget` returns can deny a call — only
 Anthropic's own 5h/weekly windows do that, by rejecting the request. `verdict: "over"` means
@@ -85,7 +95,7 @@ Requires Node 18+.
 npm test    # node --test maxx/*.test.mjs server/*.test.mjs
 ```
 
-`server/` is the tally: `tally.mjs` is pure (ingest, budget, directives, watchdog); `handler.mjs`
+`server/` is the tally: `tally.mjs` is pure (ingest, budget, watchdog); `handler.mjs`
 wraps it in HTTP + MCP. `maxx/emit.mjs` ships counts from a machine; `maxx/render.mjs` draws the
 statusline bar.
 

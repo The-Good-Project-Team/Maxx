@@ -16,7 +16,7 @@ command -v node >/dev/null || { echo "maxx needs node on PATH." >&2; exit 1; }
 # Claude Code runs hooks and the statusline in a NON-LOGIN shell, so the PATH that has `node`
 # right now is not the PATH they get. Under nvm/fnm/volta — where node lives in a
 # version-managed dir sourced by .zshrc — a wired `node …` resolves to nothing and the
-# statusline, the budget gate and the fenix hook all fail silently. Pin the interpreter by
+# the statusline and the budget gate both fail silently. Pin the interpreter by
 # absolute path instead; process.execPath is the real binary behind whatever `node` is here.
 NODE_BIN="$(node -e 'process.stdout.write(process.execPath)')"
 
@@ -71,15 +71,10 @@ place "$SRC/SKILL.md"     "$SKILL/SKILL.md"
 place "$SRC/render.mjs"   "$SKILL/render.mjs"
 place "$SRC/tracker.mjs"  "$SKILL/tracker.mjs"
 place "$SRC/limit.mjs"    "$SKILL/limit.mjs"
-place "$SRC/agents.mjs"   "$SKILL/agents.mjs"
 place "$SRC/emit.mjs"     "$SKILL/emit.mjs"
 place "$SRC/pace.mjs"     "$SKILL/pace.mjs"
 place "$SRC/token.mjs"    "$SKILL/token.mjs"
-place "$SRC/watch.mjs"    "$SKILL/watch.mjs"
 place "$SRC/gate.mjs"     "$SKILL/gate.mjs"
-place "$SRC/fenix.mjs"    "$SKILL/fenix.mjs"
-mkdir -p "$CLAUDE/skills/fenix"
-place "$SRC/FENIX-SKILL.md" "$CLAUDE/skills/fenix/SKILL.md"
 
 # wire the statusLine (node render.mjs) into settings.json. render.mjs also refreshes the rolling-token
 # window.json on a cadence, so no Stop hook is needed. (Older installs added a brain.mjs Stop hook — we
@@ -123,12 +118,14 @@ d.hooks.PreToolUse.push({
   matcher: "Agent|Task|Workflow|ScheduleWakeup|CronCreate",
   hooks: [{ type: "command", command: `${process.env.NODE_BIN} ${process.env.SKILLDIR}/gate.mjs`, timeout: 10 }],
 });
-// fenix rebirth: on session start, inject (and consume) a pending .fenix/handoff.md
-// from the cwd — the other half of /fenix (write handoff → /clear → rise here).
-d.hooks.SessionStart = (d.hooks.SessionStart || []).filter((h) => !JSON.stringify(h).includes("fenix.mjs"));
-d.hooks.SessionStart.push({
-  hooks: [{ type: "command", command: `${process.env.NODE_BIN} ${process.env.SKILLDIR}/fenix.mjs --wake`, timeout: 10 }],
-});
+// fenix moved to its own repo (2026-09-10) — maxx counts spend, fenix carries context.
+// Strip any SessionStart hook a previous maxx install left pointing at OUR copy: the file
+// is gone, and a hook whose command does not exist fails on every session start. A hook
+// pointing at a fenix INSTALLED ELSEWHERE is left alone — not ours to remove.
+d.hooks.SessionStart = (d.hooks.SessionStart || []).filter(
+  (h) => !JSON.stringify(h).includes(`${process.env.SKILLDIR}/fenix.mjs`),
+);
+if (!d.hooks.SessionStart.length) delete d.hooks.SessionStart;
 mkdirSync(dirname(p), { recursive: true });
 writeFileSync(p, JSON.stringify(d, null, 2));
 JS

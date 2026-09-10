@@ -102,7 +102,7 @@ test("cookie works for GET reads, never for mutations", async () => {
   // mutating endpoints must ignore the cookie
   const env = { surface: "laptop:x", sessions: [{ root: "r", billed: 1 }] };
   assert.equal((await h(post("/api/u/testy/logs", env, { cookie }))).status, 401);
-  assert.equal((await h(post("/api/u/testy/directive", { session: "*", action: "pause" }, { cookie }))).status, 401);
+  assert.equal((await h(post("/api/u/testy/config", { runaway_min: 5 }, { cookie }))).status, 401);
   assert.equal((await h(post("/api/u/testy/logs", env, { cookie, authorization: `Bearer ${SECRET}` }))).status, 200);
 });
 
@@ -110,23 +110,23 @@ test("settings mutations: cookie + same-origin Origin ok; cross-origin/no-Origin
   const { h } = mkHandler();
   const cookie = cookieOf(await h(post("/api/u/testy/login", { secret: SECRET })));
   const same = { cookie, origin: "https://api.meetmaxx.co", host: "api.meetmaxx.co" };
-  const dir = { session: "*", action: "pause" };
-  assert.equal((await h(post("/api/u/testy/directive", dir, same))).status, 200);
-  assert.equal((await h(post("/api/u/testy/config", { runaway_min: 5 }, same))).status, 200);
-  assert.equal((await h(post("/api/u/testy/directive", dir, { cookie, origin: "https://evil.example", host: "api.meetmaxx.co" }))).status, 401);
-  assert.equal((await h(post("/api/u/testy/directive", dir, { cookie, host: "api.meetmaxx.co" }))).status, 401);
+  const cfg = { runaway_min: 5 };
+  assert.equal((await h(post("/api/u/testy/config", cfg, same))).status, 200);
+  assert.equal((await h(post("/api/u/testy/config", cfg, { cookie, origin: "https://evil.example", host: "api.meetmaxx.co" }))).status, 401);
+  assert.equal((await h(post("/api/u/testy/config", cfg, { cookie, host: "api.meetmaxx.co" }))).status, 401);
   // settings page: auth-gated like the dash
   assert.equal((await h(get("/u/testy/settings"))).status, 401);
   const page = await h(get("/u/testy/settings", { cookie }));
   assert.equal(page.status, 200);
-  assert.match(page.body, /Fleet control/);
+  assert.match(page.body, /Runaway detection/);
 });
 
-test("ops ring: auth + mcp + directives land in /ops, capped and owner-only", async () => {
+test("ops ring: auth + mcp + config mutations land in /ops, capped and owner-only", async () => {
   const { h } = mkHandler();
   await h(post("/api/u/testy/login", { secret: "wrong" }));
   const cookie = cookieOf(await h(post("/api/u/testy/login", { secret: SECRET })));
-  await h(post("/api/u/testy/directive", { session: "*", action: "pause" }, { cookie, origin: "https://api.meetmaxx.co", host: "api.meetmaxx.co" }));
+  const cfgRes = await h(post("/api/u/testy/config", { runaway_min: 7 }, { cookie, origin: "https://api.meetmaxx.co", host: "api.meetmaxx.co" }));
+  assert.equal(cfgRes.status, 200, "same-origin cookie mutation is accepted");
   const anonOps = await h(get("/api/u/testy/ops"));
   assert.equal(anonOps.status, 200);
   assert.deepEqual(JSON.parse(anonOps.body).ops, [], "ops content is owner-only; public gets an empty ring");
@@ -134,10 +134,9 @@ test("ops ring: auth + mcp + directives land in /ops, capped and owner-only", as
   assert.equal(r.status, 200);
   const ops = JSON.parse(r.body).ops.map((o) => `${o.op}:${o.d}`);
   assert.ok(ops.some((o) => o.startsWith("auth:login:FAILED")), "failed login logged");
-  assert.ok(ops.some((o) => o.startsWith("directive:pause")), "directive logged");
 });
 
-test("public reads are redacted: no names, no session ids, no directive text, empty ops", async () => {
+test("public reads are redacted: no names, no session ids, empty ops", async () => {
   const { h } = mkHandler();
   const bear = { authorization: `Bearer ${SECRET}` };
   await h(post("/api/u/testy/logs", { surface: "laptop:mbp-13", sessions: [
@@ -146,10 +145,8 @@ test("public reads are redacted: no names, no session ids, no directive text, em
   await h(post("/api/u/testy/logs", { surface: "cloud:reviewer", sessions: [
     { root: "cloudroot-1", billed: 250000, name: "review PR #42" },
   ] }, bear));
-  await h(post("/api/u/testy/directive", { session: "*", action: "pause", note: "secret ops note" },
-    { ...bear, origin: "https://api.meetmaxx.co", host: "api.meetmaxx.co" }));
 
-  const leak = /Acme|acme-api|hotfix|8f3c2a1d|mbp-13|reviewer|PR #42|secret ops note/;
+  const leak = /Acme|acme-api|hotfix|8f3c2a1d|mbp-13|reviewer|PR #42/;
   const feed = await h(get("/api/u/testy/feed?n=50"));
   assert.equal(feed.status, 200);
   assert.doesNotMatch(feed.body, leak, "public feed leaked content");
@@ -160,7 +157,6 @@ test("public reads are redacted: no names, no session ids, no directive text, em
 
   const bud = await h(get("/api/u/testy/budget"));
   assert.doesNotMatch(bud.body, leak, "public budget leaked content");
-  assert.equal(JSON.parse(bud.body).pending_directives.length, 0);
 
   const ops = await h(get("/api/u/testy/ops"));
   assert.equal(ops.status, 200);

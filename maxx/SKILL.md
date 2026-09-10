@@ -16,11 +16,9 @@ Reads only token/usage metadata — never prompt or message content.
 ```
 /maxx            # print the usage card
 /maxx turn       # what the LAST TURN cost: tokens + api calls (+ subagent burn), this session
-/maxx fenix      # burn down, rise with context: handoff → /clear → next session resumes (alias: /fenix)
 /maxx session    # session tokens: how much to burn this rolling 5h window (plain language)
 /maxx json       # print the raw stats payload (JSON)
 /maxx nazi       # hourly posture check: ranked token drains + one lever (for agents)
-/maxx agents     # WHO is burning: per-root-session token attribution, named (for agents)
 /maxx refresh    # stuck or stale bar: clear the derived caches, rebuild the window
 /maxx dark       # dark statusline theme — /maxx light switches back, /maxx auto adopts the terminal's own colors
 /maxx config     # show settings, secrets masked · `config <key> <value>` sets (dotted keys ok)
@@ -34,31 +32,15 @@ Reads only token/usage metadata — never prompt or message content.
 2. Run it:
    - Card:      `node ~/.claude/skills/maxx/tracker.mjs`
    - Turn:      `node ~/.claude/skills/maxx/tracker.mjs turn`   (when the user says `turn` / "what did that cost"; `--json` for machine form. Print the two lines verbatim in your reply so the receipt lands in the transcript.)
-   - Fenix:     when the user says `fenix`, follow `~/.claude/skills/fenix/SKILL.md` (write `.fenix/handoff.md`, report its id, then the human /clears — the next session in that directory resumes it). fenix is a maxx subroute; /fenix is the same flow.
    - Session:   `node ~/.claude/skills/maxx/tracker.mjs session`   (when the user says `session`)
    - Setup:     `node ~/.claude/skills/maxx/tracker.mjs setup`   (walks every account, links the ones not reporting, prints the week)
    - Switch:    `node ~/.claude/skills/maxx/tracker.mjs switch`   (the account with the most room left; prints only `export CLAUDE_CONFIG_DIR=…` when piped, so `eval "$(maxx switch)"` works)
    - Report:    `node ~/.claude/skills/maxx/tracker.mjs report`   (where the week went, per account, with the move each finding implies)
    - JSON:      `node ~/.claude/skills/maxx/tracker.mjs --json`
    - Nazi:      `node ~/.claude/skills/maxx/limit.mjs --nazi`   (when the user says `nazi`; add `--json` for the machine form)
-   - Agents:    `node ~/.claude/skills/maxx/agents.mjs`   (when the user says `agents`; `--children` to expand live descendants, `--mins N` window, `--json` machine form)
    - Refresh:   `node ~/.claude/skills/maxx/tracker.mjs refresh`   (when the bar looks stuck/stale; rebuild takes up to a minute on a big history)
    - Theme:     `node ~/.claude/skills/maxx/tracker.mjs dark` / `… light` / `… auto` (auto = adopt the terminal's own colors — ghostty theme palette; CLI light/dark elsewhere)
    - Config:    `node ~/.claude/skills/maxx/tracker.mjs config [key] [value]`   (no args = show, secrets masked)
-
-   `agents` answers "what's using all the tokens" with names, not a count. Every
-   session log nests: a root session at `<project>/<ROOT>.jsonl` owns everything
-   under `<project>/<ROOT>/subagents/**` (subagent spawns AND workflow fan-outs).
-   It walks EVERY login root on the box (~/.claude + each ~/.claude-<account>) and tags each
-   row `project@account` — burn follows the login, and one root is not the week.
-   A 300-agent workflow is ONE root's burn. agents.mjs rolls all descendants up to
-   their root, labels it with the human title (customTitle > aiTitle > agentName)
-   and git branch, ranks by billed tokens over the window, and flags 🔴 anything
-   with a turn in the last 5 min (live = still bleeding; idle = done, no action).
-   Agent-readable: the FIRST stdout line is a single `MAXX_AGENTS window=… billed=…
-   roots=… live_roots=… top=[…]` record — an agent can grep just that. `--json`
-   gives the full per-root breakdown (own / subagents / workflow split, live
-   children). Show the human the card verbatim.
 
    **Token budget — read before interpreting `session`.** THE RULE: **maxx counts,
    Anthropic limits.** Nothing maxx reports can deny work. The only things that stop a

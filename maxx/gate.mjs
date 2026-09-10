@@ -43,12 +43,6 @@ const GATE = path.join(DIR, "gate.json");
 // writes one gate-cache per login root (suffix rule matches render/limit/emit)
 const SUF = process.env.CLAUDE_CONFIG_DIR ? "-" + path.basename(process.env.CLAUDE_CONFIG_DIR).replace(/^\.claude-?/, "") : "";
 const CACHE = path.join(DIR, `gate-cache${SUF}.json`);
-const POLL = path.join(DIR, `directive-poll${SUF}.json`);
-const STATUS = path.join(DIR, `status${SUF}.json`);        // the statusline's tick: per-chat standing lives in .chats
-const HANDOFF = path.join(DIR, `handoff-told${SUF}.json`); // session → when it was last ordered to hand off
-const HANDOFF_EVERY_SEC = 30 * 60;  // a chat past its line is told once, then left alone for half an hour
-const FENIX_AT = 89;                // the bar blinks from 90; the handoff is ordered one point before, so it is written first
-const POLL_EVERY_SEC = 60;        // an ungated tool call polls for directives at most this often
 const LOG = path.join(DIR, "gate.log");
 const CACHE_FRESH_SEC = 60;       // reuse a verdict this fresh without a network call
 // Server unreachable: trust the last verdict this long. 10m was tuned for a fleet the author
@@ -182,119 +176,16 @@ try { hook = JSON.parse(input); } catch { process.exit(0); }   // not a hook cal
 const tool = hook.tool_name || "";
 const gated = GATED.test(tool);
 
-const riseText = (note) =>
-  `MAXX DIRECTIVE — THIS CHAT IS PAST ITS LINE${note ? ` (${note})` : ""}. ` +
-  `Every turn from here re-bills your whole context, so do not start new work. ` +
-  `Finish only the step in flight, then PRESERVE THE THREAD, in this order: ` +
-  `(1) write .fenix/handoff.md exactly per ~/.claude/skills/fenix/SKILL.md — what is in motion, ` +
-  `decisions made, the next concrete step; (2) tell the user its id and that /clear picks it ` +
-  `up; (3) END YOUR TURN — do not keep working here, every further turn re-bills this fat ` +
-  `context. You cannot clear yourself: /clear is a human keystroke and no hook can send it.`;
-// The LOCAL trigger for the same order. The statusline scores every chat as ONE number out of
-// 100 — how far toward whichever of its two lines (context hand-off, spend share of the week) it
-// will hit first — and writes it to status.json each tick. From 89 — one point before the bar
-// blinks, so the handoff exists before the reading goes red — this chat is told to hand off, once
-// per half hour: one clear instruction at the right moment, not a
-// nag on every tool call (each of which would re-bill the very context it is warning about).
-function localHandoff(session) {
-  if (!session) return null;
-  const c = readJSON(STATUS, {}).chats?.[session];
-  if (!c || Date.now() - (c.ts || 0) > 10 * 60 * 1000) return null;   // stale tick → unknown, not over
-  if (!(c.pct >= FENIX_AT)) return null;
-  const overCtx = c.ctxLine > 0 && c.ctxPct >= 0.9 * c.ctxLine;
-  const overShare = c.shareLine > 0 && c.sharePct >= 0.9 * c.shareLine;
-  const told = readJSON(HANDOFF, {});
-  const now = Date.now() / 1000;
-  if (now - (told[session] || 0) < HANDOFF_EVERY_SEC) return null;
-  for (const [sid, at] of Object.entries(told)) if (now - at > 24 * 3600) delete told[sid];
-  told[session] = now;
-  try { mkdirSync(DIR, { recursive: true }); writeFileSync(HANDOFF, JSON.stringify(told)); } catch {}
-  const why = [
-    `chat at ${c.pct}% of its line`,
-    overShare ? `spent ${c.sharePct}% of the week since its last compact, against a ${c.shareLine}% share` : null,
-    overCtx ? `context ${c.ctxPct}% against the ${c.ctxLine}% hand-off line` : null,
-  ].filter(Boolean).join("; ");
-  log(`local handoff session=${session} ${why}`);
-  return riseText(why);
-}
-// Advice, not a verdict: the handoff order carries even when the gate is OFF or this box has no
-// maxx account — neither has anything to do with whether THIS chat is past its line.
-const sayHandoff = (session) => {
-  const h = localHandoff(session);
-  if (h) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: h } }));
-};
 if (!pol.enabled) {
   // overturned — allow, already noted at overturn time; keep a local trace
   if (gated) log(`allow (gate OFF${gate.overturn ? `, overturn: ${gate.overturn.reason}` : ""}) tool=${tool}`);
-  sayHandoff(hook.session_id);
   process.exit(0);
 }
-if (!cfg.handle || !cfg.secret) { sayHandoff(hook.session_id); process.exit(0); } // no maxx account → not our call, but still our chat
+if (!cfg.handle || !cfg.secret) process.exit(0);   // no maxx account → not our call
 
-// A session that only edits and runs commands never spawns a gated tool, so gating the
-// directive fetch on those alone left the loudest sessions — the ones grinding a build past
-// the context wall — unreachable. Any tool call can carry a directive; ungated ones just poll
-// at most once a minute, so the channel costs one request per session per minute, not one per
-// tool call. Budget verdicts still ride only on the gated path, where the spend actually is.
-function pollDue(session) {
-  if (gated) return true;
-  if (!session) return false;
-  const now = Date.now() / 1000;
-  const seen = readJSON(POLL, {});
-  if (now - (seen[session] || 0) < POLL_EVERY_SEC) return false;
-  // prune: a session id is dead once it stops calling tools, so don't grow this file forever
-  for (const [s, at] of Object.entries(seen)) if (now - at > 3600) delete seen[s];
-  seen[session] = now;
-  try { mkdirSync(DIR, { recursive: true }); writeFileSync(POLL, JSON.stringify(seen)); } catch {}
-  return true;
-}
-
-// ---- directive channel: orchestrator → THIS session, via the tally ----
-// GET consumes (clear = one-shot, pause = sticky until ttl/resume). Fail-open:
-// a directive miss must never deny — the budget checks below still run.
-async function directives(session) {
-  if (!session) return [];
-  try {
-    const res = await fetch(
-      `${base}/api/u/${encodeURIComponent(cfg.handle)}/directives?session=${encodeURIComponent(session)}`,
-      { headers: { authorization: `Bearer ${cfg.secret}` }, signal: AbortSignal.timeout(3000) },
-    );
-    if (!res.ok) throw new Error(`${res.status}`);
-    return (await res.json()).directives || [];
-  } catch { return []; }
-}
-const dirs = pollDue(hook.session_id) ? await directives(hook.session_id) : [];
-const clearDir = dirs.find((d) => d.action === "clear");
-// Two strengths. The advisory one asks for a /clear — fine when a human is watching the
-// session. `rise` means the session is PAST the context wall, where every further turn
-// re-bills the whole context: there, the priority is that the THREAD survives, so the
-// directive orders the handoff written and the turn ended, in that order. The handoff is
-// written by the model on purpose — fenix's own fallback is a raw transcript tail, which is
-// a far worse thing to wake up to.
-//
-// It used to order `fenix.mjs --rise` here, which spawned a headless successor. That was
-// removed 2026-08-27: it never produced a second generation in six attempts. Nothing can
-// clear a session but the human — hooks talk through stdout/exit codes and cannot send a
-// slash command — so the honest instruction is "save the thread and stop", not "renew
-// yourself". Promising self-renewal it could not deliver is how the thread got lost.
-const clearCtx = clearDir
-  ? clearDir.rise
-    ? riseText(clearDir.note)
-    : `MAXX DIRECTIVE (orchestrator asks): /clear this session${clearDir.note ? ` — ${clearDir.note}` : ""}. ` +
-      `Finish the immediate step cheaply, then tell the user to /clear (or /compact) before continuing.`
-  : localHandoff(hook.session_id);
-
-// Ungated tool: no spend to weigh, so the only thing to carry is the advisory. Never deny here —
-// a pause still lands on the gated path, where the expensive work it means to stop actually is.
-if (!gated) {
-  if (clearCtx) {
-    log(`clear-directive delivered on ungated tool=${tool}`);
-    console.log(JSON.stringify({
-      hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: clearCtx },
-    }));
-  }
-  process.exit(0);
-}
+// Ungated tool: no spend to weigh, so there is nothing to decide. Never deny here — the
+// budget verdict rides only on the gated path, where the expensive work actually is.
+if (!gated) process.exit(0);
 
 const deny = (why) => {
   log(`DENY tool=${tool} ${why} [${polLine()}]`);
@@ -305,26 +196,16 @@ const deny = (why) => {
       permissionDecisionReason:
         `MAXX BUDGET GATE (${polLine()}): ${why} — no tokens for expensive work (${tool}). ` +
         `Do cheap work or wait — or the USER may adjust policy / explicitly overturn (recorded to the central feed): ` +
-        `node ~/.claude/skills/maxx/gate.mjs --overturn "<reason>"` +
-        (clearCtx ? ` | ${clearCtx}` : ""),
+        `node ~/.claude/skills/maxx/gate.mjs --overturn "<reason>"`,
     },
   }));
   process.exit(0);
 };
 // allow, delivering any pending clear advisory as injected context
 const allow = (why) => {
-  log(`allow (${why}) tool=${tool}${clearCtx ? " +clear-directive" : ""}`);
-  if (clearCtx)
-    console.log(JSON.stringify({
-      hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: clearCtx },
-    }));
+  log(`allow (${why}) tool=${tool}`);
   process.exit(0);
 };
-
-const paused = dirs.find((d) => d.action === "pause");
-if (paused)
-  deny(`ORCHESTRATOR PAUSE${paused.note ? ` — "${paused.note}"` : ""}. This session is paused until ` +
-       `${new Date(paused.expires * 1000).toISOString()} or a resume directive (maxx_directive action=resume)`);
 
 const b = await budget();
 
