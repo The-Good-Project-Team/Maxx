@@ -207,12 +207,18 @@ function historicalPeak(pts, win = WINDOW_MS) {
 // Re-entering a previously seen account also restamps `from` — interleaved foreign burn would corrupt
 // its windows anyway, and rate-limit windows are ≤7d so history past the switch has no budget value.
 export function accountEpoch(now) {
-  let uuid = null, email = null;
+  let uuid = null, email = null, createdAt = 0;
   try {
     const oa = JSON.parse(readFileSync(OAUTH, "utf8")).oauthAccount || {};
     uuid = oa.accountUuid || null; email = oa.emailAddress || null;
+    // accountCreatedAt is ANTHROPIC's own stamp for when this login came into existence. Unlike
+    // `since` (a local ledger mark that restamps on dir/login churn, and was seen a month STALE —
+    // 2026-08-11 on an account created 2026-09-10) it cannot drift, so it is the one trustworthy
+    // floor for a rate-limit window start. A window can never have opened before the account did.
+    const t = Date.parse(oa.accountCreatedAt || "");
+    if (Number.isFinite(t) && t > 0 && t <= now) createdAt = t;
   } catch {}
-  if (!uuid) return { uuid: null, since: 0 }; // can't tell → no clamp (pre-switch behavior)
+  if (!uuid) return { uuid: null, since: 0, createdAt }; // can't tell → no clamp (pre-switch behavior)
   let led = readJSON(ACCOUNTS, {});
   if (!Array.isArray(led.accounts)) led = { accounts: [] };
   led.dirs = led.dirs || {};
@@ -229,7 +235,15 @@ export function accountEpoch(now) {
     led.current = uuid; // legacy readers; last-active, no longer drives restamps
     try { mkdirSync(path.dirname(ACCOUNTS), { recursive: true }); writeFileSync(ACCOUNTS, JSON.stringify(led)); } catch {}
   }
-  return { uuid, since: e.from };
+  // SELF-HEAL an impossible epoch: `from` can predate the account itself (seen live —
+  // 2026-08-11 stamped on an account Anthropic created 2026-09-10, 30 days early), which
+  // would drag 5h buckets in from a window this login never lived in. Creation is a hard
+  // floor for any local mark about this account; raise it and persist the correction once.
+  if (createdAt && e.from < createdAt) {
+    e.from = createdAt;
+    try { writeFileSync(ACCOUNTS, JSON.stringify(led)); } catch {}
+  }
+  return { uuid, since: e.from, createdAt };
 }
 
 // ROLL-SESSION — the safe spend for THIS 5h window = weekly-tokens-LEFT ÷ 5h-windows-left, capped at the
@@ -418,7 +432,7 @@ async function main() {
   // an unattended agent until the 5h window resets; weekPct is the authoritative weekly % (= /usage).
   const roll = rollSession(cap5, cap7, used, weekUsed, weekResetAt, now);
   mkdirSync(path.dirname(OUT), { recursive: true });
-  writeFileSync(OUT, JSON.stringify({ buckets, cap5, cap7, used5: used, weekUsed, weekPct: week, weekResetAt, accountUuid: acct.uuid, accountSince: acct.since, ...roll, ts: now }));
+  writeFileSync(OUT, JSON.stringify({ buckets, cap5, cap7, used5: used, weekUsed, weekPct: week, weekResetAt, accountUuid: acct.uuid, accountSince: acct.since, accountCreatedAt: acct.createdAt || 0, ...roll, ts: now }));
   writeFileSync(CURSOR, JSON.stringify({ offsets, ts: now }));
 }
 // run only when invoked directly (CLI / statusline), not when imported by a test.

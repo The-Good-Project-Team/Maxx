@@ -3,7 +3,7 @@
 // "263M left · −3.6M over" read as a weekly breach when 91% of the tank remained.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { weekPaceToken, plausibleReset } from "./pace.mjs";
+import { weekPaceToken, plausibleReset, windowSpan, windowElapsed } from "./pace.mjs";
 
 const CAP = 289e6; // reif_tgp's real weekly cap the day of the bug
 
@@ -62,4 +62,44 @@ test("plausibleReset boundary: ≤8d passes, >8d is a sentinel", () => {
   assert.equal(plausibleReset(now + 8 * 86400, now), now + 8 * 86400, "exactly 8d out is still real");
   assert.equal(plausibleReset(now + 8 * 86400 + 1, now), 0, "one second past 8d is a sentinel");
   assert.equal(plausibleReset(0, now), 0, "no reset → 0");
+});
+
+// ── window start anchoring ────────────────────────────────────────────────────
+// Regression: an account created 2026-09-10T10:23Z showed "week 2/65%" because the week
+// start was computed as resets_at−7d = Sep 6 — four days before the account existed.
+const WK = 7 * 24 * 3600;
+const BORN = Date.parse("2026-09-10T10:23:18Z") / 1000;   // Anthropic accountCreatedAt
+const RESET = 1789282800;                                  // observed seven_day.resets_at
+const NOW = Date.parse("2026-09-10T20:30:38Z") / 1000;     // when the bad bar was seen
+
+test("week elapsed is anchored at account creation, not resets_at−7d", () => {
+  const pct = Math.round(windowElapsed(RESET, WK, BORN, NOW) * 100);
+  // The account opened its window 10.1h ago and it resets in 68.6h, so 10.1/68.6 = 15%.
+  // The bug rendered 65% — (now − (resets_at−7d)) / 7d, a span the account never lived in.
+  assert.equal(pct, 15, `expected 15% elapsed for a 10h-old account, got ${pct}%`);
+  assert.notEqual(pct, 65, "65% is the fabricated-start reading");
+});
+
+test("the fabricated start is rejected outright", () => {
+  const { start } = windowSpan(RESET, WK, BORN);
+  assert.ok(start >= BORN, "window start must never predate the account");
+  assert.equal(start, BORN, "a young account anchors exactly at creation");
+});
+
+test("an account older than the window is unaffected (clamp is a no-op)", () => {
+  const old = RESET - 90 * 24 * 3600;                      // 90d-old account
+  const { start, span } = windowSpan(RESET, WK, old);
+  assert.equal(start, RESET - WK, "old account keeps resets_at−7d");
+  assert.equal(span, WK, "and a full 7d span");
+});
+
+test("no accountCreatedAt → exactly the old behavior", () => {
+  const { start, span } = windowSpan(RESET, WK, 0);
+  assert.equal(start, RESET - WK);
+  assert.equal(span, WK);
+});
+
+test("elapsed stays within 0..1 at the window edges", () => {
+  assert.equal(windowElapsed(RESET, WK, 0, RESET + 5000), 1, "past reset clamps to 1");
+  assert.equal(windowElapsed(RESET, WK, 0, RESET - WK - 5000), 0, "before start clamps to 0");
 });

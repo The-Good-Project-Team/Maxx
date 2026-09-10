@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { turnCount } from "./turns.mjs";
-import { plausibleReset } from "./pace.mjs";
+import { plausibleReset, windowSpan, windowElapsed } from "./pace.mjs";
 import { sessionShare } from "./session.mjs";
 import { weighUsage } from "./limit.mjs";
 
@@ -675,17 +675,29 @@ function main() {
   // how far into each window you are (the pace line): elapsed = time-in / window-span. The 5h span
   // start clamps to the account epoch — a just-switched account did NOT start its window resets−5h
   // ago, and the unclamped math read "51% elapsed, 50pts behind" on an account 90 minutes old.
-  // The 7d week does NOT get this clamp: accountSince is when THIS LEDGER started tracking (a
-  // ledger reset, an account re-link), not when Anthropic's actual weekly window opened. A ledger
-  // that's 2 days old on an account that's been live for months clamped week-start to 2 days ago
-  // and read "week 49/10%" — 10% elapsed instead of the true ~59%. Anthropic's resets_at is the
-  // only trustworthy anchor for the week window; use it unclamped.
+  //
+  // The week clamps too, but to a DIFFERENT anchor, and the distinction is the whole bug history:
+  //   - accountSince (local ledger) is when THIS LEDGER started tracking — a ledger reset or an
+  //     account re-link, NOT when Anthropic's weekly window opened. A 2-day-old ledger on a
+  //     months-old account clamped week-start to 2 days ago and read "week 49/10%" — 10% elapsed
+  //     against a true ~59%. It also drifts: seen stamped 2026-08-11 on an account Anthropic says
+  //     was created 2026-09-10. Never anchor the week to it.
+  //   - accountCreatedAt (Anthropic's stamp) cannot drift and cannot be wrong: no rate-limit
+  //     window can predate the account itself. Unclamped, `resets_at − 7d` fabricated a start of
+  //     Sep 6 for an account born Sep 10 and read "week 2/65%" — 65% elapsed against a true ~5%.
+  // So: floor the week start at account creation, and leave it at resets_at−7d for any account
+  // older than the window (the overwhelmingly common case, where this clamp is a no-op).
   const nowS = Date.now() / 1000;
   const acctS = ((win && win.accountSince) || 0) / 1000;
-  const spanOf = (resetAt, winSec, clamp) => { const start = clamp ? Math.max(resetAt - winSec, acctS) : resetAt - winSec; return { start, span: Math.max(1, resetAt - start) }; };
-  const elapsedOf = (resetAt, winSec, clamp) => { const { start, span } = spanOf(resetAt, winSec, clamp); return Math.max(0, Math.min(1, (nowS - start) / span)); };
+  const bornS = ((win && win.accountCreatedAt) || 0) / 1000;
+  // windowSpan/windowElapsed live in pace.mjs so this decision is unit-testable (render.mjs
+  // runs main() and reads homedir() at import). `clamp` picks the floor: "week" → account
+  // creation, true → the 5h ledger epoch, false → none.
+  const floorFor = (clamp) => (clamp === "week" ? bornS : clamp ? acctS : 0);
+  const spanOf = (resetAt, winSec, clamp) => windowSpan(resetAt, winSec, floorFor(clamp));
+  const elapsedOf = (resetAt, winSec, clamp) => windowElapsed(resetAt, winSec, floorFor(clamp), nowS);
   const e5 = haveQuota ? elapsedOf(rl.five_hour.resets_at, 5 * 3600, true) : 0;
-  const e7 = haveWeek ? elapsedOf(rl.seven_day.resets_at, 7 * 24 * 3600, false) : 0;
+  const e7 = haveWeek ? elapsedOf(rl.seven_day.resets_at, 7 * 24 * 3600, "week") : 0;
   // cache reuse as a plain %, colored by the same heat thresholds (low reuse = burning
   // fresh tokens). A number, not a mood word, so it can't read as "all's well" next to
   // an off-pace line.
@@ -701,7 +713,7 @@ function main() {
 
   // pace per wall: session (5h) and weekly (7d) — will either hit its cap before it resets?
   const p5 = haveQuota ? paceOf(rl.five_hour, spanOf(rl.five_hour.resets_at, 5 * 3600, true).span, quota) : { ok: false, hot: false };
-  const p7 = haveWeek ? paceOf(rl.seven_day, spanOf(rl.seven_day.resets_at, 7 * 24 * 3600, false).span, week) : { ok: false, hot: false };
+  const p7 = haveWeek ? paceOf(rl.seven_day, spanOf(rl.seven_day.resets_at, 7 * 24 * 3600, "week").span, week) : { ok: false, hot: false };
 
   // ── derived, machine-readable: every number the bars compute — time left, tokens burned, and
   //    needPerMin — as plain fields, so an agent can read ~/.maxx/status.json (or
@@ -722,7 +734,7 @@ function main() {
              secLeft, minLeft: Math.round(minLeft), resetIn: resetIn(resetAt), needPerMin, pacePerMin };
   }
   const sStat = windowStat(used5, realMax, q5, haveQuota ? rl.five_hour.resets_at : 0, haveQuota ? spanOf(rl.five_hour.resets_at, 5 * 3600, true).span : 5 * 3600);
-  const wStat = windowStat(used7, cap7s, w7, haveWeek ? rl.seven_day.resets_at : 0, haveWeek ? spanOf(rl.seven_day.resets_at, 7 * 24 * 3600, false).span : 7 * 24 * 3600);
+  const wStat = windowStat(used7, cap7s, w7, haveWeek ? rl.seven_day.resets_at : 0, haveWeek ? spanOf(rl.seven_day.resets_at, 7 * 24 * 3600, "week").span : 7 * 24 * 3600);
   // pace gap (points): elapsed − used. + = behind even-burn (under-using), − = ahead. Cap-independent.
   sStat.elapsedPct = Math.round(e5 * 100); sStat.behindPts = Math.round((e5 - q5) * 100);
   wStat.elapsedPct = Math.round(e7 * 100); wStat.behindPts = Math.round((e7 - w7) * 100);

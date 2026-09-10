@@ -47,3 +47,33 @@ export function plausibleReset(reset, nowSec) {
   if (!reset || reset <= 0) return 0;
   return reset - nowSec <= 8 * 24 * 3600 ? reset : 0;
 }
+
+/**
+ * Where a rate-limit window actually STARTED, in epoch seconds.
+ *
+ * The naive answer — resets_at − windowSpan — is right only for an account older than the
+ * window. It silently fabricates a start otherwise, and that fabrication has shipped twice:
+ * an account created 2026-09-10 rendered "week 2/65%" because resets_at−7d put the week's
+ * start at Sep 6, four days before the account existed. True elapsed was ~5%.
+ *
+ * `bornSec` is Anthropic's accountCreatedAt. It is the only sound floor: no window can open
+ * before its account does. It is NOT the local ledger's `since` (which restamps on login/dir
+ * churn and has been observed a month stale) — anchoring the week to that caused the mirror
+ * bug, "week 49/10%" on a months-old account with a 2-day-old ledger.
+ *
+ * Returns { start, span }. With no usable bornSec this is exactly the old behavior, so an
+ * account older than the window (the common case) is unaffected.
+ */
+export function windowSpan(resetAt, winSec, bornSec) {
+  const naive = resetAt - winSec;
+  const start = bornSec > 0 ? Math.max(naive, bornSec) : naive;
+  return { start, span: Math.max(1, resetAt - start) };
+}
+
+/**
+ * Fraction of a window elapsed, clamped to 0..1, anchored by windowSpan.
+ */
+export function windowElapsed(resetAt, winSec, bornSec, nowSec) {
+  const { start, span } = windowSpan(resetAt, winSec, bornSec);
+  return Math.max(0, Math.min(1, (nowSec - start) / span));
+}
