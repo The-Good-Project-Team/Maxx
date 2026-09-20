@@ -1056,41 +1056,16 @@ function main() {
   const weekP = weekLive != null ? Math.round(weekLive * 100) : haveWeek ? Math.round(week * 100) : null;
   if (weekP != null) {
     const weekLine = weekResetOk && haveWeek ? Math.round(e7 * 100) : null;
-    // ── the week, in hours ──
-    // A percent answers "where am I in the week", which is not the question. The question is "do I
-    // make it to the reset", and that is two hour-figures: CLOCK (wall-time until the week resets)
-    // against RUNWAY (how long the budget lasts at the rate it is being burned).
-    //
-    //   week 92h/75h −2h   → clock 92h, budget dies in 75h, and the last reading cost 2 hours.
-    //
-    // The verdict is the comparison, and it is the whole point: runway ≥ clock means you arrive at
-    // the reset with budget in hand, so GREEN; runway < clock means you run dry early and the gap
-    // is how long you sit locked out, so RED. Colour lands on the runway — the clock is a fact
-    // about the calendar and never changes colour, the same split the used/line pair uses.
-    //
-    // Idle burns nothing, so there is no rate to project and runway is null: print the clock alone
-    // rather than "∞" or a stale projection. The percent is kept as the fallback for the case where
-    // there is no reset clock at all, since a number beats an empty cell.
-    const clock = clockH != null ? Math.max(0, Math.round(clockH)) : null;
-    const rw = runwayH != null ? Math.max(0, Math.round(runwayH)) : null;
-    if (clock != null) {
-      // 5% dead band on the comparison, so a wobble in the 5-min burn either side of "exactly
-      // makes it" does not flip the cell red and back on consecutive renders.
-      const dry = rw != null && rw < clockH * 0.95;
-      put(3, 0, faint(DIM, "week ") + fg(DIM, `${clock}h`)
-        + (rw != null ? faint(DIM, "/") + fg(dry ? RED : GREEN, `${rw}h`) : ""));
-    } else {
-      put(3, 0, faint(DIM, "week ") + fg(INK, weekP + "%"));
-    }
-    // ── the delta — the only number here that responds to easing off in the last ten minutes ──
-    // Runway jitters with the 5-minute burn window; its CHANGE is the signal. + = bought hours
-    // back (green, you did the right thing), − = spent them (amber, not red: red belongs to the
-    // verdict above, and a hot minute inside a healthy week is not an emergency). Sub-hour moves
-    // are noise and print nothing, which keeps the cell still while the burn holds steady.
-    if (runwayDeltaH != null && Math.abs(runwayDeltaH) >= 1) {
-      const d = Math.round(runwayDeltaH);
-      put(3, 5, fg(d > 0 ? GREEN : AMBER, `${d > 0 ? "+" : ""}${d}h`));
-    }
+    // ── the week, as used/pace percents ──
+    // "116h/0h" told the user nothing: the runway projection lives and dies on a 5-minute burn
+    // window and read as zero or absurd more often than not. Back to the pair the session cell
+    // uses — USED against where the calendar says you should be — because "am I ahead of pace"
+    // is the question the week actually answers, and both numbers share Anthropic's denominator.
+    // The runway/delta figures are still computed into status.json for the gate; they just do not
+    // occupy the one week cell on the bar.
+    put(3, 0, pair("week", weekP, weekLine, {
+      over: weekLine != null && weekP - weekLine > 5, wall: weekP >= 95 }));
+    if (wStat.resetIn) put(3, 5, faint(DIM, wStat.resetIn));
   }
 
   // ── who and where, TRAILING ──

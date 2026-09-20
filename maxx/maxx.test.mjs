@@ -154,13 +154,11 @@ test("render: the session reading is Anthropic's 5h %, not our paced-share ratio
   const m = bar.match(/session (\d+)/);
   assert.ok(m, `no session reading in the bar: ${JSON.stringify(bar)}`);
   assert.equal(Number(m[1]), 26, "session reading must equal stdin's five_hour used_percentage");
-  // The week beside it no longer answers in percent at all — it reads in hours (clock against
-  // runway), because "do I make it to the reset" is the question the week actually raises. Its own
-  // denominator is still Anthropic's, and that invariant is covered by the --status tests above;
-  // what matters HERE is only that the session reading did not leak into the week's cell.
-  const w = bar.match(/week (\d+)h/);
+  // The week beside it is Anthropic's 7d % (covered by the --status tests above); what matters
+  // HERE is only that the session reading did not leak into the week's cell.
+  const w = bar.match(/week (\d+)/);
   assert.ok(w, `no week reading in the bar: ${JSON.stringify(bar)}`);
-  assert.equal(Number(w[1]), 144, "week clock = wall-hours to the 7d reset, not a percentage");
+  assert.equal(Number(w[1]), 22, "week reading must equal stdin's seven_day used_percentage");
 });
 
 // "Fable 5.1" fell through to the 8-glyph cut and printed "fable 5." — a family that reads as a
@@ -184,15 +182,15 @@ test("render: fable is a family, not an 8-glyph cut", () => {
   assert.doesNotMatch(bar, /fable 5\./);
 });
 
-// ── the week reads in HOURS, because that is the unit the decision is made in ──────────────────
-// "week 22%" cannot answer the only question the week ever raises at 3am on Thursday: do I make it
-// to the reset. That answer is two hour-figures — the CLOCK to reset against the RUNWAY the budget
-// buys at the current burn — and their comparison is the verdict. Percent is kept only for the
-// case where there is no reset clock to count down at all.
+// ── the week reads as USED/PACE percents ────────────────────────────────────────────────────
+// "week 116h/0h" answered nothing: the runway projection rides a 5-minute burn window and read as
+// zero or absurd far more often than it read true. The pair the session cell uses — used % against
+// the calendar's pace % on Anthropic's denominator — is what the week is asked at a glance.
+// Runway and its delta stay in status.json for the gate; they no longer occupy the bar cell.
 //
-// A ledger is required for any of it: burn comes from ~/.maxx/window.json, and CLAUDE_CONFIG_DIR
-// suffixes every file under it (render.mjs:323), so it is cleared or the render writes its status
-// somewhere this test cannot find.
+// A ledger is still required for the status tests: burn comes from ~/.maxx/window.json, and
+// CLAUDE_CONFIG_DIR suffixes every file under it (render.mjs:323), so it is cleared or the render
+// writes its status somewhere this test cannot find.
 const ESC = "";
 const cellOf = (raw) => raw.match(new RegExp(`week[\\s\\S]*?(?=${ESC}\\[2;38;2;129;103;162m {2})`))[0];
 const cleanEnv = (home) => { const e = { ...process.env, HOME: home, COLUMNS: "200" }; delete e.CLAUDE_CONFIG_DIR; return e; };
@@ -226,56 +224,16 @@ const freshHome = () => {
   return home;
 };
 
-test("render: the week is clock-hours over runway-hours, not a percent", () => {
+test("render: the week is used% over pace%, never hours", () => {
   const home = freshHome();
-  ledger(home, 2_000_000);                       // 2M in 5 min = 24M/hr against an 85M headroom
-  const bar = renderBar(home, weekStdin("wk-hours"));
-  // 6 days of clock left; the budget at this burn does not last anywhere near it.
-  const m = bar.match(/week (\d+)h\/(\d+)h/);
-  assert.ok(m, `expected "week <clock>h/<runway>h" in the bar: ${JSON.stringify(bar)}`);
-  assert.equal(Number(m[1]), 144, "clock = wall-hours until the 7d window resets");
-  assert.ok(Number(m[2]) < Number(m[1]), "burning this hot must show a runway short of the clock");
-  assert.doesNotMatch(bar, /week \d+%/, "the percent reading is replaced, not printed beside it");
-});
-
-// The verdict is the COMPARISON, and it is the whole reason the cell is two numbers. runway short
-// of the clock = you run dry before the reset and sit locked out for the gap, which is the one
-// week-state worth a red. Comfortably past it = you arrive with budget in hand.
-// The exact RGB is theme-dependent (light/dark variants, and a palette file can override every
-// colour at render.mjs:133), so asserting a triple would pin this test to one theme. What must hold
-// in EVERY theme is the contrast: the two states paint the runway differently, and the dry one
-// shares its colour with the session wall — the bar's established "this is the emergency" ink.
-test("render: runway short of the clock reads as the wall, past it does not", () => {
-  const colourOf = (cell) => (cell.match(/\[38;2;(\d+;\d+;\d+)m(\d+)h\[0m$/) || [])[1];
-  const hot = freshHome();
-  ledger(hot, 2_000_000);                        // dies in ~4h against 144h of clock
-  const hotCell = cellOf(renderRaw(hot, weekStdin("wk-hot")));
-  const hotColour = colourOf(hotCell);
-  assert.ok(hotColour, `no runway colour found: ${JSON.stringify(hotCell)}`);
-
-  const cool = freshHome();
-  // Only the RECENT bucket changes. The history stays at 2M because it is what the weekly cap is
-  // inferred from (tok7 ÷ Anthropic's %) — shrink it too and the cap shrinks with it, which is the
-  // exact cancellation that made runway a constant before the deflation fix.
-  ledger(cool, 1000);                            // a trickle: runway far beyond the clock
-  const coolCell = cellOf(renderRaw(cool, weekStdin("wk-cool")));
-  const coolColour = colourOf(coolCell);
-  assert.ok(coolColour, `no runway colour found: ${JSON.stringify(coolCell)}`);
-  assert.notEqual(hotColour, coolColour, "running dry and making it must not look the same");
-
-  // and the dry one is the SAME ink the session wall uses at 90%+ — the verdict colours are shared
-  // across the bar, so a red week and a red session mean the same thing to the eye.
-  const walled = freshHome();
-  const wallBar = renderRaw(walled, JSON.stringify({
-    session_id: "wk-wall",
-    rate_limits: {
-      five_hour: { used_percentage: 95, resets_at: Math.floor(Date.now() / 1000) + 3600 },
-      seven_day: { used_percentage: 22, resets_at: in6d },
-    },
-    context_window: { used_percentage: 10, context_window_size: 1000000 },
-    model: { display_name: "Opus" },
-  }));
-  assert.ok(wallBar.includes(hotColour), `the dry-week ink must be the bar's wall ink: ${hotColour}`);
+  ledger(home, 2_000_000);                       // a hot burn must not drag hours back onto the bar
+  const bar = renderBar(home, weekStdin("wk-pct"));
+  const m = bar.match(/week (\d+)\/(\d+)%/);
+  assert.ok(m, `expected "week <used>/<pace>%" in the bar: ${JSON.stringify(bar)}`);
+  assert.equal(Number(m[1]), 22, "used = Anthropic's seven_day used_percentage");
+  // reset is 6d out of a 7d window → 1 day elapsed → pace ≈ 14%
+  assert.ok(Number(m[2]) >= 13 && Number(m[2]) <= 15, `pace must be the calendar's elapsed share: ${m[2]}`);
+  assert.doesNotMatch(bar, /week \d+h/, "the hours reading is gone, not printed beside the pair");
 });
 
 // Runway jitters with the 5-minute burn window, so its CHANGE is what carries signal: it is the
@@ -300,38 +258,6 @@ test("render: easing off buys runway, and the delta says how much", () => {
   const s = status().runway;
   assert.ok(s.hours > first.hours, `a lighter burn must project a longer runway: ${first.hours} → ${s.hours}`);
   assert.ok(s.deltaH > 0, `easing off must show a positive delta: ${s.deltaH}`);
-});
-
-// …and the bought hours reach the BAR as a "+Nh" token, which is the only form the user ever sees.
-// The previous reading is seeded straight into status.json rather than produced by a first bar
-// render: a bar render spawns limit.mjs to refresh window.json (render.mjs:866) and that wipes the
-// fixture ledger, so back-to-back bar renders leave the second one with no burn to project from.
-// Seeding is also the truer shape of the thing under test — in a real session the previous reading
-// comes from a render ~1s ago, not from one this process just made.
-test("render: the runway delta reaches the bar as a +Nh token", () => {
-  const home = freshHome();
-  ledger(home, 200_000);                         // now: eased off
-  const statusPath = path.join(home, ".maxx", "status.json");
-  const seeded = JSON.parse(execFileSync("node", [path.join(HERE, "render.mjs"), "--status"],
-    { input: weekStdin("wk-delta-bar"), env: cleanEnv(home), encoding: "utf8" }));
-  // the same reading, but taken when the runway was much shorter → easing off bought the difference
-  seeded.runway = { ...seeded.runway, ts: Date.now() - 60_000, hours: seeded.runway.hours - 30 };
-  writeFileSync(statusPath, JSON.stringify(seeded));
-
-  const bar = renderBar(home, weekStdin("wk-delta-bar"));
-  assert.match(bar, /week \d+h/, `the week cell must still render: ${JSON.stringify(bar)}`);
-  assert.match(bar, /\+\d+h/, `expected a "+Nh" delta token in the bar: ${JSON.stringify(bar)}`);
-});
-
-// Idle is not infinite runway, it is NO RATE TO PROJECT FROM. Printing "∞" (or a stale projection,
-// or a bare clock dressed as a verdict) would be a fabricated number in the one cell that exists
-// to be trusted. Falls back to the clock alone.
-test("render: no burn means no runway claimed, just the clock", () => {
-  const home = freshHome();                      // no window.json at all → burn5 null
-  const bar = renderBar(home, weekStdin("wk-idle"));
-  assert.match(bar, /week 144h/, `idle must still show the clock: ${JSON.stringify(bar)}`);
-  assert.doesNotMatch(bar, /week 144h\//, "with no burn rate there is no runway to print");
-  assert.doesNotMatch(bar, /∞/, "never a fabricated infinity");
 });
 
 // The id on the bar exists to name THIS chat when talking to another one. That only works if it is
