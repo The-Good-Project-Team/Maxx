@@ -40,6 +40,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractSetupToken } from "./token.mjs";
 import { shouldUpdate } from "./update.mjs";
+import { makeKeep } from "./ledger.mjs";
 
 const HOME = homedir();
 const DEFAULT_DIR = path.join(HOME, ".claude", "projects");
@@ -130,7 +131,7 @@ const weightedTok = (u, model) =>
 
 // Sum only usage records strictly newer than `sinceSec`, per file, keeping the
 // root labels + per-model billed. Returns the new records' contribution.
-async function ingestSince(file, sinceSec, seen) {
+async function ingestSince(file, sinceSec, seen, keep) {
   let billed = 0, out = 0, turns = 0, first = 0, last = 0;
   let inp = 0, cacheR = 0, cacheW = 0, raw = 0, tools = 0, agentTurns = 0;
   let ctx = 0, lastModel = null; // live context size = latest request's full input
@@ -142,6 +143,7 @@ async function ingestSince(file, sinceSec, seen) {
     if (!line || line[0] !== "{") continue;
     let rec;
     try { rec = JSON.parse(line); } catch { continue; }
+    if (keep && !keep(rec, file)) continue; // shared transcripts: another login's turn
     if (rec.customTitle) custom = rec.customTitle;
     if (rec.aiTitle) ai = rec.aiTitle;
     if (rec.agentName) agent = rec.agentName;
@@ -572,8 +574,9 @@ async function emitRoot(root, { quiet, nowSec, cursorAll, anchor }) {
   const roots = new Map();
   let maxTs = sinceSec;
   const seen = new Set(); // dedup requestId/uuid across all files this cycle
+  const keep = makeKeep(root.dir, root.uuid);
   for (const f of files) {
-    const s = await ingestSince(f, sinceSec, seen);
+    const s = await ingestSince(f, sinceSec, seen, keep);
     if (!s.billed) continue;
     const c = classify(root.dir, f);
     const key = `${c.project}/${c.root}`;

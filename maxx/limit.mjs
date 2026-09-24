@@ -17,6 +17,7 @@ import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import path from "node:path";
+import { makeKeep, accountOf } from "./ledger.mjs";
 
 const HOME = homedir();
 // Per-login session scope: a CLAUDE_CONFIG_DIR session scans ITS OWN projects dir,
@@ -119,9 +120,13 @@ function limitHitOverride(week, weekResetAt, now) {
   if (h && h.resetAt * 1000 > now && h.at <= now) return { week: 1, weekResetAt: h.resetAt };
   return { week, weekResetAt };
 }
-function parseLine(line, seen) {
+// shared transcripts: every login's projects/ may be the same folder — keep only THIS login's turns
+let keep = null;
+const keeper = () => keep || (keep = makeKeep(PROJECTS, accountOf(CLAUDE_DIR)));
+function parseLine(line, seen, file) {
   if (!line || line[0] !== "{") return null;
   let r; try { r = JSON.parse(line); } catch { return null; }
+  if (file && !keeper()(r, file)) return null;
   if (line.includes("hit your weekly limit")) noteLimitHit(r);
   const u = r?.message?.usage; if (!u) return null;
   const tok = weighUsage(u, r?.message?.model || "");
@@ -139,7 +144,7 @@ async function collect() {
     let rl;
     try { rl = createInterface({ input: createReadStream(f, { encoding: "utf8" }), crlfDelay: Infinity }); }
     catch { continue; }
-    for await (const line of rl) { const p = parseLine(line, seen); if (p) pts.push(p); }
+    for await (const line of rl) { const p = parseLine(line, seen, f); if (p) pts.push(p); }
   }
   pts.sort((a, b) => a[0] - b[0]);
   return pts;
@@ -168,7 +173,7 @@ async function collectIncremental(offsets) {
     if (lastNl < 0) { newOff[f] = off; continue; }          // no complete line yet
     const complete = chunk.slice(0, lastNl);
     newOff[f] = off + Buffer.byteLength(complete, "utf8") + 1; // advance past the last newline
-    for (const line of complete.split("\n")) { const p = parseLine(line, seen); if (p) pts.push(p); }
+    for (const line of complete.split("\n")) { const p = parseLine(line, seen, f); if (p) pts.push(p); }
   }
   return { pts, offsets: newOff };
 }

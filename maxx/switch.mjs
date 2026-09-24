@@ -73,7 +73,10 @@ export function pickAccount(accounts = [], { walledAt = DEFAULT_WALLED_AT } = {}
  * Returns null without a configDir rather than inventing a path — pointing CLAUDE_CONFIG_DIR
  * at a directory that was never logged in produces a confusing auth prompt, not a switch.
  */
-export function switchCommand(account) {
+export function switchCommand(account, home = process.env.HOME) {
   if (!account?.configDir) return null;
+  // The default login must be reached by UNSETTING the var: an explicit CLAUDE_CONFIG_DIR, even
+  // ~/.claude, makes Claude read ~/.claude/.claude.json instead of ~/.claude.json — a different login.
+  if (home && account.configDir.replace(/\/+$/, "") === `${home}/.claude`) return "unset CLAUDE_CONFIG_DIR";
   return `export CLAUDE_CONFIG_DIR=${JSON.stringify(account.configDir)}`;
 }

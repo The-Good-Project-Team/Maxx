@@ -28,6 +28,7 @@ const DEFAULT_DIR = path.join(CLAUDE_DIR, "projects");
 // session-scoped cache suffix — same rule as render/limit/gate/emit
 const SUF = process.env.CLAUDE_CONFIG_DIR ? "-" + path.basename(CLAUDE_DIR).replace(/^\.claude-?/, "") : "";
 import * as wireMod from "./wire.mjs";
+import { makeKeep, accountOf } from "./ledger.mjs";
 const CONFIG_DIR = path.join(HOME, ".maxx"); // local state dir (window.json / rl.json) — read-only here
 
 // ─── args ───────────────────────────────────────────────────────────────────
@@ -157,6 +158,7 @@ async function ingestFile(file, acc) {
     }
     const usage = rec?.message?.usage;
     if (!usage) continue;
+    if (acc.keep && !acc.keep(rec, file)) continue; // another login's turn (shared transcripts)
 
     const inp = usage.input_tokens || 0;
     const cc = usage.cache_creation_input_tokens || 0;
@@ -493,6 +495,7 @@ export async function collectStats(dir = DEFAULT_DIR) {
     seen: new Set(),
     messages: 0,
     since: accountEpoch(),
+    keep: makeKeep(dir, accountOf(CLAUDE_DIR)),
   };
   const files = await findSessionFiles(dir);
   for (const f of files) {

@@ -62,3 +62,8 @@ test("switch command is the env var, and refuses to invent a config dir", () => 
   assert.equal(switchCommand(REIF), `export CLAUDE_CONFIG_DIR="${process.env.HOME}/.claude-reif"`);
   assert.equal(switchCommand({ handle: "nodir" }), null);
 });
+
+test("the default login is reached by unsetting the var, never by pointing it at ~/.claude", () => {
+  assert.equal(switchCommand(TGP), "unset CLAUDE_CONFIG_DIR");
+  assert.equal(switchCommand({ ...TGP, configDir: `${process.env.HOME}/.claude/` }), "unset CLAUDE_CONFIG_DIR");
+});

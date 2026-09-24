@@ -41,7 +41,7 @@ export async function probeAccount(base, { handle, secret }) {
   try {
     const res = await fetch(`${base}/api/u/${encodeURIComponent(handle)}/budget`, {
       headers: { authorization: `Bearer ${secret}`, "user-agent": "maxx-setup/1.0" },
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(Number(process.env.MAXX_PROBE_TIMEOUT_MS) || 20000), // the launcher asks for less
     });
     if (!res.ok) return { handle, error: `HTTP ${res.status}` };
     const b = await res.json();
