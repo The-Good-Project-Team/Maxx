@@ -43,11 +43,16 @@ export function loadLedger(file = ledgerPath()) {
   return map;
 }
 
-/** The account that owned `sessionId` at `tsMs`, or null if the session was never tagged. */
+/**
+ * The account that owned `sessionId` at `tsMs`, or null if the session was never tagged — or
+ * did not exist yet. A turn older than the session's first tag is copied history: `--fork-session`
+ * rewrites old turns under the new id, keeping their timestamps. That burn is counted where it
+ * happened (the original session), never again here. Backfilled sessions are tagged at ts 0.
+ */
 export function accountAt(ledger, sessionId, tsMs) {
   const list = ledger.get(sessionId);
-  if (!list) return null;
-  let who = list[0].account; // a turn before the first tag is still that session's first account
+  if (!list || tsMs < list[0].ts) return null;
+  let who = null;
   for (const e of list) { if (e.ts <= tsMs) who = e.account; else break; }
   return who;
 }

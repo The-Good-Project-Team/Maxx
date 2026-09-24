@@ -14,10 +14,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const A = "aaaa1111-0000-0000-0000-000000000001";
 const B = "bbbb2222-0000-0000-0000-000000000002";
 const C = "cccc3333-0000-0000-0000-000000000003";
-const EXPECT = { [A]: 110, [B]: 1200, [C]: 5000 };
+const EXPECT = { [A]: 110, [B]: 1207, [C]: 5000 };
 
 // Three logins (~/.claude = A, ~/.claude-b = B, ~/.claude-c = C) sharing ~/.claude-shared/projects.
 // s3 was started on A and resumed on B: its first turn is A's, its second is B's.
+// s5 is `claude -r s1 --fork-session` run on B: Claude copies s1's turns (same requestIds and
+// timestamps) under the NEW session id — those are A's burn, only the new turn is B's.
 function makeHome({ ledger = true } = {}) {
   const home = mkdtempSync(path.join(tmpdir(), "maxx-ledger-"));
   const now = Date.now();
@@ -32,6 +34,7 @@ function makeHome({ ledger = true } = {}) {
   put("-projb", "s2", [row("s2", "r2", at(50), 200)]);
   put("-projc", "s3", [row("s3", "r3", at(40), 10), row("s3", "r4", at(10), 1000)]);
   put("-projd", "s4", [row("s4", "r5", at(30), 5000)]);
+  put("-proja", "s5", [row("s5", "r1", at(60), 100), row("s5", "r6", at(5), 7)]);
   writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ oauthAccount: { accountUuid: A, emailAddress: "a@x.com" } }));
   for (const [d, u] of [[".claude", null], [".claude-b", B], [".claude-c", C]]) {
     mkdirSync(path.join(home, d), { recursive: true });
@@ -52,7 +55,7 @@ function makeHome({ ledger = true } = {}) {
     writeFileSync(path.join(home, ".maxx", "session-accounts.jsonl"), [
       { sessionId: "s1", account: A, ts: 0 }, { sessionId: "s2", account: B, ts: 0 },
       { sessionId: "s3", account: A, ts: 0 }, { sessionId: "s3", account: B, ts: resume },
-      { sessionId: "s4", account: C, ts: 0 },
+      { sessionId: "s4", account: C, ts: 0 }, { sessionId: "s5", account: B, ts: now - 8 * 60000 },
     ].map((e) => JSON.stringify(e)).join("\n") + "\n");
   }
   return home;
@@ -74,6 +77,7 @@ test("ledger: a resumed session's turns split at the resume", () => {
   assert.equal(accountAt(led, "s3", Date.now() - 40 * 60000), A);
   assert.equal(accountAt(led, "s3", Date.now()), B);
   assert.equal(accountAt(led, "nope", Date.now()), null);
+  assert.equal(accountAt(led, "s5", Date.now() - 60 * 60000), null, "a fork's copied history is not the fork's burn");
   assert.equal(sessionOfFile("/p/-x/s9/subagents/agent-1.jsonl"), "s9");
 });
 
@@ -83,7 +87,7 @@ test("ledger: backfill tags every session in a login's projects dir, once", () =
   const prev = process.env.HOME;
   process.env.HOME = home; // accountOf() resolves ~/.claude against HOME
   try {
-    assert.equal(backfill(path.join(home, ".claude-b"), file).added, 4);
+    assert.equal(backfill(path.join(home, ".claude-b"), file).added, 5);
     assert.equal(backfill(path.join(home, ".claude-c"), file).added, 0, "already-tagged sessions are skipped");
   } finally { process.env.HOME = prev; }
   assert.equal(loadLedger(file).get("s1")[0].account, B);
@@ -116,5 +120,5 @@ test("emit: three roots over one folder ship each turn once, to its owner", () =
 test("shared folder with no ledger: an untagged session is not counted once per login", () => {
   const home = makeHome({ ledger: false });
   const total = [A, B, C].reduce((s, u) => s + JSON.parse(run("tracker.mjs", ["--json"], home, u)).totals.tokens, 0);
-  assert.ok(total <= 6310, `counted ${total} tokens from 6310 on disk`);
+  assert.ok(total <= 6417, `counted ${total} tokens from 6417 on disk`);
 });
