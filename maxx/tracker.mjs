@@ -45,6 +45,7 @@ function parseArgs(argv) {
     else if (a === "setup") out.cmd = "setup";
     else if (a === "switch" || a === "use") out.cmd = "switch";
     else if (a === "accounts" || a === "logins") out.cmd = "accounts";
+    else if (a === "--fast") out.fast = true;
     // `who <id>` resolves a session tag from the statusline back to a session. The bar prints 8
     // chars of a uuid, which is a PREFIX — enough to name a chat to a peer, useless without
     // something that turns it back into "which repo, which account, still live?".
@@ -563,14 +564,42 @@ if (isMainModule()) {
         else { console.error(`  @${pick.handle} has no known CLAUDE_CONFIG_DIR — set MAXX_DIR_${pick.handle.toUpperCase()}`); process.exitCode = 1; }
       }
     } else if (a.cmd === "accounts") {
-      // Local-only and instant: reads the same per-login rl.json the statusline keeps, so it works
-      // offline and needs no handle/secret. `switch` is the one that goes to the server.
+      // Local first: the same per-login rl.json the statusline keeps, so it is instant and works
+      // offline. But the whole question here is "what is in each tank", and a local cache is
+      // missing exactly when it matters -- a login not opened for weeks has no fresh reading, and
+      // that is also the login most likely to be the idle one worth switching to. So any tank the
+      // cache cannot answer is asked of the server, which knows every anchored account. --fast
+      // skips the round trip.
       const { buildRows, renderAccounts } = await import("./accounts.mjs");
       let liveUuid = null;
       try {
         liveUuid = JSON.parse(readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(HOME, ".claude"), ".claude.json"), "utf8")).oauthAccount?.accountUuid || null;
       } catch {}
-      w(renderAccounts(buildRows(HOME, Date.now() / 1000, liveUuid)));
+      const rows = buildRows(HOME, Date.now() / 1000, liveUuid);
+      const blank = rows.filter((r) => !r.reading);
+      if (blank.length && !a.fast) {
+        try {
+          const { readAccounts, probeAccount } = await import("./setup.mjs");
+          const { base, accounts } = readAccounts();
+          await Promise.all(blank.map(async (r) => {
+            const acct = accounts.find((x) => x.handle === r.handle);
+            if (!acct) return;
+            const p = await probeAccount(base, acct);
+            if (p.error || p.weekPct == null) return;
+            r.reading = true; r.stale = false; r.fromServer = true;
+            r.weekPct = Math.round(p.weekPct * 100);
+            r.fivePct = p.fivePct == null ? null : Math.round(p.fivePct * 100);
+            r.walled = r.fivePct != null && r.fivePct >= 90;
+            // carry the window too, or the row has a budget with no clock to judge it against
+            if (p.weekReset) {
+              r.weekResetAt = typeof p.weekReset === "number" ? p.weekReset : Math.floor(new Date(p.weekReset).getTime() / 1000);
+              const { resetWhen } = await import("./accounts.mjs");
+              r.weekWhen = resetWhen(r.weekResetAt, Date.now() / 1000);
+            }
+          }));
+        } catch { /* offline: the local answer still stands */ }
+      }
+      w(renderAccounts(rows));
     } else if (a.cmd === "who") {
       const { resolveSession, renderWho } = await import("./accounts.mjs");
       if (!a.who) w("  usage: maxx who <id>   (the 8-char tag from the statusline)");

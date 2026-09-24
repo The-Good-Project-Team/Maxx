@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loginDirs, sufFor, untilText, readLogin, buildRows, renderAccounts, resolveSession, renderWho } from "./accounts.mjs";
+import { loginDirs, sufFor, untilText, readLogin, buildRows, renderAccounts, resolveSession, renderWho, paceOf, paceText } from "./accounts.mjs";
 
 const NOW_S = Date.now() / 1000;
 
@@ -28,8 +28,8 @@ function box(opts = {}) {
   const rl = (suf, quota, week, fiveResetAt) => writeFileSync(
     path.join(home, ".maxx", `rl${suf}.json`),
     JSON.stringify({ quota, week, fiveResetAt, weekResetAt: NOW_S + 6 * 24 * 3600, ts: Date.now() }));
-  if (opts.rlDefault !== false) rl("", opts.defaultQuota ?? 0.11, 0.06, NOW_S + 3600);
-  if (opts.rlAlt !== false) rl("-alt", opts.altQuota ?? 0.08, 0.06, NOW_S + 3600);
+  if (opts.rlDefault !== false) rl("", opts.defaultQuota ?? 0.11, opts.defaultWeek ?? 0.06, NOW_S + 3600);
+  if (opts.rlAlt !== false) rl("-alt", opts.altQuota ?? 0.08, opts.altWeek ?? 0.06, NOW_S + 3600);
   writeFileSync(path.join(home, ".maxx", "config.json"), JSON.stringify({
     accounts: { "uuid-default": { handle: "primary" }, "uuid-alt": { handle: "second" } },
   }));
@@ -58,14 +58,14 @@ test("accounts: a login maxx has never rendered says so instead of reading zero"
   const rows = buildRows(home, NOW_S, null);
   const alt = rows.find((r) => r.uuid === "uuid-alt");
   assert.equal(alt.reading, false, "no rl file means no reading");
-  assert.match(renderAccounts(rows), /no reading yet/, "and the render must say that, not '0%'");
+  assert.match(renderAccounts(rows), /not set up yet/, "and the render must say that, not '0%'");
 });
 
 // The one fact the list cannot give you about itself.
 test("accounts: the live account is marked", () => {
   const home = box();
   const out = renderAccounts(buildRows(home, NOW_S, "uuid-alt"));
-  const live = out.split("\n").find((l) => l.includes("LIVE"));
+  const live = out.split("\n").find((l) => l.includes("live now"));
   assert.ok(live && live.includes("@second"), `the signed-in account carries the mark: ${out}`);
 });
 
@@ -73,10 +73,104 @@ test("accounts: the live account is marked", () => {
 test("accounts: a walled login next to a free one names the move", () => {
   const home = box({ defaultQuota: 0.95, altQuota: 0.08 });
   const out = renderAccounts(buildRows(home, NOW_S, "uuid-default"));
-  assert.match(out, /WALLED/, "a 95% 5h reading is the wall");
-  assert.match(out, /back in \d+/, "and a wall must say when it lifts");
+  assert.match(out, /FULL/, "a 95% 5h reading is the wall");
+  assert.match(out, /free again in \d+/, "and a wall must say when it lifts");
   assert.match(out, /maxx switch/, "with a free account in hand, name the move");
   assert.match(out, /@second/, "and name which one");
+});
+
+// The complaint that prompted this: "why do I need a phd to read this". The list answers
+// "which login do I use", so it must lead with the answer and print room LEFT, never used.
+test("accounts: leads with the pick and prints room left, not used", () => {
+  const home = box({ defaultQuota: 0.01, altQuota: 0.01, defaultWeek: 0.54, altWeek: 0.05 });
+  const out = renderAccounts(buildRows(home, NOW_S, "uuid-default"));
+  const first = out.split("\n")[0];
+  assert.match(first, /USE →/, `the first line names the pick: ${out}`);
+  assert.match(first, /@second/, "and it is the account with the most week left (95% vs 46%)");
+  assert.match(out, /95% left/, "prints what is LEFT");
+  assert.match(out, /46% left/, "for every account");
+  assert.ok(!/week 5%/.test(out), `never percent-USED, which reads as its own opposite: ${out}`);
+  assert.ok(!/\d+h\d+m/.test(out), `no raw hour counts to convert: ${out}`);
+});
+
+// A 5h window that is nearly full is the only time it changes the answer.
+test("accounts: the 5h window shows only when it is about to bite", () => {
+  const quiet = renderAccounts(buildRows(box({ defaultQuota: 0.1, altQuota: 0.1 }), NOW_S, null));
+  assert.ok(!/5h/.test(quiet), `a quiet 5h window is noise: ${quiet}`);
+  const tight = renderAccounts(buildRows(box({ defaultQuota: 0.8, altQuota: 0.1 }), NOW_S, null));
+  assert.match(tight, /5h nearly full \(20% left\)/, "a tight one is the brake, so it is named");
+});
+
+// A real bug on this box: a writer built "-" + "" and dropped the DEFAULT login's readings into
+// rl-.json while rl.json sat at 0 bytes. The tank was known; only the filename was wrong.
+test("accounts: a reading under a mangled filename is still found, by account stamp", () => {
+  const home = box();
+  writeFileSync(path.join(home, ".maxx", "rl.json"), "");            // empty, as seen
+  writeFileSync(path.join(home, ".maxx", "rl-.json"), JSON.stringify({
+    quota: 0.02, week: 0.31, weekResetAt: NOW_S + 3 * 86400, ts: Date.now(),
+    account: "uuid-default",
+  }));
+  const row = buildRows(home, NOW_S, null).find((r) => r.uuid === "uuid-default");
+  assert.equal(row.reading, true, "the stamp names the account, so the tank is known");
+  assert.equal(row.weekPct, 31);
+  assert.match(renderAccounts(buildRows(home, NOW_S, null), NOW_S), /69% left/);
+});
+
+// The same box also held a 63-day-old reading whose week had already reset. 67%-used was not a
+// stale-ish number; it described a different week entirely.
+test("accounts: a reading whose window already reset is refused, not printed as current", () => {
+  const home = box();
+  writeFileSync(path.join(home, ".maxx", "rl.json"), JSON.stringify({
+    quota: 0.02, week: 0.67, weekResetAt: NOW_S - 60 * 86400, ts: Date.now() - 63 * 86400000,
+    account: "uuid-default",
+  }));
+  const row = buildRows(home, NOW_S, null).find((r) => r.uuid === "uuid-default");
+  assert.equal(row.reading, false, "an expired window is not a reading");
+  assert.equal(row.stale, true, "but it is different from never having one");
+  const out = renderAccounts(buildRows(home, NOW_S, null));
+  assert.match(out, /tank unknown/, `say the tank is unknown: ${out}`);
+  assert.match(out, /expired 60d ago/, "and how long ago it stopped being true");
+  assert.ok(!/67/.test(out), `never print the dead number: ${out}`);
+});
+
+// Budget alone cannot be judged. 21% left is healthy on the last day and a fire on Monday --
+// the ratio of budget spent to time elapsed is what decides, and it is what the user asked for.
+test("pace: the same budget reads opposite ways at different points in the week", () => {
+  const WEEK = 7 * 86400;
+  // 79% spent, 95% of the week gone: underspent, plenty of room for the time left.
+  const late = { reading: true, weekPct: 79, weekResetAt: NOW_S + 0.05 * WEEK };
+  const pl = paceOf(late, NOW_S);
+  assert.ok(pl.ratio < 0.9, `late-week 79% is under pace, got ${pl.ratio}`);
+  assert.match(paceText(pl), /under/);
+
+  // The same 79%, but on Monday: burning 4x too fast.
+  const early = { reading: true, weekPct: 79, weekResetAt: NOW_S + 0.8 * WEEK };
+  const pe = paceOf(early, NOW_S);
+  assert.ok(pe.ratio > 3.5 && pe.ratio < 4.5, `early-week 79% is ~4x over, got ${pe.ratio}`);
+  assert.match(paceText(pe), /OVER pace/);
+});
+
+test("pace: spending in step with the clock is on pace", () => {
+  const WEEK = 7 * 86400;
+  const even = { reading: true, weekPct: 50, weekResetAt: NOW_S + 0.5 * WEEK };
+  assert.equal(paceText(paceOf(even, NOW_S)), "on pace");
+});
+
+test("pace: no window means no verdict, never a guessed one", () => {
+  assert.equal(paceOf({ reading: true, weekPct: 50, weekResetAt: null }, NOW_S), null);
+  assert.equal(paceText(null), null);
+});
+
+// The pick must follow pace, not raw budget: more budget at a worse point in the week is worse.
+test("accounts: the pick follows pace, not the biggest raw number", () => {
+  const WEEK = 7 * 86400;
+  const rows = [
+    { reading: true, handle: "rich_but_early", weekPct: 60, weekResetAt: NOW_S + 0.8 * WEEK, dir: "/a", uuid: "a" },
+    { reading: true, handle: "lean_but_late",  weekPct: 80, weekResetAt: NOW_S + 0.05 * WEEK, dir: "/b", uuid: "b" },
+  ];
+  const out = renderAccounts(rows, NOW_S);
+  assert.match(out.split("\n")[0], /@lean_but_late/,
+    `20% left late beats 40% left on Monday: ${out}`);
 });
 
 test("accounts: untilText counts down, and says nothing about a reset already past", () => {
