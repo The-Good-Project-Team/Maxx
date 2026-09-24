@@ -11,7 +11,7 @@
  * and the coach hook) — nothing extra to install, nothing to compile. A tiny ANSI
  * compositor stands in for lipgloss.
  */
-import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -316,6 +316,16 @@ function sessionBrief(st) {
 // ─── sidecar state ─────────────────────────────────────────────────────────────
 const HOME = homedir();
 const readJSON = (p, d = {}) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return d; } };
+// A killed/interrupted writeFileSync leaves a truncated (often 0-byte) file that no later
+// tick ever repairs, since the caller only writes when it has fresh data — a single bad
+// write poisons the cache forever (seen live: rl.json stuck 0 bytes for a day). Write to a
+// tmp file in the same dir and rename over the target — rename is atomic, so readers only
+// ever see the old complete file or the new complete file, never a partial one.
+const writeJSONAtomic = (p, data) => {
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data));
+  renameSync(tmp, p);
+};
 // Per-login session scope: a CLAUDE_CONFIG_DIR session reads/writes its own copies of
 // the session-derived caches (rl-gmail.json, window-gmail.json, …) — two logins
 // rendering concurrently must never fight over one file. Suffix rule matches
@@ -512,7 +522,7 @@ function main() {
   // hand the authoritative %s to limit.mjs (the brain reruns it) so it can anchor token caps.
   // stash seven_day.resets_at too: limit.mjs (no stdin of its own) needs it to cut the weekly
   // sum at the real window start instead of a blind rolling 7d — see weekLo below.
-  try { if (liveRL && haveQuota) writeFileSync(MAXX("rl.json"), JSON.stringify({ quota, week, fiveResetAt: rl.five_hour.resets_at || 0, weekResetAt: haveWeek ? rl.seven_day.resets_at : 0, ts: Date.now(), account: sessAccount })); } catch {}
+  try { if (liveRL && haveQuota) writeJSONAtomic(MAXX("rl.json"), { quota, week, fiveResetAt: rl.five_hour.resets_at || 0, weekResetAt: haveWeek ? rl.seven_day.resets_at : 0, ts: Date.now(), account: sessAccount }); } catch {}
   // rl history: append every CHANGE in the observed walls (not every tick) — the audit trail that
   // lets a "bar said 55%, /usage said 100%" incident be reconstructed after the fact.
   try {
@@ -870,7 +880,7 @@ function main() {
     runway: { ts: Date.now(), resetAt: wStat.resetAt, hours: runwayH, clockH, deltaH: runwayDeltaH },
     sessionId: sid,                                         // full id — the bar prints 8 chars of it
   };
-  try { writeFileSync(MAXX("status.json"), JSON.stringify(status)); } catch {}
+  try { writeJSONAtomic(MAXX("status.json"), status); } catch {}
   if (wantStatus) { process.stdout.write(JSON.stringify(status, null, 2) + "\n"); return; }
 
   // refresh window.json (the rolling-token cache limit.mjs owns; the bar + the governor read it). The
