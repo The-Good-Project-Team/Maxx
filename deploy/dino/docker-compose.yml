@@ -1,0 +1,21 @@
+services:
+  maxx:
+    build:
+      context: ../../Maxx
+      dockerfile: ../dino/maxx/Containerfile
+      args:
+        # Set by the deploy step: `MAXX_GIT_SHA=$(git -C ../../Maxx rev-parse HEAD) podman-compose build`.
+        # Falls back to Containerfile's own default ("unknown") if not passed.
+        MAXX_GIT_SHA: ${MAXX_GIT_SHA:-unknown}
+    image: maxx:latest
+    container_name: maxx
+    restart: unless-stopped
+    ports:
+      - "${MAXX_PORT:-8787}:8787"
+    env_file:
+      - .env
+    volumes:
+      - maxx-state:/data
+
+volumes:
+  maxx-state:

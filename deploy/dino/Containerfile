@@ -1,0 +1,33 @@
+# Maxx tally server — plain Node, zero runtime deps (serve.mjs only imports
+# node builtins + sibling files in server/). Slim base is enough.
+#
+# Build context is the Maxx repo itself (see docker-compose.yml: build.context
+# points at ../Maxx) — this Containerfile lives in dino, the code stays in
+# Maxx's own git home.
+FROM node:20-slim
+
+WORKDIR /app
+COPY server/ ./server/
+
+# Stamped by docker-compose.yml's build.args from `git rev-parse HEAD` in the Maxx repo at
+# build time (no .git copied into the image — computed on the host, passed in). Lets a client
+# CLI installed from the same commit compare its own stamped SHA against GET /api/version and
+# know it's behind, without either side maintaining a manually-bumped semver.
+ARG MAXX_GIT_SHA=unknown
+ENV MAXX_GIT_SHA=${MAXX_GIT_SHA}
+
+ENV PORT=8787
+ENV MAXX_STATE_DIR=/data
+# MAXX_OPEN / MAXX_SECRET / MAXX_CRED_KEY / MAXX_CRED_ACCESS: set via .env, not baked in.
+VOLUME /data
+
+EXPOSE 8787
+
+# Catches the hung-but-not-exited failure mode: `restart: unless-stopped` only
+# fires on process exit, so a wedged event loop (port still bound, nothing
+# answering) sits invisible with podman reporting "Up". This hits the real
+# app route (not just the socket) so a stuck handler counts as unhealthy too.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:8787/api/version',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))" || exit 1
+
+CMD ["node", "server/serve.mjs"]
