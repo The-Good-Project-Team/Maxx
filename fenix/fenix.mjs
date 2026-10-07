@@ -666,10 +666,7 @@ if (arg === "--ready") {
   // the truth) — when it is fresh, nothing needs writing by hand: /clear is safe right now.
   let stateFresh = false;
   try { stateFresh = (Date.now() - statSync(path.join(DIR, "state.md")).mtimeMs) / 60000 < 30; } catch {}
-  if (stateFresh) {
-    console.log(`fenix: chat ${chat}% — .fenix/state.md is current. Safe to /clear now; the next session continues from it.`);
-    process.exit(0);
-  }
+  if (stateFresh) process.exit(0);   // auto-compact will roll the context over and state.md keeps the thread: nothing to ask
   console.log(`fenix: chat ${chat}% of its hand-off line. Run /fenix to write the handoff, then /clear — the next session resumes this thread automatically.`);
   process.exit(0);
 }

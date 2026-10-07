@@ -848,7 +848,12 @@ function main() {
   //             in), and against it every chat read 100 by its fortieth turn — pacing is the
   //             session and week rows' job, and this row's job is only "is THIS chat too big".
   const ctxSize = cw_.context_window_size || 0;
-  const ctxLine = ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
+  // 2026-10-07: when auto-compact is pinned early (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, set by the
+  // installer to 25), THAT is the chat's context line — Claude Code rolls the context over there
+  // on its own and state.md keeps the thread, so 100 means "about to compact", not "hand off now".
+  const acPct = Number(process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || 0);
+  const ctxLine = acPct > 0 && acPct < 100 ? acPct
+    : ctxSize ? Math.min(75, Math.round((350_000 / ctxSize) * 100)) : 75;
   const turnsNow = turnCount(p.transcript_path, sid, total);
   // epoch, not the whole chat: spend since the last compact is what the context now in the window
   // has cost, and the only spend a hand-off can still do anything about. Sunk spend is not a

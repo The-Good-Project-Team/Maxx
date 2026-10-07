@@ -385,3 +385,18 @@ test("render: an ordinary chat does not read 100% because the cap collapsed", ()
   assert.equal(Number(m[1]), 37,
     `a chat 13% into its context is scored by context, not by a collapsed week: got ${m[1]}`);
 });
+
+// 2026-10-07: with auto-compact pinned early, the chat's context line IS the auto-compact point.
+// 20% of the window against a 25% line reads 80 — "about to roll over", not "hand off now".
+test("render: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE sets the chat's context line", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "maxx-test-"));
+  mkdirSync(path.join(home, ".maxx"), { recursive: true });
+  const stdin = JSON.stringify({
+    session_id: "sid-ac", rate_limits: { five_hour: { used_percentage: 6, resets_at: in6d } },
+    context_window: { used_percentage: 20, context_window_size: 1000000 }, model: { display_name: "Opus" },
+  });
+  execFileSync("node", [path.join(HERE, "render.mjs")], { input: stdin, env: { ...process.env, HOME: home, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "25" }, encoding: "utf8" });
+  const st = JSON.parse(readFileSync(path.join(home, ".maxx", "status.json"), "utf8"));
+  assert.equal(st.chats["sid-ac"].ctxLine, 25, "line = the auto-compact point");
+  assert.equal(st.chats["sid-ac"].pct, 80, "20% of the window against a 25% line");
+});
