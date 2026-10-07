@@ -1,7 +1,7 @@
 MAXX SITE COPY
 ==============
 
-ONE ASSERTION: the page makes one claim — track your tokens from everywhere.
+ONE ASSERTION: the page makes one claim — keep pace with your Claude subscription.
 Everything else supports it or gets cut.
 
 LAYOUT: not one long column. The dash embed runs wide (1400px, two panes);
@@ -13,8 +13,8 @@ per sentence. Never be clever at the cost of being clear.
 
 META / BROWSER TAB
 ------------------
-Title: maxx — track your tokens from everywhere.
-Description: Every machine, every cloud agent, one live tally. One line to install.
+Title: maxx — keep pace with your Claude subscription.
+Description: Your burn against the rate that lands the week on its reset, for humans and agents. One line to install.
 OG description: Every machine, every cloud agent, one live tally. One line to install.
 
 NAV

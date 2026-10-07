@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>maxx — all your Claude accounts in one place</title>
-<meta name="description" content="See every Claude account you are logged into — what each has left, which is walled and when it frees up — plus a statusline that says how long the week lasts at your current burn.">
+<title>maxx — keep pace with your Claude subscription</title>
+<meta name="description" content="Keep pace with your Claude subscription. maxx shows whether you are on pace to make the week on its reset, in the Claude Code statusline, and gates your agents on the same number. Local, no account.">
 <meta property="og:title" content="maxx — all your Claude accounts in one place">
-<meta property="og:description" content="See every Claude account you are logged into — what each has left, which is walled and when it frees up — plus a statusline that says how long the week lasts at your current burn.">
+<meta property="og:description" content="Keep pace with your Claude subscription. maxx shows whether you are on pace to make the week on its reset, in the Claude Code statusline, and gates your agents on the same number. Local, no account.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://meetmaxx.co/">
 <meta property="og:image" content="https://meetmaxx.co/og-card.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="maxx — one tally for what you can spend right now.">
-<meta name="twitter:description" content="Give any Claude Code agent an MCP endpoint and it can check its own budget before it burns it. Counts, never gates.">
+<meta name="twitter:description" content="Keep pace with your Claude subscription. Are you on pace to make the week? maxx says, in the statusline. Local, no account.">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -104,6 +104,7 @@
 
   footer{border-top:1px solid var(--line);margin-top:60px;padding:24px 0 0;color:var(--dim);font-size:13.5px}
   footer a{color:var(--dim)}
+  .hero-video{display:block;width:100%;max-width:1100px;margin:24px 0 4px;border-radius:8px;border:1px solid rgba(128,128,128,.25)}
 </style>
 </head>
 <body>
@@ -117,15 +118,8 @@
     <a href="#how">How it works</a>
     <div class="grp">For humans</div>
     <a href="#install">Install</a>
-    <a href="#fenix" class="sub">The other half: /fenix</a>
     <a href="#statusline" class="sub">The statusline</a>
     <a href="#commands" class="sub">/maxx commands</a>
-    <a href="#dash">Dashboard</a>
-    <div class="grp">For agents</div>
-    <a href="#mcp">MCP endpoint</a>
-    <a href="#tools" class="sub">Tools</a>
-    <a href="#response" class="sub">Reading the response</a>
-    <a href="#handle">Get a handle</a>
     <div class="grp">Reference</div>
     <a href="#offline">Local by default</a>
     <a href="#privacy">Privacy</a>
@@ -135,24 +129,26 @@
 
 <main id="top">
   <h1>maxx</h1>
-  <p class="sub">All your Claude accounts in one place. What each one has left, which is walled, and how long the week lasts at the rate you are burning it.</p>
-  <p class="hint"><a href="#install">Install →</a> &nbsp;·&nbsp; <a href="#statusline">See the statusline →</a> &nbsp;·&nbsp; <a href="#mcp">MCP endpoint for agents →</a> &nbsp;·&nbsp; <a href="https://github.com/reif-y/Maxx">GitHub →</a></p>
+  <p class="sub">Keep pace with your Claude subscription. <code>/usage</code> says how much of the week is gone. maxx says whether you are on pace to make it, for every account you are signed into, and when a walled one frees up.</p>
+  <p class="hint"><a href="#install">Install →</a> &nbsp;·&nbsp; <a href="#statusline">See the statusline →</a> &nbsp;·&nbsp; <a href="https://github.com/reif-y/Maxx">GitHub →</a></p>
+  <video class="hero-video" autoplay muted loop playsinline poster="statusline-poster.jpg" aria-label="The maxx statusline in a live Claude Code session"><source src="statusline.mp4" type="video/mp4"></video>
+  <p class="hint">The bar, live. It is the last line of every Claude Code session.</p>
   <div class="term" style="margin:26px 0 8px;line-height:1.75"><span style="opacity:.75;color:rgb(39,95,228)">@reif_tgp</span><span style="opacity:.75;color:rgb(35,151,74)">  ● LIVE</span><br><span style="opacity:.75;color:rgb(129,131,135)">&nbsp;&nbsp; ~/.claude  ·  reif@thegoodproject.net</span><br><span style="opacity:.75;color:rgb(129,131,135)">&nbsp;&nbsp; week 6%  ·  5h 11%  ·  week resets in 150h</span><br><br><span style="opacity:.75;color:rgb(39,95,228)">@reif</span><br><span style="opacity:.75;color:rgb(129,131,135)">&nbsp;&nbsp; ~/.claude-gmail  ·  reiftauati@gmail.com</span><br><span style="opacity:.75;color:rgb(129,131,135)">&nbsp;&nbsp; week 6%  ·  </span><span style="opacity:.75;color:rgb(197,57,57)">5h 94%  ·  WALLED · back in 1h20m</span><br><br><span style="opacity:.75;color:rgb(129,131,135)">&nbsp;&nbsp; 1 walled, 1 with room — </span><span style="opacity:.75;color:rgb(55,58,65)">eval "$(maxx switch)"</span><span style="opacity:.75;color:rgb(129,131,135)"> moves to @reif_tgp.</span></div>
   <p class="hint" style="margin-top:6px"><code>/maxx accounts</code> — one row per login, and the thing no other surface tells you: when a walled account frees up.</p>
 
   <h2 id="what">What maxx is</h2>
+  <p>One sentence: <strong>maxx keeps you on pace with your Claude subscription.</strong> "62% used" means nothing on its own. "62% used on Tuesday, twice the pace that makes the week" is a decision. maxx turns the number into that pace and puts it in the statusline, where you will see it every two seconds, and in the gate your agents hit before they fan out.</p>
   <p>Most people running Claude Code seriously are signed into more than one account. There is no screen anywhere that shows them together — so you find out one is walled by hitting the wall, and you find out another sat idle all day by never finding out.</p>
   <p><code>/maxx accounts</code>, at the top of this page, is that screen. Local and instant — it reads the same cache the statusline does, so it works offline and needs no network round-trip.</p>
-  <p>Underneath, maxx is a <strong>counter</strong>. It reads token usage from every Claude Code session on every machine you run, prices each token by model, and turns that into one question with one answer: <em>how much can this session spend right now without ending the week early?</em></p>
+  <p>Underneath, maxx is a <strong>counter</strong>. It reads token usage from every Claude Code session on this machine, prices each token by model, and turns that into one question with one answer: <em>how much can this session spend right now without ending the week early?</em></p>
   <p>It answers as a rate. Your burn in percent-of-week per hour, against the rate that spends the week exactly by its reset. When you are over, it tells you the hour you run out.</p>
   <div class="callout">
     <p><strong>maxx counts. Anthropic limits.</strong> Nothing maxx computes can deny you work. The only things that stop a call are Anthropic's own 5-hour and 7-day windows, and they enforce themselves by rejecting it. A counter that can deny is a limit nobody agreed to.</p>
   </div>
-  <p>Three surfaces, same numbers:</p>
+  <p>Two surfaces, same number:</p>
   <ul>
-    <li><strong>An MCP endpoint</strong> any agent can call, headless, before it burns.</li>
-    <li><strong>A statusline</strong> in the Claude Code terminal for humans.</li>
-    <li><strong>A dashboard</strong> at <code>meetmaxx.co/u/&lt;handle&gt;/dash</code>, live, shareable.</li>
+    <li><strong>The statusline</strong> at the bottom of every Claude Code session.</li>
+    <li><strong>The gate</strong>, a hook that reads the same number before an agent fans out, so a swarm cannot spend the week in an hour.</li>
   </ul>
 
   <h2 id="problem">The problem</h2>
@@ -161,12 +157,12 @@
   <div class="callout warn">
     <p><strong>Do not pace against "% of my 5-hour limit."</strong> It cannot see the week. Pace against your share of the week for this window.</p>
   </div>
-  <p>A headless agent has it worse. It can't glance at a statusline. It has no <code>/usage</code>. Fleets of agents spending from one pool have no idea what the siblings have already taken.</p>
+  <p>Agents have it worse. A subagent cannot glance at a statusline and has no <code>/usage</code>. Six of them spending from one pool have no idea what the siblings already took. The gate is how they find out.</p>
 
   <h2 id="how">How it works</h2>
   <ol style="max-width:68ch;padding-left:20px">
-    <li><strong>Count.</strong> A small emitter on each machine reads the token metadata in Claude Code's session logs (never prompt content) and ships counts to the tally. Cloud agents report with <code>maxx_emit</code>.</li>
-    <li><strong>Anchor.</strong> One real Claude Code session on a laptop reads Anthropic's own <code>/usage</code> and pins the tally to it. Everything is reported as a percent of the week, on that denominator, because a cache-weighted token ledger never agrees with Anthropic's billing.</li>
+    <li><strong>Count.</strong> maxx reads the token metadata in Claude Code's own session logs on this machine (never prompt content).</li>
+    <li><strong>Anchor.</strong> Anthropic's own <code>/usage</code> figure rides in on every session, already summed over every machine and agent on your login. maxx pins the count to it. Everything is reported as a percent of the week, on that denominator, because a cache-weighted token ledger never agrees with Anthropic's billing.</li>
     <li><strong>Pace.</strong> What remains of the week ÷ the 5-hour blocks left in it = this block's share. What this block has spent, on the same denominator, sits beside it. Two numbers, one denominator, compare directly.</li>
     <li><strong>Verdict.</strong> Burn rate vs. sustainable rate. Over means the week ends early, and maxx says when.</li>
   </ol>
@@ -176,97 +172,16 @@
 <span class="k">on_pace</span>          = block_used_pct ≤ block_share_pct           <span class="c"># going past borrows from later blocks</span></code></pre>
   <p class="hint">Going past your share is allowed. It borrows from later blocks and breaches nothing. Burning above <code>sustainable_pct_per_hour</code> is the thing that ends the week early.</p>
 
-  <h2 id="mcp">MCP endpoint</h2>
-  <p>Point any MCP client at this URL and the agent can check its own budget, on its own, no human in the loop.</p>
-  <pre><code>https://api.meetmaxx.co/mcp?handle=<span class="k">&lt;you&gt;</span>&amp;k=<span class="k">&lt;secret&gt;</span></code></pre>
-  <p>In Claude Code, that is one command:</p>
-  <pre><code><span class="p">$</span> claude mcp add --transport http maxx "https://api.meetmaxx.co/mcp?handle=<span class="k">&lt;you&gt;</span>&amp;k=<span class="k">&lt;secret&gt;</span>"</code></pre>
-  <p>Or call it directly over JSON-RPC:</p>
-  <pre><code><span class="p">curl -X POST</span> "https://api.meetmaxx.co/mcp?handle=<span class="k">&lt;you&gt;</span>&amp;k=<span class="k">&lt;secret&gt;</span>" \
-  <span class="p">-H</span> "Content-Type: application/json" \
-  <span class="p">-d</span> '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"maxx_budget","arguments":{}}}'</code></pre>
-
-  <h3 id="tools">Tools</h3>
-  <table>
-    <thead><tr><th>tool</th><th>what it does</th></tr></thead>
-    <tbody>
-      <tr><td>maxx_budget</td><td>Read live pacing for the whole account. Returns a <code>verdict</code>, this block's share vs. what it has spent, burn rate vs. sustainable rate, and when the week runs out at this pace.</td></tr>
-      <tr><td>maxx_emit</td><td>Report this session's usage back to the tally. This is how a cloud agent or a direct-API server becomes visible at all.</td></tr>
-      <tr><td>maxx_reserve</td><td>Before fanning out concurrent agents, hold the percent of the week you expect them to cost. Without it every sibling sees the same full allowance and the fleet overspends it.</td></tr>
-      <tr><td>maxx_release</td><td>Release the lease when the fan-out completes. The spend is already in the tally via emits; an unreleased lease double-throttles everyone else until its TTL.</td></tr>
-    </tbody>
-  </table>
-
-  <h3 id="response">Reading the response</h3>
-  <p>A real <code>maxx_budget</code> response, trimmed. Every number is a <strong>percent of the week</strong>. There are no token counts, by design.</p>
-  <pre><code>{
-  <span class="k">"verdict"</span>: <span class="s">"ok"</span>,
-  <span class="k">"on_pace"</span>: <span class="n">false</span>,
-  <span class="k">"block_share_pct"</span>: <span class="n">2.7</span>,          <span class="c">// what this 5h block may spend</span>
-  <span class="k">"block_used_pct"</span>: <span class="n">3.4</span>,           <span class="c">// what it has spent, same denominator</span>
-  <span class="k">"blocks_left_week"</span>: <span class="n">16</span>,
-  <span class="k">"burn_pct_per_hour"</span>: <span class="n">0.57</span>,
-  <span class="k">"sustainable_pct_per_hour"</span>: <span class="n">0.54</span>,
-  <span class="k">"projected_wall_at"</span>: <span class="n">1789676568</span>,  <span class="c">// unix seconds: when the week ends at this rate</span>
-  <span class="k">"week_bank_pct"</span>: <span class="n">-4.1</span>,           <span class="c">// clock-elapsed minus spend-used; + is ahead</span>
-  <span class="k">"usage_week_pct"</span>: <span class="n">0.57</span>,          <span class="c">// Anthropic's real /usage, 0..1</span>
-  <span class="k">"usage_five_pct"</span>: <span class="n">0.10</span>,
-  <span class="k">"week_reset_in_sec"</span>: <span class="n">284611</span>,
-  <span class="k">"reserved_pct"</span>: <span class="n">0</span>,
-  <span class="k">"leases"</span>: <span class="n">0</span>,
-  <span class="k">"top_burners"</span>: [ { <span class="k">"surface"</span>: <span class="s">"machine 2"</span>, <span class="k">"session"</span>: <span class="s">"session-2"</span>, <span class="k">"week_pct"</span>: <span class="n">0.5</span>, <span class="k">"cost_index"</span>: <span class="n">2.83</span> }, … ]
-}</code></pre>
-  <table>
-    <thead><tr><th>verdict</th><th>meaning</th><th>what to do</th></tr></thead>
-    <tbody>
-      <tr><td>ok</td><td>Anchored and fresh.</td><td>Pace against <code>block_share_pct</code> vs <code>block_used_pct</code>.</td></tr>
-      <tr><td>over</td><td>Anthropic's real wall is up. Not a number maxx invented.</td><td>Stop. Wait for <code>five_reset</code> or <code>week_reset</code>.</td></tr>
-      <tr><td>degraded</td><td>No machine has read <code>/usage</code> recently (a laptop asleep). Weekly ledger still governs.</td><td>Proceed. Re-check more often.</td></tr>
-      <tr><td>stale</td><td>The tally itself is old.</td><td>Stop and re-check.</td></tr>
-      <tr><td>calibrating</td><td>Brand-new handle, never anchored.</td><td>Run one Claude Code session with the emitter installed.</td></tr>
-    </tbody>
-  </table>
-  <p class="hint">A <code>null</code> field means unknown, never zero. Proceed and re-check. Full field-by-field model: <a href="https://api.meetmaxx.co/api/model">GET /api/model</a>.</p>
-
-  <h3>The contract for agents</h3>
-  <ul>
-    <li><strong>Before</strong> token-expensive work (spawning agents, long generations, big batches): call <code>maxx_budget</code>. Stop only on <code>over</code> or <code>stale</code>.</li>
-    <li><strong>Before a fan-out:</strong> <code>maxx_reserve</code> the percent you expect it to cost. <strong>After:</strong> <code>maxx_release</code> the lease.</li>
-    <li><strong>At the end</strong> of every run: <code>maxx_emit</code> your output tokens under a named surface so the owner's board shows who burned what.</li>
-  </ul>
-
-  <h2 id="handle">Get a handle</h2>
-  <p>One call. The secret is shown once.</p>
-  <pre><code><span class="p">curl -X POST</span> https://api.meetmaxx.co/api/signup \
-  <span class="p">-H</span> "Content-Type: application/json" <span class="p">-d</span> '{"handle":"you"}'</code></pre>
-  <p>Or claim one here:</p>
-  <div class="signup">
-    <input id="sg-handle" placeholder="your-handle" maxlength="32" autocomplete="off" spellcheck="false">
-    <button id="sg-go">Get my URL</button>
-  </div>
-  <p class="hint" id="sg-msg">3–32 chars: a-z 0-9 - _ · first come, first served · shown once, save it.</p>
-  <div id="sg-out">
-    <p style="margin:8px 0"><b>MCP URL</b> — paste into an MCP client or your agent's config:</p>
-    <div class="copybar"><code id="sg-mcp"></code><button data-copy-id="sg-mcp">Copy</button></div>
-    <p class="hint">Dashboard: <a id="sg-card" href="#" target="_blank" rel="noopener"></a></p>
-  </div>
-
   <h2 id="install">Install (humans)</h2>
-  <p>One line. It installs the emitter, the statusline, the <code>/maxx</code> and <code>/fenix</code> skills, and claims a handle for you if you don't have one.</p>
+  <p>One line. It installs the statusline, the gate and the <code>/maxx</code> skill. It claims nothing and calls nobody.</p>
   <div class="copybar"><code><span class="p">$</span> curl -fsSL https://meetmaxx.co/install | bash</code><button data-copy="curl -fsSL https://meetmaxx.co/install | bash">Copy</button></div>
   <p>Restart Claude Code and the bar is there. Requires Node 18+.</p>
-  <p class="hint">Stays current on its own: a background shipper checks in every 30 minutes and reinstalls itself when a new version ships. Nothing to remember.</p>
+  <p class="hint">Update by running the same line again.</p>
   <p>Or install it as a Claude Code plugin:</p>
   <pre><code>/plugin marketplace add reif-y/Maxx
 /plugin install maxx
 /maxx wire</code></pre>
   <p class="hint">A plugin can place skills but cannot write to <code>settings.json</code>, so <code>/plugin install</code> alone gives you the commands with no statusline and no hooks. <code>/maxx wire</code> adds them. Run <code>/maxx</code> without it and the card tells you what is missing.</p>
-
-  <h3 id="fenix">The other half: /fenix</h3>
-  <p>A chat that fills its context window is normally a total loss. You <code>/clear</code>, and the next session starts from nothing — so you spend the first ten turns re-explaining where you were.</p>
-  <p>maxx already knows how full the chat is. When it nears the line, fenix says so on its own:</p>
-  <div class="term wrap"><span style="opacity:.75;color:rgb(129,131,135)">fenix: chat </span><span style="opacity:.75;color:rgb(197,57,57)">87%</span><span style="opacity:.75;color:rgb(129,131,135)"> of its hand-off line. Run /fenix to write the handoff, then /clear — the next session resumes this thread automatically.</span></div>
-  <p>Type <code>/fenix</code>, then <code>/clear</code>. The next session in that directory wakes up already holding the branch, the uncommitted files, the open PRs and what you were in the middle of. The clear costs you the tokens and not the work.</p>
 
   <h3 id="statusline">The statusline</h3>
   <p>One line at the bottom of every Claude Code session. Numbers lead, identity trails.</p>
@@ -275,8 +190,8 @@
   <table>
     <thead><tr><th>cell</th><th>reads</th><th>color</th></tr></thead>
     <tbody>
-      <tr><td><code>@reif · opus</code></td><td>Which account this session is signed into, and the model. The handle links to your dashboard. On a narrow pane this is the first thing to go — you can get it from the prompt line.</td><td>—</td></tr>
-      <tr><td><code>chat 94%</code></td><td>How full this conversation is, out of 100 where <strong>100 is the hand-off line</strong> — the greater of two things: 75% of the context window, or a twentieth of the week's budget spent in this one chat. At 94 you are past the point where a <code>/fenix</code> and a <code>/clear</code> pays for itself: every further turn re-bills a context a fresh session would not carry.</td><td>green → amber at 71 → red at 85 → <strong>blinking red at 90</strong>, the one reading on the bar that must not be glanced past</td></tr>
+      <tr><td><code>@reif · opus</code></td><td>Which account this session is signed into, and the model. On a narrow pane this is the first thing to go — you can get it from the prompt line.</td><td>—</td></tr>
+      <tr><td><code>chat 94%</code></td><td>How full this conversation is, out of 100 where <strong>100 is the hand-off line</strong> — the greater of two things: 75% of the context window, or a twentieth of the week's budget spent in this one chat. Every turn re-reads the whole conversation, so a full chat is an expensive chat. Past the line, Claude Code rolls the context over on its own and maxx keeps the thread; you keep typing.</td><td>green → amber at 71 → red at 85 → <strong>blinking red at 90</strong>, the one reading on the bar that must not be glanced past</td></tr>
       <tr><td><code>session 12% · 2h54m</code></td><td>Anthropic's 5-hour window — the same number <code>/usage</code> prints — and the time until it resets. This is the wall you can act on in the next ten minutes, so it carries the bold.</td><td>red past the share this window should spend; a squiggle at the wall itself</td></tr>
       <tr><td><code>week 150h/11h</code></td><td><strong>Clock against runway.</strong> 150 hours until the weekly cap resets; the budget lasts <strong>11</strong> at the rate you are burning it right now. A percentage tells you where you are in the week — these two tell you whether you make it, and 11 against 150 says you do not. The gap is roughly how long you would sit locked out. A <code>+3h</code> beside them means easing off in the last few minutes bought three hours of runway back; a <code>−2h</code> means the opposite.</td><td>green when the runway outlasts the clock · red when it does not</td></tr>
       <tr><td><code>Maxx · main · f6a931d9</code></td><td>Repo, branch, and this chat's id. The id is the part you cannot get anywhere else on screen — paste it to another session and <code>/maxx who f6a931d9</code> resolves it back to the repo, the account and how full that chat is. It is the last of the three to drop on a narrow pane, for exactly that reason.</td><td>—</td></tr>
@@ -299,38 +214,22 @@
     </tbody>
   </table>
 
-  <h2 id="dash">Dashboard</h2>
-  <p>Every handle gets a live page at <code>meetmaxx.co/u/&lt;handle&gt;/dash</code>. It updates every 10 seconds. The shared view hides session names, so it is safe to link.</p>
-  <figure>
-    <img src="dash.jpg" alt="The maxx dashboard: a red verdict banner reading 'Over pace — the week ends early', session and week bars, burn-per-hour and sustainable-per-hour tiles, and a live activity feed on the right." width="1509" height="812" loading="lazy">
-    <figcaption>Left: the verdict, the two rails, and the rate tiles. Right: the live feed, one row per emit, with the turn count and context size of each session. Captured from <a href="https://meetmaxx.co/u/reif_tgp/dash">meetmaxx.co/u/reif_tgp/dash</a>.</figcaption>
-  </figure>
-  <p>The verdict is the same sentence the MCP tool derives from, in words:</p>
-  <figure>
-    <img src="dash-verdict.jpg" alt="Close-up of the verdict banner and rails: Burning 0.58%/hr against 0.54%/hr sustainable. At this rate you are out in 3.1d (Thu 2 PM), 3d before the reset." width="730" height="725" loading="lazy" style="max-width:560px">
-    <figcaption>Burn vs. sustainable, the hour the week runs out at this rate, and the cut that would make it.</figcaption>
-  </figure>
-  <p class="hint">Webhooks for <code>over</code> / <code>recovered</code> / week-80/90/95: <code>POST /api/u/&lt;you&gt;/webhooks</code>. Poll <code>GET /api/u/&lt;you&gt;/budget</code> for the same JSON without MCP.</p>
-
   <h2 id="offline">Local by default</h2>
   <p><strong>The install claims nothing and calls nobody.</strong> Your numbers come from Anthropic itself: the 5-hour and weekly percentages ride in on every session, already summed across every machine and every agent on that login. maxx reads them, prices the local ledger against them, and draws the bar. No account, no network, nothing to be down.</p>
-  <p>That is also why there is no "collate my machines" step — Anthropic's number <em>is</em> the collation. Measured on a two-account box: the tally returned 83.0%/17.0% for a handle, byte-identical to what the local session already had, because the tally anchors to that same number.</p>
-  <p>Signing up is opt-in and buys three things: the dashboard below, the MCP endpoint your agents can call headless, and webhooks. The statusline, <code>/maxx accounts</code> and <code>/fenix</code> never touch it.</p>
-  <div class="copybar"><code><span class="p">$</span> node ~/.claude/skills/maxx/emit.mjs --signup</code><button data-copy="node ~/.claude/skills/maxx/emit.mjs --signup">Copy</button></div>
+  <p>That is also why there is no "collate my machines" step — Anthropic's number <em>is</em> the collation. Measured on a two-account box: the optional tally returned 83.0%/17.0%, byte-identical to what the local session already had, because it anchors to that same number.</p>
   <div class="callout">
     <p><strong>The budget gate fails open.</strong> It denies on a real weekly wall and never on its own unreachability. A counter that stops your work because it cannot reach <em>itself</em> is inventing a limit — the one thing this project promises not to do. <code>gate.mjs --fail closed</code> if you want the stricter posture.</p>
   </div>
 
   <h2 id="privacy">Privacy</h2>
-  <p>Local by default. Nothing leaves your machine until you claim a handle. After that, the emitter ships <strong>counts only</strong>: tokens, timestamps, model names, session ids. Never a prompt, never a message, never your code. The emitter never reads it, so it cannot leak it.</p>
-  <p>Public dashboards redact session names. Your secret never appears on any page after signup.</p>
+  <p>Nothing leaves your machine. maxx reads token counts, timestamps and model names from Claude Code's own logs. Never a prompt, never a message, never your code. It never reads them, so it cannot leak them.</p>
 
   <h2 id="source">Source</h2>
   <p>MIT. <a href="https://github.com/reif-y/Maxx">github.com/reif-y/Maxx</a></p>
   <ul>
-    <li><code>maxx/emit.mjs</code> ships counts from a machine.</li>
-    <li><code>maxx/render.mjs</code> draws the statusline. <code>fenix/fenix.mjs</code> writes and resumes the handoffs.</li>
-    <li><code>server/tally.mjs</code> is the pure model: ingest, budget, watchdog. <code>server/handler.mjs</code> wraps it in HTTP and MCP.</li>
+    <li><code>maxx/render.mjs</code> draws the statusline. <code>fenix/state.mjs</code> keeps the thread of a chat on disk so a rollover loses nothing.</li>
+    <li><code>maxx/gate.mjs</code> is the hook that reads the pace before an agent fans out.</li>
+    <li><code>server/</code> is an optional tally for people who want one page across several machines. Nothing above needs it.</li>
   </ul>
   <pre><code><span class="p">$</span> npm test    <span class="c"># node --test maxx/*.test.mjs fenix/*.test.mjs server/*.test.mjs</span></code></pre>
 
@@ -339,7 +238,6 @@
   </footer>
 </main>
 </div>
-
 <script>
   document.querySelectorAll('button[data-copy]').forEach(function(b){
     b.addEventListener('click',function(){
@@ -349,36 +247,6 @@
       });
     });
   });
-  document.querySelectorAll('button[data-copy-id]').forEach(function(b){
-    b.addEventListener('click',function(){
-      var el=document.getElementById(b.getAttribute('data-copy-id'));
-      navigator.clipboard.writeText(el.textContent).then(function(){
-        var t=b.textContent;b.textContent='Copied';b.classList.add('done');
-        setTimeout(function(){b.textContent=t;b.classList.remove('done')},1500);
-      });
-    });
-  });
-  (function(){
-    var go=document.getElementById('sg-go'),h=document.getElementById('sg-handle'),msg=document.getElementById('sg-msg'),out=document.getElementById('sg-out');
-    function claim(){
-      var v=(h.value||'').trim().toLowerCase();
-      if(!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(v)){msg.textContent='handle must be 3-32 chars: a-z 0-9 - _ (no leading - or _)';return;}
-      go.disabled=true;go.textContent='…';
-      fetch('https://api.meetmaxx.co/api/signup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({handle:v})})
-        .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-        .then(function(res){
-          go.disabled=false;go.textContent='Get my URL';
-          if(!res.ok){msg.textContent=res.j.error||'signup failed — try another handle';return;}
-          document.getElementById('sg-mcp').textContent=res.j.mcp_url;
-          var card=document.getElementById('sg-card');card.textContent='meetmaxx.co/u/'+res.j.handle;card.href='https://meetmaxx.co/u/'+res.j.handle;
-          out.style.display='block';
-          msg.textContent='@'+res.j.handle+' claimed. This URL is your secret — shown once, save it now.';
-        })
-        .catch(function(){go.disabled=false;go.textContent='Get my URL';msg.textContent='network error — try again';});
-    }
-    go.addEventListener('click',claim);
-    h.addEventListener('keydown',function(e){if(e.key==='Enter')claim();});
-  })();
 </script>
 </body>
 </html>

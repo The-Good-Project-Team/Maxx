@@ -1,6 +1,6 @@
 ---
 name: maxx
-description: "Show your Claude Code token stats — total tokens, tokens/day, cache-hit rate, and streak — parsed from every Claude login root on the box (~/.claude, ~/.claude-*). Use when the user types /maxx or asks about their Claude Code usage, token count, cache-hit rate, or streak."
+description: "Keep pace with your Claude subscription. Shows whether you are on pace to land the weekly cap on its reset (burn %/hr vs sustainable), what each login on the box has left, plus token totals, cache-hit rate, and streak. Use when the user types /maxx or asks about their Claude Code usage, budget, pace, token count, cache-hit rate, or streak."
 trigger: /maxx
 ---
 
