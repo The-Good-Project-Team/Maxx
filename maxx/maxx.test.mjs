@@ -5,6 +5,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+// The suite must not inherit the developer's own Claude Code settings: the auto-compact override
+// moves the chat's context line, and CLAUDE_CONFIG_DIR suffixes the status file name.
+delete process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+delete process.env.CLAUDE_CONFIG_DIR;
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { rollSession } from "./limit.mjs";
