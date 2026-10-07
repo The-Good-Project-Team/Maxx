@@ -94,6 +94,7 @@ if [ -n "$FENIX_SRC" ] && [ -f "$FENIX_SRC/fenix.mjs" ]; then
   mkdir -p "$FENIX"
   place "$FENIX_SRC/SKILL.md"  "$FENIX/SKILL.md"
   place "$FENIX_SRC/fenix.mjs" "$FENIX/fenix.mjs"
+  place "$FENIX_SRC/state.mjs" "$FENIX/state.mjs"
 fi
 
 # wire the statusLine (node render.mjs) into settings.json. render.mjs also refreshes the rolling-token
@@ -165,6 +166,19 @@ if (process.env.FENIX_BIN) {
   d.hooks.Stop.push({
     hooks: [{ type: "command", command: `${process.env.NODE_BIN} ${process.env.FENIX_BIN} --ready`, timeout: 10 }],
   });
+  // state.mjs (2026-10-07): the context is a cache, .fenix/state.md is the truth. A Stop hook
+  // distills every turn to disk; PreCompact/SessionEnd flush; SessionStart injects. With it a
+  // session never needs chopping — auto-compact rolls over and nothing is lost.
+  const STATE = process.env.FENIX_BIN.replace(/fenix\.mjs$/, "state.mjs");
+  const isState = (h) => /state\.mjs/.test(JSON.stringify(h));
+  const stateHook = (cmd, timeout) => ({ hooks: [{ type: "command", command: `${process.env.NODE_BIN} ${STATE} ${cmd}`, timeout }] });
+  d.hooks.Stop = d.hooks.Stop.filter((h) => !isState(h)); d.hooks.Stop.push(stateHook("stop", 10));
+  d.hooks.SessionStart = d.hooks.SessionStart.filter((h) => !isState(h)); d.hooks.SessionStart.push(stateHook("wake", 5));
+  d.hooks.PreCompact = (d.hooks.PreCompact || []).filter((h) => !isState(h)); d.hooks.PreCompact.push(stateHook("flush", 90));
+  d.hooks.SessionEnd = (d.hooks.SessionEnd || []).filter((h) => !isState(h)); d.hooks.SessionEnd.push(stateHook("flush", 90));
+  // auto-compact early (a quarter of the window, not the wall): turn cost stays flat and the
+  // PreCompact flush above means the rollover loses nothing.
+  d.env = d.env || {}; if (!d.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) d.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = "25";
 } else {
   // no fenix alongside this maxx — strip any hook pointing at a copy we used to install, since
   // that file is gone. A fenix installed ELSEWHERE is not ours to remove.
