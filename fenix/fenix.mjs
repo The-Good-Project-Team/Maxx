@@ -662,6 +662,14 @@ if (arg === "--ready") {
     console.log(`fenix: chat ${chat}% — handoff already written. Safe to /clear.`);
     process.exit(0);
   }
+  // state.mjs keeps .fenix/state.md current after every turn (the context is a cache, state.md is
+  // the truth) — when it is fresh, nothing needs writing by hand: /clear is safe right now.
+  let stateFresh = false;
+  try { stateFresh = (Date.now() - statSync(path.join(DIR, "state.md")).mtimeMs) / 60000 < 30; } catch {}
+  if (stateFresh) {
+    console.log(`fenix: chat ${chat}% — .fenix/state.md is current. Safe to /clear now; the next session continues from it.`);
+    process.exit(0);
+  }
   console.log(`fenix: chat ${chat}% of its hand-off line. Run /fenix to write the handoff, then /clear — the next session resumes this thread automatically.`);
   process.exit(0);
 }

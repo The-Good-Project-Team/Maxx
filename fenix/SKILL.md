@@ -34,6 +34,14 @@ its id when the id is minted, and the copy is kept when a DIFFERENT session supe
 `handoff.superseded-<id>.md`, still reachable by `--recover <id>`. Same-session rewrites drop the
 snapshot, so .fenix does not fill with every draft of the day.
 
+## state.md: the loop without the ceremony (2026-10-07)
+
+`fenix/state.mjs` keeps `.fenix/state.md` current **after every turn** (Stop hook, Haiku distill of the
+turn's prose + edited paths, debounced to ~3K chars or 10 min; PreCompact and SessionEnd flush at once).
+SessionStart injects it. So the context is a cache and state.md is the truth: **/clear is safe at any
+moment**, no /fenix needed. /fenix remains for a hand-authored handoff when you want to say more than
+the distill would. `node fenix/state.mjs show` prints the current state.
+
 ## What to do
 
 0. **Run `node ~/.claude/skills/fenix/fenix.mjs --state` and paste its output into the
